@@ -8,6 +8,12 @@ You can open `index.html` directly in Chrome or run `serve.ps1` in PowerShell an
 
 The demo saves changes in the current browser profile. POS transactions can be entered while offline, but this prototype has no remote service to synchronize with. It does not include production authentication, multi-user/branch data isolation, live payment processing, or Tanzania tax/e-invoice provider connections.
 
+## Vercel preview
+
+This is a static site with no package installation or build step. To create a Vercel preview, import the repository and select the **Other** framework preset. Use the repository root as the project root, leave the install and build commands empty, and set the output directory to `.`. Vercel will serve `index.html` and the accompanying static assets directly.
+
+The sign-in screen is a local app feature, not production authentication. User accounts and business data are stored in each browser's IndexedDB and do not synchronize between users or devices. Before using a public deployment for real business data or multiple users, the app needs a shared backend and server-enforced authentication and permissions.
+
 ## Included workflows
 
 - Dashboard with date range, sales charts, alerts, and quick actions

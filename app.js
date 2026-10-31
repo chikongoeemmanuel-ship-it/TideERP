@@ -1,9 +1,15 @@
 
 const THEME_KEY = 'tide-erp-theme';
 const AUTH_SESSION_KEY = 'tide-erp-auth-user';
+const ADMIN_LOGIN_EMAIL = 'chikongoeemmanuel@gmail.com';
+const ADMIN_LOGIN_USERNAME = 'Admin';
+const ADMIN_INITIAL_PASSWORD = 'Admin123';
 function safeStorageGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function safeStorageSet(key, value) { try { localStorage.setItem(key, value); } catch {} }
 function safeStorageRemove(key) { try { localStorage.removeItem(key); } catch {} }
+function safeSessionGet(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
+function safeSessionSet(key, value) { try { sessionStorage.setItem(key, value); } catch {} }
+function safeSessionRemove(key) { try { sessionStorage.removeItem(key); } catch {} }
 
 const initialState = {
   version: 3,
@@ -93,6 +99,39 @@ let purchaseDateFrom = '';
 let purchaseDateTo = '';
 let orderMenuPortal = null;
 let pendingCompanyLogo = '';
+let authErrorMessage = '';
+
+function toBase64(bytes) { return btoa(String.fromCharCode(...new Uint8Array(bytes))); }
+function fromBase64(value) { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
+async function passwordDigest(password, salt) {
+  if (!globalThis.crypto?.subtle) throw new Error('Secure password storage is unavailable in this browser context. Open the app on localhost or HTTPS.');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, key, 256);
+  return toBase64(bits);
+}
+async function setUserPassword(user, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  user.passwordSalt = toBase64(salt);
+  user.passwordHash = await passwordDigest(password, salt);
+  user.passwordAlgorithm = 'PBKDF2-SHA256';
+}
+async function verifyUserPassword(user, password) {
+  if (!user?.passwordHash || !user.passwordSalt) return false;
+  const actual = fromBase64(await passwordDigest(password, fromBase64(user.passwordSalt)));
+  const expected = fromBase64(user.passwordHash);
+  if (actual.length !== expected.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < actual.length; i++) mismatch |= actual[i] ^ expected[i];
+  return mismatch === 0;
+}
+function normalizedLogin(value) { return String(value || '').trim().toLocaleLowerCase(); }
+function credentialsAvailable(username, email, exceptId = '') {
+  const wanted = new Set([normalizedLogin(username), normalizedLogin(email)].filter(Boolean));
+  return !state.users.some(user => {
+    if (user.id === exceptId) return false;
+    return [normalizedLogin(user.username), normalizedLogin(user.email)].some(value => value && wanted.has(value));
+  });
+}
 
 const userModuleChoices = [
   ['dashboard', 'Overview'],
@@ -206,6 +245,7 @@ function canPerformAction(action,element=null) {
     case 'remove-company-logo':return require('settings','edit-logo');
     case 'clear-trash':case 'restore-trash':return require('settings','edit-company');
     case 'new-user':return require('users','add');
+    case 'edit-user':return isWorkspaceAdministrator()&&require('users','edit');
     case 'edit-user-permissions':return isWorkspaceAdministrator()&&require('users','manage-permissions');
     case 'toggle-user':return require('users','activate');
     case 'delete-user':return isWorkspaceAdministrator()&&require('users','delete');
@@ -266,6 +306,51 @@ function money(value) {
 
 function esc(value = '') {
   return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderAuthGate(message = '') {
+  const gate = document.getElementById('auth-gate');
+  const shell = document.querySelector('.app-shell');
+  if (!gate || !shell) return;
+  shell.hidden = true;
+  gate.hidden = false;
+  gate.innerHTML = `<div class="auth-card"><div class="auth-brand"><span class="brand-mark">t</span><span>TideERP</span></div><h1>Sign in</h1><p>Use your own username or email and password to open your workspace.</p><form class="auth-form" id="login-form"><label>Username or email<input name="login-identifier" type="text" autocomplete="username" required autofocus></label><label>Password<input name="login-password" type="password" autocomplete="current-password" required></label><button class="button primary" type="submit">Sign in</button></form>${message ? `<div class="auth-error" role="alert">${esc(message)}</div>` : ''}</div>`;
+  gate.querySelector('input[name="login-identifier"]')?.focus();
+}
+
+async function ensureAdministratorLogin() {
+  const admin = state.users.find(user => user.isBootstrap) || state.users.find(user => isAdministratorUser(user));
+  if (!admin) return false;
+  if (!admin.username) admin.username = ADMIN_LOGIN_USERNAME;
+  if (!admin.email) admin.email = ADMIN_LOGIN_EMAIL;
+  if (!admin.initialAdminLoginSeeded || !admin.passwordHash || !admin.passwordSalt) {
+    await setUserPassword(admin, ADMIN_INITIAL_PASSWORD);
+    admin.initialAdminLoginSeeded = true;
+  }
+  return true;
+}
+
+async function handleLogin(form) {
+  const identifier = normalizedLogin(form.elements['login-identifier'].value);
+  const password = form.elements['login-password'].value;
+  const user = state.users.find(item => normalizedLogin(item.username) === identifier || normalizedLogin(item.email) === identifier);
+  let valid = false;
+  try { valid = Boolean(user && user.status !== 'Inactive' && await verifyUserPassword(user, password)); }
+  catch (error) { renderAuthGate(error.message || 'Sign-in could not be completed.'); return; }
+  if (!valid) { renderAuthGate('The username/email or password is incorrect, or this account is inactive.'); return; }
+  state.currentUserId = user.id;
+  safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
+  authErrorMessage = '';
+  document.getElementById('auth-gate').hidden = true;
+  document.querySelector('.app-shell').hidden = false;
+  render();
+}
+
+function logout() {
+  safeSessionRemove(AUTH_SESSION_KEY);
+  state.currentUserId = '';
+  document.getElementById('app-modal')?.close();
+  renderAuthGate();
 }
 
 function shortName(name = '') {
@@ -391,7 +476,8 @@ function refreshActivityVisibility() {
 
 function recordActivity(action, details, reference = '') {
   if (!Array.isArray(state.activityLog)) state.activityLog=[];
-  state.activityLog.unshift({id:idFor('ACT',state.activityLog),date:new Date().toISOString(),actor:currentWorkspaceUser().name||'User',action,details,reference});
+  const actor=currentWorkspaceUser();
+  state.activityLog.unshift({id:idFor('ACT',state.activityLog),date:new Date().toISOString(),actorId:actor.id||'',actor:actor.name||'User',action,details,reference});
   state.activityLog=state.activityLog.slice(0,300);
 }
 
@@ -441,8 +527,8 @@ function openNotificationsPanel() {
   panel.querySelectorAll('[data-notification-page]').forEach(item=>item.addEventListener('click',()=>{const target=item.dataset.notificationPage;panel.remove();setPage(target);}));
 }
 
-function recentActivityItems() {
-  const saved=(state.activityLog||[]).map(item=>({id:item.id,date:item.date,actor:item.actor||'User',action:item.action||'Updated records',details:item.details||'',reference:item.reference||''}));
+function recentActivityItems(limit = 100) {
+  const saved=(state.activityLog||[]).map(item=>({id:item.id,date:item.date,actorId:item.actorId||'',actor:item.actor||'User',action:item.action||'Updated records',details:item.details||'',reference:item.reference||''}));
   const fallback=[];
   for(const sale of state.sales)fallback.push({id:`sale-${sale.id}`,date:sale.date,actor:'',action:'Sale recorded',details:`${sale.customer||'Walk-in customer'} · ${money(sale.total||0)}`,reference:sale.id});
   for(const purchase of state.purchases)fallback.push({id:`purchase-${purchase.id}`,date:purchase.date,actor:'',action:'Purchase order recorded',details:`${purchase.supplier||'Supplier'} · ${money(purchase.total||0)}`,reference:purchase.id});
@@ -450,7 +536,18 @@ function recentActivityItems() {
   for(const movement of state.stockMovements)fallback.push({id:`stock-${movement.id}`,date:movement.date,actor:movement.user||'',action:'Stock updated',details:`${movement.product||movement.productId} · ${movement.delta>0?'+':''}${movement.delta}`,reference:movement.id});
   const known=new Set(saved.map(item=>item.reference).filter(Boolean));
   const combined=[...saved,...fallback.filter(item=>!known.has(item.reference))];
-  return combined.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).slice(0,100);
+  return combined.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).slice(0,limit);
+}
+
+function openUserActivityHistory(user) {
+  if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can view user activity');return;}
+  if(!user){toast('This user account could not be found');return;}
+  const items=recentActivityItems(300).filter(item=>item.actorId===user.id||(!item.actorId&&item.actor===user.name));
+  const rows=items.map(item=>{
+    const timestamp=item.date&&Number.isFinite(new Date(item.date).getTime())?new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short'}).format(new Date(item.date)):dateLabel(String(item.date||'').slice(0,10));
+    return `<div class="activity-entry"><span class="activity-entry-icon">◷</span><div><strong>${esc(item.action)}</strong><small>${esc(item.details)}${item.reference?` · ${esc(item.reference)}`:''}</small></div><time>${esc(timestamp)}</time></div>`;
+  }).join('');
+  openModal(`${esc(user.name)} · Activity`,`${items.length} recorded action${items.length===1?'':'s'} in this workspace`,items.length?`<div class="activity-list">${rows}</div>`:'<div class="notification-empty"><p>No activity has been recorded for this user yet.</p></div>','Close');
 }
 
 function openActivityHistory() {
@@ -1598,14 +1695,21 @@ function renderUsers() {
     return `
       <tr>
         <td><strong>${esc(user.name)}</strong><small>${esc(user.id)}</small></td>
-        <td>${esc(user.email || '—')}<small>${esc(user.phone || '')}</small></td>
+        <td>${esc(user.email || '—')}<small>@${esc(user.username || 'credentials needed')}</small><small>${esc(user.phone || '')}</small></td>
         <td><strong>${esc(user.role)}</strong></td>
         <td class="user-access-summary">${esc(accessLabel)}<small>${full?'Permissions are always enabled for the Owner / Administrator':`${Object.values(permissions).reduce((sum,actions)=>sum+actions.length,0)} actions granted`}</small></td>
         <td><span class="status-pill ${user.status === 'Active' ? 'paid' : 'pending'}">${esc(user.status || 'Active')}</span></td>
         <td>
-          ${!full&&isWorkspaceAdministrator()?`<button class="button small" data-action="edit-user-permissions" data-id="${esc(user.id)}">Permissions</button>`:''}
-          ${!user.isBootstrap&&canPerformAction('toggle-user')?`<button class="button small" data-action="toggle-user" data-id="${esc(user.id)}">${user.status === 'Active' ? 'Deactivate' : 'Activate'}</button>`:''}
-          ${!full&&!user.isBootstrap&&isWorkspaceAdministrator()?`<button class="button small danger-action" data-action="delete-user" data-id="${esc(user.id)}">Delete user</button>`:''}
+          <details class="order-actions user-actions">
+            <summary aria-label="Actions for ${esc(user.name)}">•••</summary>
+            <div class="order-actions-menu user-actions-menu">
+              ${isWorkspaceAdministrator()&&!user.isBootstrap?`<button data-action="edit-user" data-id="${esc(user.id)}">Edit user and login</button>`:''}
+              ${isWorkspaceAdministrator()?`<button data-action="view-user-activity" data-id="${esc(user.id)}">View activity</button>`:''}
+              ${!full&&isWorkspaceAdministrator()?`<button data-action="edit-user-permissions" data-id="${esc(user.id)}">Permissions</button>`:''}
+              ${!user.isBootstrap&&canPerformAction('toggle-user')?`<button data-action="toggle-user" data-id="${esc(user.id)}">${user.status === 'Active' ? 'Deactivate' : 'Activate'}</button>`:''}
+              ${!full&&!user.isBootstrap&&isWorkspaceAdministrator()?`<button class="danger-action" data-action="delete-user" data-id="${esc(user.id)}">Delete user</button>`:''}
+            </div>
+          </details>
         </td>
       </tr>
     `;
@@ -1637,6 +1741,25 @@ function openUserPermissionsForm(user) {
     const checked=children.filter(child=>child.checked).length;
     parent.indeterminate=checked>0&&checked<children.length;
   });
+}
+
+function openUserCredentialsForm(user) {
+  if (!user) return;
+  openDialog('set-user-credentials', 'Set login credentials', `Assign a unique username, email, and initial password for ${esc(user.name)}.`, `<div class="form-grid">${inputField('credential-username','Username','e.g. chiko','text',true,user.username||'')}${inputField('credential-email','Email','name@example.com','email',true,user.email||'')}${inputField('credential-password','Initial password','At least 8 characters','password',true)}${inputField('credential-password-confirm','Confirm password','Re-enter password','password',true)}</div>`,'Save credentials');
+  document.getElementById('modal-content').dataset.recordId = user.id;
+}
+
+function openUserEditForm(user) {
+  if(!user||user.isBootstrap||!isWorkspaceAdministrator())return;
+  const roles=['Salesman','Storekeeper','Manager','Owner / Administrator'];
+  openDialog('edit-user',`Edit ${esc(user.name)}`,'Update this user’s profile and login credentials. Leave the password blank to keep the current password.',`<div class="form-grid">${inputField('edit-user-name','Full name','', 'text',true,user.name||'')}${inputField('edit-user-username','Username','Choose a unique username','text',true,user.username||'')}${inputField('edit-user-email','Email','name@example.com','email',true,user.email||'')}${inputField('edit-user-phone','Phone','', 'tel',false,user.phone||'')}${inputField('edit-user-password','New password','Leave blank to keep current password','password')}${inputField('edit-user-password-confirm','Confirm new password','Re-enter new password','password')}${selectField('edit-user-role','Role',roles,user.role||'Salesman')}</div>`,'Save user');
+  document.getElementById('modal-content').dataset.recordId=user.id;
+}
+
+function openOwnCredentialsForm() {
+  const user = currentWorkspaceUser();
+  openModal('My account', 'Update the credentials for your signed-in account.', `<input type="hidden" name="dialog-kind" value="own-credentials"><div class="form-grid">${inputField('own-current-password','Current password','','password',true)}${inputField('own-username','Username','', 'text',true,user.username||'')}${inputField('own-email','Email','', 'email',true,user.email||'')}${inputField('own-new-password','New password','Leave blank to keep current password','password')}${inputField('own-new-password-confirm','Confirm new password','','password')}</div>`, 'Save changes', '<button type="button" class="button" data-action="logout">Sign out</button>');
+  document.getElementById('modal-content').dataset.dialogKind = 'own-credentials';
 }
 
 // Branches Page
@@ -1871,6 +1994,7 @@ function saveCompanySettings(form) {
 
 // Master Render Function
 function render() {
+  if (!state.currentUserId) { renderAuthGate(authErrorMessage); return; }
   ageFinalOrders();
   reconcileCustomerAccountPayments();
 
@@ -2134,7 +2258,7 @@ function switchBranch(id) {
   state.activeBranchId=branch.id;state.branch=branch.name;saveState();page='dashboard';pageHistory.length=0;history.pushState({erpPage:page},'',`#${page}`);render();toast(`Opened ${branch.name}`);
 }
 
-function handleDialogSubmit(form) {
+async function handleDialogSubmit(form) {
   const data = new FormData(form);
   const kind = form.dataset.dialogKind;
   const val = key => String(data.get(key) || '').trim();
@@ -2303,12 +2427,35 @@ function handleDialogSubmit(form) {
   if (kind === 'new-user') {
     if(!canPerformAction('new-user')){toast('You do not have permission to add users');return;}
     const name=val('user-name');if(!name){toast('Enter the user name');return;}
+    const username=val('user-username'),email=val('user-email'),password=String(data.get('user-password')||''),passwordConfirm=String(data.get('user-password-confirm')||'');
+    if(!username||!email||!credentialsAvailable(username,email)){toast('Choose a username and email that are unique to this user');return;}
+    if(password.length<8||password!==passwordConfirm){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
     const role=val('user-role')||'Salesman';
     if(role==='Owner / Administrator'&&!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can assign the administrator role');return;}
     const modules=userRoleDefaults[role]||userRoleDefaults.Salesman;
-    state.users.push({id:idFor('USR',state.users),name,email:val('user-email'),phone:val('user-phone'),role,modules:[...modules],permissions:rolePermissionMap(role,modules),branchId:activeBranch.id,status:'Active'});
+    const user={id:idFor('USR',state.users),name,username,email,phone:val('user-phone'),role,modules:[...modules],permissions:rolePermissionMap(role,modules),branchId:activeBranch.id,status:'Active'};
+    await setUserPassword(user,password);
+    state.users.push(user);
     recordActivity('User added',`${name} · ${role}`);
     saveState();document.getElementById('app-modal').close();render();toast('User added');return;
+  }
+  if(kind==='edit-user'){
+    if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can edit user accounts');return;}
+    const user=state.users.find(item=>item.id===form.dataset.recordId);
+    if(!user||user.isBootstrap){toast('This user account cannot be edited');return;}
+    const name=val('edit-user-name'),username=val('edit-user-username'),email=val('edit-user-email'),phone=val('edit-user-phone'),role=val('edit-user-role');
+    const password=String(data.get('edit-user-password')||''),passwordConfirm=String(data.get('edit-user-password-confirm')||'');
+    if(!name){toast('Enter the user name');return;}
+    if(!username||!email||!credentialsAvailable(username,email,user.id)){toast('Choose a username and email that are unique to this user');return;}
+    if(password&&(password.length<8||password!==passwordConfirm)){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
+    if(role==='Owner / Administrator'&&!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can assign the administrator role');return;}
+    const roleChanged=user.role!==role;
+    Object.assign(user,{name,username,email,phone,role});
+    if(roleChanged){const modules=userRoleDefaults[role]||userRoleDefaults.Salesman;user.modules=[...modules];user.permissions=rolePermissionMap(role,modules);}
+    if(password)await setUserPassword(user,password);
+    if(state.currentUserId===user.id)safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
+    recordActivity('User account updated',`${name} · ${role}`,user.id);
+    saveState();document.getElementById('app-modal').close();render();toast(`User ${name} updated`);return;
   }
   if(kind==='edit-user-permissions'){
     if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can override user permissions');return;}
@@ -2320,6 +2467,25 @@ function handleDialogSubmit(form) {
     user.modules=userActionPermissions.filter(group=>permissions[group.module].length>0).map(group=>group.module);
     recordActivity('User permissions updated',user.name,user.id);
     saveState();document.getElementById('app-modal').close();render();toast(`Permissions updated for ${user.name}`);return;
+  }
+  if(kind==='set-user-credentials'){
+    if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can set another user’s login credentials');return;}
+    const user=state.users.find(item=>item.id===form.dataset.recordId),username=val('credential-username'),email=val('credential-email'),password=String(data.get('credential-password')||'');
+    if(!user){toast('This user account could not be found');return;}
+    if(!credentialsAvailable(username,email,user.id)){toast('That username or email is already assigned to another user');return;}
+    if(password.length<8||password!==String(data.get('credential-password-confirm')||'')){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
+    Object.assign(user,{username,email});await setUserPassword(user,password);
+    saveState();document.getElementById('app-modal').close();render();toast(`Login credentials saved for ${user.name}`);return;
+  }
+  if(kind==='own-credentials'){
+    const user=currentWorkspaceUser(),username=val('own-username'),email=val('own-email'),currentPassword=String(data.get('own-current-password')||''),newPassword=String(data.get('own-new-password')||''),newPasswordConfirm=String(data.get('own-new-password-confirm')||'');
+    if(!await verifyUserPassword(user,currentPassword)){toast('Current password is incorrect');return;}
+    if(!credentialsAvailable(username,email,user.id)){toast('That username or email is already assigned to another user');return;}
+    if(newPassword&&(newPassword.length<8||newPassword!==newPasswordConfirm)){toast(newPassword.length<8?'New passwords must be at least 8 characters':'New passwords do not match');return;}
+    Object.assign(user,{username,email});if(newPassword)await setUserPassword(user,newPassword);
+    safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
+    recordActivity('Login credentials updated',user.name,user.id);
+    saveState();document.getElementById('app-modal').close();render();toast('Account credentials updated');return;
   }
   if (kind === 'new-branch') {
     const name=val('branch-name');if(!name){toast('Enter a branch name');return;}
@@ -2412,7 +2578,12 @@ function handleAction(button) {
       document.getElementById('modal-content').dataset.recordId=id;break;
     }
     case 'new-user':
-      openDialog('new-user','Add user','Add a team member to this workspace.',`<div class="form-grid">${inputField('user-name','Full name','', 'text',true)}${inputField('user-email','Email','', 'email')}${inputField('user-phone','Phone','', 'tel')}${selectField('user-role','Role',['Salesman','Storekeeper','Manager','Owner / Administrator'],'Salesman')}</div>`);break;
+      openDialog('new-user','Add user','Create the user profile and their personal login together.',`<div class="form-grid">${inputField('user-name','Full name','', 'text',true)}${inputField('user-username','Username','Choose a unique username','text',true)}${inputField('user-email','Email','name@example.com','email',true)}${inputField('user-phone','Phone','', 'tel')}${inputField('user-password','Password','At least 8 characters','password',true)}${inputField('user-password-confirm','Confirm password','Re-enter password','password',true)}${selectField('user-role','Role',['Salesman','Storekeeper','Manager','Owner / Administrator'],'Salesman')}</div>`,'Create account');break;
+    case 'edit-user': { const user=state.users.find(item=>item.id===id);openUserEditForm(user);break; }
+    case 'view-user-activity': { const user=state.users.find(item=>item.id===id);openUserActivityHistory(user);break; }
+    case 'set-user-credentials': { const user=state.users.find(item=>item.id===id);openUserCredentialsForm(user);break; }
+    case 'my-account': openOwnCredentialsForm();break;
+    case 'logout': logout();break;
     case 'edit-user-permissions': { const user=state.users.find(item=>item.id===id);openUserPermissionsForm(user);break; }
     case 'toggle-user': {
       const user=state.users.find(u=>u.id===id);if(!user||user.isBootstrap){toast('The owner account cannot be deactivated');break;}
@@ -2429,7 +2600,7 @@ function handleAction(button) {
         const nextAdmin=state.users.find(item=>item.role==='Owner / Administrator'&&item.status==='Active');
         const nextActive=state.users.find(item=>item.status==='Active');
         state.currentUserId=(builtInOwner||nextAdmin||nextActive)?.id||'';
-        if(state.currentUserId)safeStorageSet(AUTH_SESSION_KEY,state.currentUserId);else safeStorageRemove(AUTH_SESSION_KEY);
+        if(state.currentUserId){const nextUser=state.users.find(item=>item.id===state.currentUserId);safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:nextUser.id,passwordHash:nextUser.passwordHash}));}else safeSessionRemove(AUTH_SESSION_KEY);
       }
       if(button.dataset.deleteMode==='erase-all'){
         state.activityLog=(state.activityLog||[]).filter(item=>item.actor!==user.name);
@@ -2685,7 +2856,7 @@ function positionOrderActionsPortal() {
   const anchor = orderActionsAnchor.querySelector('summary');
   if (!anchor) { closeOrderActionsPortal(); return; }
   const rect = anchor.getBoundingClientRect();
-  const width = orderActionsAnchor.classList.contains('purchase-actions') ? 220 : orderActionsAnchor.classList.contains('party-actions') ? 210 : 190;
+  const width = orderActionsAnchor.classList.contains('purchase-actions') ? 220 : orderActionsAnchor.classList.contains('party-actions') ? 210 : orderActionsAnchor.classList.contains('user-actions') ? 210 : 190;
   const height = Math.min(orderActionsPortal.scrollHeight, window.innerHeight - 16);
   let left = rect.right - width;
   if (left < 8) left = rect.left;
@@ -2708,7 +2879,7 @@ function openOrderActionsPortal(details) {
   positionOrderActionsPortal();
 }
 document.addEventListener('click', event => {
-  const summary = event.target.closest('.sales-order-actions > summary, .purchase-actions > summary, .party-actions > summary');
+  const summary = event.target.closest('.sales-order-actions > summary, .purchase-actions > summary, .party-actions > summary, .user-actions > summary');
   if (summary) {
     event.preventDefault();
     const details = summary.closest('details');
@@ -2733,13 +2904,21 @@ document.addEventListener('click', event => {
 });
 
 document.addEventListener('submit', event => {
-  if (event.target.id === 'company-settings-form') {
+  if (event.target.id === 'login-form') {
+    event.preventDefault();
+    handleLogin(event.target);
+  } else if (event.target.id === 'company-settings-form') {
     event.preventDefault();
     if(!isWorkspaceAdministrator()&&!userHasPermission('settings','edit-company')){toast('You do not have permission to change company settings');return;}
     saveCompanySettings(event.target);
   } else if (event.target.id === 'modal-content' && event.target.dataset.dialogKind) {
     event.preventDefault();
-    handleDialogSubmit(event.target);
+    const submitButton = event.submitter;
+    if (submitButton?.disabled) return;
+    if (submitButton) submitButton.disabled = true;
+    Promise.resolve(handleDialogSubmit(event.target))
+      .catch(error => toast(error.message || 'The requested change could not be saved'))
+      .finally(() => { if (submitButton?.isConnected) submitButton.disabled = false; });
   }
 });
 
@@ -2897,6 +3076,7 @@ async function initApp() {
 
   // Load from IndexedDB (or seamlessly migrate from localStorage)
   state = await loadPersistedState(initialState);
+  state.currentUserId = '';
   activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
   state.activeBranchId = activeBranch.id;
   state.branch = activeBranch.name;
@@ -2912,8 +3092,26 @@ async function initApp() {
       timeZone: 'Africa/Dar_es_Salaam'
     }).format(new Date());
   }
-
-  render();
+  try {
+    const hasAdmin = await ensureAdministratorLogin();
+    if (!hasAdmin) { renderAuthGate('No administrator account is configured.'); return; }
+    saveState();
+  } catch (error) {
+    renderAuthGate(error.message || 'Secure sign-in could not be initialized.');
+    return;
+  }
+  let session = null;
+  try { session = JSON.parse(safeSessionGet(AUTH_SESSION_KEY) || 'null'); } catch {}
+  const signedInUser = state.users.find(user => user.id === session?.id && user.passwordHash === session?.passwordHash && user.status !== 'Inactive');
+  if (signedInUser) {
+    state.currentUserId = signedInUser.id;
+    document.getElementById('auth-gate').hidden = true;
+    document.querySelector('.app-shell').hidden = false;
+    render();
+  } else {
+    safeSessionRemove(AUTH_SESSION_KEY);
+    renderAuthGate();
+  }
 }
 
 // Start app
