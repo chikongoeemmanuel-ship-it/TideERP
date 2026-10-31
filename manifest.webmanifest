@@ -1,0 +1,12 @@
+{
+  "name": "Tide ERP — Business workspace",
+  "short_name": "Tide ERP",
+  "description": "A sales-led business workspace for Tanzania.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f4f7f9",
+  "theme_color": "#0082cf",
+  "icons": [
+    { "src": "tide.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

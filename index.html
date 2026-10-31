@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0082cf">
+  <meta name="description" content="Tide ERP — a sales-led business workspace for teams in Tanzania.">
+  <link rel="icon" href="tide.svg" type="image/svg+xml">
+  <title>Tide ERP — Business workspace</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="app.css?v=75">
+</head>
+<body>
+  <section class="auth-gate" id="auth-gate" aria-live="polite" hidden></section>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      
+      <div class="workspace-switch" id="workspace-switch" aria-label="Company" title="Company logo"><span class="workspace-avatar">K</span></div>
+      <nav class="primary-nav" aria-label="Main navigation">
+        <p class="nav-label">WORKSPACE</p>
+        <button class="nav-item active" data-page="dashboard"><span class="nav-icon">◫</span>Overview</button>
+        <button class="nav-item" data-page="sales"><span class="nav-icon">↗</span>Sales <span class="nav-count" id="order-count">0</span></button>
+        <button class="nav-item" data-page="pos"><span class="nav-icon">▦</span>Point of sale</button>
+        <button class="nav-item" data-page="inventory"><span class="nav-icon">▤</span>Inventory</button>
+        <button class="nav-item" data-page="purchases"><span class="nav-icon">⇩</span>Purchases</button>
+        <p class="nav-label nav-label-spaced">MANAGE</p>
+        <button class="nav-item" data-page="customers"><span class="nav-icon">♙</span>Customers</button>
+        <button class="nav-item" data-page="suppliers"><span class="nav-icon">♧</span>Suppliers</button><button class="nav-item" data-page="users"><span class="nav-icon">♙</span>Users</button><button class="nav-item" data-page="branches"><span class="nav-icon">▦</span>Branches</button>
+        <button class="nav-item" data-page="accounting"><span class="nav-icon">◈</span>Accounting</button>
+        <button class="nav-item" data-page="reports"><span class="nav-icon">▥</span>Reports</button>
+        <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span>Settings</button>
+      </nav>
+      <div class="sidebar-bottom"><div class="offline-indicator"><span class="online-dot" id="connection-dot"></span><span id="connection-label">All changes saved</span></div><button class="profile-button"><span class="profile-avatar">AM</span><span class="profile-copy"><strong>Amina Mwinyi</strong><small>Administrator</small></span><span class="chevron">···</span></button></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar"><a class="topbar-brand" href="#dashboard" aria-label="TideERP home"><span class="brand-mark">t</span><span>Tide<span class="brand-muted">ERP</span></span></a><button class="mobile-menu" id="mobile-menu" aria-label="Open navigation">☰</button><button class="back-button" id="back-button" aria-label="Go to previous section" disabled>← <span>Back</span></button><div class="breadcrumb"><strong id="crumb-current">Overview</strong></div><div class="topbar-actions"><span class="today-label" id="today-label"></span><button class="icon-button" id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode">☾</button><button class="icon-button" id="install-button" title="Install Tide ERP" hidden>⇩</button><button class="icon-button notification-button" id="notifications-button" type="button" aria-label="Notifications" title="Notifications">🔔<i></i></button><button class="icon-button activity-button" id="activity-button" type="button" aria-label="Activity history" title="Activity history" hidden>◷</button><button class="topbar-avatar profile-trigger" id="user-profile-button" type="button" aria-label="User credentials and profile" title="User profile">AM</button></div></header>
+      <div class="page-wrap" id="page-content" aria-live="polite"></div>
+    </main>
+  </div>
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  <dialog class="modal" id="app-modal"><form method="dialog" class="modal-card" id="modal-content"></form></dialog>
+  <script defer src="db.js?v=94"></script>
+  <script defer src="tax.js?v=94"></script>
+  <script defer src="trash.js?v=94"></script>
+  <script defer src="app.js?v=112"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
