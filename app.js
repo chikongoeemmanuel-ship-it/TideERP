@@ -117,7 +117,7 @@ const userActionPermissions = [
   { module: 'inventory', actions: [['view', 'View products and stock'], ['add-products', 'Add products'], ['edit-products', 'Edit products'], ['delete-products', 'Delete products'], ['adjust-stock', 'Adjust stock'], ['stock-history', 'View stock history'], ['stocktake', 'Run stock take'], ['bulk-import', 'Import products in bulk'], ['export', 'Export products']] },
   { module: 'purchases', actions: [['view', 'View purchases'], ['create', 'Create purchase orders'], ['edit', 'Edit purchase orders'], ['delete', 'Delete purchases'], ['receive', 'Receive stock'], ['payments', 'Record supplier payments'], ['returns', 'Manage supplier returns'], ['invoices', 'Upload and view invoices']] },
   { module: 'customers', actions: [['view', 'View customers'], ['add', 'Add customers'], ['edit', 'Edit customers'], ['delete', 'Delete customers'], ['activate', 'Activate or deactivate customers'], ['account-view', 'View account history'], ['order-history', 'View customer past orders'], ['payments', 'Record customer payments'], ['export', 'Export customers']] },
-  { module: 'suppliers', actions: [['view', 'View suppliers'], ['add', 'Add suppliers'], ['edit', 'Edit suppliers'], ['delete', 'Delete suppliers'], ['activate', 'Activate or deactivate suppliers'], ['account-view', 'View account history'], ['payments', 'Record supplier payments'], ['returns', 'Manage supplier returns'], ['payment-details', 'View payment details'], ['export', 'Export suppliers']] },
+  { module: 'suppliers', actions: [['view', 'View suppliers'], ['add', 'Add suppliers'], ['edit', 'Edit suppliers'], ['delete', 'Delete suppliers'], ['activate', 'Activate or deactivate suppliers'], ['account-view', 'View account history'], ['order-history', 'View supplier past purchase orders'], ['payments', 'Record supplier payments'], ['returns', 'Manage supplier returns'], ['payment-details', 'View payment details'], ['export', 'Export suppliers']] },
   { module: 'accounting', actions: [['view', 'View accounting and ledger'], ['record-payments', 'Record account payments'], ['manage-entries', 'Manage account entries'], ['export', 'Export ledger']] },
   { module: 'reports', actions: [['view', 'View reports'], ['export', 'Export reports']] },
   { module: 'settings', actions: [['view', 'View settings'], ['edit-company', 'Edit company details'], ['edit-logo', 'Change company logo'], ['manage-branches', 'Manage branches']] },
@@ -168,6 +168,9 @@ function canPerformAction(action,element=null) {
     case 'delete-order':return require('sales','delete');
     case 'view-customer-orders':return require('customers','order-history');
     case 'edit-party':return require(type==='Supplier'?'suppliers':'customers','edit');
+    case 'delete-party':return isWorkspaceAdministrator();
+    case 'toggle-party':return require(type==='Supplier'?'suppliers':'customers','activate');
+    case 'view-party-orders':return require(type==='Supplier'?'suppliers':'customers','order-history');
     case 'add-cart':case 'cart-qty':case 'clear-cart':return require('pos','open');
     case 'save-pos-draft':case 'resume-pos':return require('pos','draft');
     case 'complete-pos':return require('pos','finalize');
@@ -391,7 +394,7 @@ function notificationItems() {
   if(canViewPage('purchases')){
     const pending=state.purchases.filter(purchase=>purchase.status==='Pending');
     if(pending.length)items.push({icon:'⇩',title:`${pending.length} purchase order${pending.length===1?'':'s'} awaiting receipt`,detail:'Receive items to update stock.',page:'purchases',tone:'info'});
-    const payable=state.suppliers.reduce((sum,supplier)=>sum+Math.max(0,-(Number(supplier.balance)||0)),0);
+    const payable=accountOutstandingTotal('Supplier');
     if(payable)items.push({icon:'◈',title:'Supplier balances outstanding',detail:`${money(payable)} payable`,page:canViewPage('accounting')?'accounting':'purchases',tone:'warning'});
   }
   return items;
@@ -497,6 +500,20 @@ function entryBalanceDelta(partyType, type, amount) {
   return partyType === 'Supplier' ? (type === 'Credit' ? -amount : amount) : (type === 'Debit' ? amount : -amount);
 }
 
+function accountOutstandingTotal(partyType) {
+  const isSupplier = partyType === 'Supplier';
+  const accounts = isSupplier ? state.suppliers : state.customers;
+  const knownNames = new Set(accounts.map(account => account.name));
+  const retainedBalances = new Map();
+  for (const entry of state.entries) {
+    if (entry.partyType !== partyType || knownNames.has(entry.party)) continue;
+    retainedBalances.set(entry.party, (retainedBalances.get(entry.party) || 0) + entryBalanceDelta(partyType, entry.type, Number(entry.amount) || 0));
+  }
+  const activeTotal = accounts.reduce((sum, account) => sum + Math.max(0, isSupplier ? -(Number(account.balance) || 0) : (Number(account.balance) || 0)), 0);
+  const retainedTotal = [...retainedBalances.values()].reduce((sum, balance) => sum + Math.max(0, isSupplier ? -balance : balance), 0);
+  return activeTotal + retainedTotal;
+}
+
 function postAccountEntry({ partyType, party, date = today(), type, amount, memo, sourceType = '', sourceId = '', relatedId = '' }) {
   const account = (partyType === 'Supplier' ? state.suppliers : state.customers).find(item => item.name === party);
   if (account) account.balance += entryBalanceDelta(partyType, type, amount);
@@ -517,6 +534,16 @@ function removeAccountEntries(predicate) {
   const removed = state.entries.filter(predicate);
   for (const entry of removed) adjustAccountEntry(entry, 0);
   state.entries = state.entries.filter(entry => !predicate(entry));
+}
+
+function permanentlyDeleteParty(type, name) {
+  const isSupplier = type === 'Supplier';
+  const list = isSupplier ? state.suppliers : state.customers;
+  const account = list.find(item => item.name === name);
+  if (!account) return null;
+  list.splice(list.indexOf(account), 1);
+  recordActivity(`${type} profile permanently deleted`, `${name} · linked transaction history retained`);
+  return true;
 }
 
 function allocateCustomerAccountPayment(entry) {
@@ -682,8 +709,8 @@ function recentSalesTable(rows = state.sales.slice(0, 5)) {
 
 function renderDashboard() {
   const monthSales = dashboardSales().reduce((sum, s) => sum + s.total, 0);
-  const receivable = state.customers.reduce((s, c) => s + Math.max(0, c.balance), 0);
-  const payable = state.suppliers.reduce((s, c) => s + Math.max(0, -c.balance), 0);
+  const receivable = accountOutstandingTotal('Customer');
+  const payable = accountOutstandingTotal('Supplier');
   const low = state.products.filter(p => p.stock <= p.low).length;
   return `
     ${heading(esc(greetingTitle()), 'Here’s what’s happening with your business today.', `
@@ -1363,22 +1390,43 @@ function renderParties(type) {
   const label = isSupplier ? 'Suppliers' : 'Customers';
   const balanceLabel = isSupplier ? 'Total Payables' : 'Total Receivables';
   const totalBalance = list.reduce((s, item) => s + Math.max(0, isSupplier ? -item.balance : item.balance), 0);
+  const partyType = isSupplier ? 'Supplier' : 'Customer';
 
-  const rows = list.map(item => `
+  const rows = list.map(item => {
+    const balance = Number(item.balance) || 0;
+    const outstanding = isSupplier ? balance < 0 : balance > 0;
+    const overpaid = isSupplier ? balance > 0 : balance < 0;
+    const paymentStatus = outstanding ? 'Outstanding' : overpaid ? 'Overpaid / credit' : 'Settled';
+    const paymentClass = outstanding ? 'pending' : 'paid';
+    const canEdit = userHasPermission(isSupplier ? 'suppliers' : 'customers', 'edit');
+    const canHistory = userHasPermission(isSupplier ? 'suppliers' : 'customers', 'order-history');
+    const canActivate = userHasPermission(isSupplier ? 'suppliers' : 'customers', 'activate');
+    return `
     <tr>
       <td><strong>${esc(item.name)}</strong><small>${esc(item.id)}</small></td>
       <td>${esc(item.phone || item.contactPerson || '—')}</td>
       <td>${esc(item.email || '—')}</td>
       ${isSupplier ? '' : `<td>${Number(item.creditLimit)>0?money(item.creditLimit):'—'}</td>`}
-      <td><strong>${money(Math.abs(item.balance))}</strong></td>
+      <td>
+        <strong>${money(Math.abs(balance))}</strong>
+      </td>
+      <td><span class="status-pill ${paymentClass}">${paymentStatus}</span></td>
       <td><span class="status-pill ${item.status === 'Inactive' ? 'critical' : 'paid'}">${esc(item.status || 'Active')}</span></td>
       <td>
-        ${!isSupplier && userHasPermission('customers','order-history') ? `<button class="button small" data-action="view-customer-orders" data-party-name="${esc(item.name)}">Past orders</button>` : ''}
-        ${!isSupplier && userHasPermission('customers','edit') ? `<button class="button small" data-action="edit-party" data-party-type="Customer" data-party-name="${esc(item.name)}">Edit</button>` : ''}
-        <button class="button small" data-action="record-payment" data-party-type="${isSupplier ? 'Supplier' : 'Customer'}" data-party-name="${esc(item.name)}">Payment</button>
+        <details class="order-actions party-actions">
+          <summary aria-label="Actions for ${esc(item.name)}" title="Account actions">⋮</summary>
+          <div class="order-actions-menu party-actions-menu">
+            ${canEdit ? `<button data-action="edit-party" data-party-type="${partyType}" data-party-name="${esc(item.name)}">Edit</button>` : ''}
+            ${canHistory ? `<button data-action="view-party-orders" data-party-type="${partyType}" data-party-name="${esc(item.name)}">Past ${isSupplier ? 'purchase orders' : 'orders'}</button>` : ''}
+            <button data-action="record-payment" data-party-type="${partyType}" data-party-name="${esc(item.name)}">Record payment</button>
+            ${canActivate ? `<button data-action="toggle-party" data-party-type="${partyType}" data-party-name="${esc(item.name)}">${item.status === 'Inactive' ? 'Activate' : 'Deactivate'}</button>` : ''}
+            ${isWorkspaceAdministrator() ? `<span class="menu-divider"></span><button class="danger-action" data-action="delete-party" data-party-type="${partyType}" data-party-name="${esc(item.name)}">Delete permanently</button>` : ''}
+          </div>
+        </details>
       </td>
     </tr>
-  `).join('') || emptyRow(isSupplier ? 6 : 7, `No ${label.toLowerCase()} yet`);
+    `;
+  }).join('') || emptyRow(isSupplier ? 7 : 8, `No ${label.toLowerCase()} yet`);
 
   return `
     ${heading(label, `Manage ${label.toLowerCase()} and view outstanding ledger balances.`, `
@@ -1391,7 +1439,7 @@ function renderParties(type) {
       <div class="summary-mini"><small>Active accounts</small><strong>${list.filter(i => i.status !== 'Inactive').length}</strong></div>
     </section>
     <section class="table-panel">
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>Account Name</th><th>Phone / Contact</th><th>Email</th>${isSupplier?'':'<th>Credit limit</th>'}<th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Account Name</th><th>Phone / Contact</th><th>Email</th>${isSupplier?'':'<th>Credit limit</th>'}<th>Balance</th><th>Payment status</th><th>Account status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>
   `;
 }
@@ -1475,8 +1523,8 @@ function renderBranches() {
 
 // Accounting & Reports Page
 function renderAccounting() {
-  const receivables=state.customers.reduce((sum,account)=>sum+Math.max(0,Number(account.balance)||0),0);
-  const payables=state.suppliers.reduce((sum,account)=>sum+Math.max(0,-(Number(account.balance)||0)),0);
+  const receivables=accountOutstandingTotal('Customer');
+  const payables=accountOutstandingTotal('Supplier');
   const renderAccounts=(partyType,accounts)=>accounts.length?accounts.map(account=>{
     const balance=Number(account.balance)||0;
     const amount=partyType==='Customer'?Math.abs(balance):Math.abs(balance);
@@ -1567,8 +1615,8 @@ function renderReports() {
   const paymentGroups=new Map();
   data.sales.forEach(sale=>{const method=sale.method||'Other';paymentGroups.set(method,(paymentGroups.get(method)||0)+(Number(sale.total)||0))});
   const revenueMix=[['Sales revenue',data.salesTotal],['Purchase orders',data.purchaseTotal]];
-  const receivable=state.customers.reduce((sum,customer)=>sum+Math.max(0,Number(customer.balance)||0),0);
-  const payable=state.suppliers.reduce((sum,supplier)=>sum+Math.max(0,-(Number(supplier.balance)||0)),0);
+  const receivable=accountOutstandingTotal('Customer');
+  const payable=accountOutstandingTotal('Supplier');
   const periodLabel=reportPeriod==='weekly'?'Weekly':reportPeriod==='annual'?'Annual':'Monthly';
   return `
     ${heading('Financial Reports','Visual financial summaries with weekly, monthly, and annual reporting periods.',`<button class="button" data-action="export-financial-report">↓ Export ${periodLabel.toLowerCase()} report</button>`)}
@@ -1748,6 +1796,18 @@ function openCustomerOrderHistory(name) {
   openModal(`${esc(name)} · Past orders`,`${orders.length} saved order${orders.length===1?'':'s'}`,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Order</th><th>Date</th><th>Total</th><th>Status</th><th>Payment</th></tr></thead><tbody>${rows}</tbody></table></div>`,'Close');
 }
 
+function openSupplierOrderHistory(name) {
+  if (!userHasPermission('suppliers','order-history')) { toast('You do not have permission to view supplier purchase history'); return; }
+  const purchases=state.purchases.filter(purchase=>purchase.supplier===name).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const rows=purchases.map(purchase=>`<tr><td><strong>${esc(purchase.id)}</strong></td><td>${dateLabel(purchase.date)}</td><td>${money(purchase.total)}</td><td>${purchase.paid>=purchase.total?'Paid':purchase.paid>0?'Part paid':'Due'}</td><td>${esc(purchase.status||'Pending')}</td></tr>`).join('')||emptyRow(5,'No past purchase orders for this supplier');
+  openModal(`${esc(name)} · Past purchase orders`,`${purchases.length} saved purchase order${purchases.length===1?'':'s'}`,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Purchase order</th><th>Date</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`,'Close');
+}
+
+function openPartyOrderHistory(type, name) {
+  if (type === 'Supplier') openSupplierOrderHistory(name);
+  else openCustomerOrderHistory(name);
+}
+
 function openPaymentForm(partyType = '', partyName = '') {
   const names = (partyType === 'Supplier' ? state.suppliers : state.customers).map(p => p.name);
   const partyOptions = names.length ? names : ['Walk-in customer'];
@@ -1780,7 +1840,7 @@ function openAccountReconcile(partyType, partyName) {
 function openOrderForm(existing = null) {
   const products = activeProducts();
   if (!products.length && !existing) { toast('Add an active product to Inventory before creating a sales order'); return; }
-  const names = [...new Set([...state.customers.map(c => c.name), ...(existing?.customer ? [existing.customer] : [])])];
+  const names = [...new Set([...state.customers.filter(c => c.status !== 'Inactive').map(c => c.name), ...(existing?.customer ? [existing.customer] : [])])];
   const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${inputField('order-due','Due date','', 'date',false,existing?.due || today())}</div>${transactionProductPicker('order')}<div class="transaction-lines" id="order-product-lines"><div class="transaction-empty">Search and select products to add them to this order.</div></div>${transactionPaymentSummary('order')}`;
   openDialog(existing ? 'edit-order' : 'new-order',existing ? `${existing.source === 'POS' ? 'Edit POS sale' : 'Edit sales order'}` : 'Create sales order',existing ? `Update ${esc(existing.id)}. Finalized sales update inventory and the customer account.` : 'Choose the customer and date, then search to add as many products as needed. The order will be saved as a draft.',content,existing ? 'Save changes' : 'Save draft');
   const form = document.getElementById('modal-content');
@@ -1796,8 +1856,9 @@ function openOrderForm(existing = null) {
 
 function openPurchaseForm(existing = null) {
   const products = activeProducts();
-  if ((!products.length || !state.suppliers.length) && !existing) { toast('Add at least one active product and one supplier first'); return; }
-  const supplierNames = [...new Set([...state.suppliers.map(p => p.name), ...(existing?.supplier ? [existing.supplier] : [])])];
+  const activeSuppliers = state.suppliers.filter(supplier => supplier.status !== 'Inactive');
+  if ((!products.length || !activeSuppliers.length) && !existing) { toast('Add an active product and supplier before creating a purchase order'); return; }
+  const supplierNames = [...new Set([...activeSuppliers.map(p => p.name), ...(existing?.supplier ? [existing.supplier] : [])])];
   const content = `<div class="form-grid">${selectField('purchase-supplier','Supplier',supplierNames,existing?.supplier || supplierNames[0])}${inputField('purchase-date','Order date','','date',true,existing?.date || today())}</div>${transactionProductPicker('purchase')}<div class="transaction-lines" id="purchase-product-lines"><div class="transaction-empty">Search and select products to add them to this order.</div></div>${transactionPaymentSummary('purchase')}`;
   openDialog(existing ? 'edit-purchase' : 'new-purchase','Purchase order',existing ? `Update ${esc(existing.id)}. Received purchases adjust stock and the supplier account.` : 'Choose the supplier and date, then search to add as many products as needed. Receive the order to update stock.',content,existing ? 'Save changes' : 'Save purchase order');
   const form = document.getElementById('modal-content');
@@ -1839,20 +1900,27 @@ function transactionLineTotals(kind) {
   return { lines, subtotal, discount, additional, total, paid, balance };
 }
 
-function addTransactionProduct(kind, productId) {
+function addTransactionProduct(kind, productId, line = null) {
   const product = state.products.find(item => item.id === productId);
   const host = document.getElementById(`${kind}-product-lines`);
   if (!product || !host) return;
-  const existing = host.querySelector(`[data-product-id="${CSS.escape(productId)}"]`);
+  // Sales orders preserve each selection as its own line in the order entered.
+  // Purchase orders retain their existing behavior of combining repeated products.
+  const existing = kind === 'order' ? null : host.querySelector(`[data-product-id="${CSS.escape(productId)}"]`);
   if (existing) {
     const qty = existing.querySelector('[data-line-qty]'); qty.value = (Number(qty.value) || 0) + 1;
   } else {
     if (host.querySelector('.transaction-empty')) host.innerHTML = '';
     const price = kind === 'order' ? Number(product.price) || 0 : Number(product.cost) || 0;
     const row = document.createElement('div'); row.className = 'transaction-product-line'; row.dataset.productId = product.id;
-    row.innerHTML = `<div class="transaction-product-copy"><strong>${esc(product.name)}</strong><small>${esc(product.id)} · Current ${kind === 'order' ? 'price' : 'cost'} ${money(price)} · Stock ${Number(product.stock)||0} ${esc(product.unit||'')}</small></div><label class="transaction-number"><span>Qty</span><input type="number" min="1" step="1" value="1" data-line-qty aria-label="${esc(product.name)} quantity"></label><label class="transaction-number"><span>${kind === 'order' ? 'Unit price' : 'Unit cost'}</span><input type="number" min="0" step="any" value="${price}" data-line-price aria-label="${esc(product.name)} unit ${kind === 'order' ? 'price' : 'cost'}"></label><strong class="transaction-line-total" data-line-total>${money(price)}</strong><button type="button" class="transaction-remove" data-action="remove-transaction-product" aria-label="Remove ${esc(product.name)}">×</button>`;
+    const initialQty = Number(line?.qty) > 0 ? Number(line.qty) : 1;
+    const linePrice = line?.[kind === 'order' ? 'unitPrice' : 'unitCost'];
+    const initialPrice = Number.isFinite(Number(linePrice)) ? Number(linePrice) : price;
+    row.innerHTML = `<div class="transaction-product-copy"><strong>${esc(product.name)}</strong><small>${esc(product.id)} · Current ${kind === 'order' ? 'price' : 'cost'} ${money(price)} · Stock ${Number(product.stock)||0} ${esc(product.unit||'')}</small></div><label class="transaction-number"><span>Qty</span><input type="number" min="1" step="1" value="${initialQty}" data-line-qty aria-label="${esc(product.name)} quantity"></label><label class="transaction-number"><span>${kind === 'order' ? 'Unit price' : 'Unit cost'}</span><input type="number" min="0" step="any" value="${initialPrice}" data-line-price aria-label="${esc(product.name)} unit ${kind === 'order' ? 'price' : 'cost'}"></label><strong class="transaction-line-total" data-line-total>${money(initialQty * initialPrice)}</strong><button type="button" class="transaction-remove" data-action="remove-transaction-product" aria-label="Remove ${esc(product.name)}">×</button>`;
     host.append(row);
-    [...host.querySelectorAll('.transaction-product-line')].sort((a,b)=>compareProductNames(a.querySelector('.transaction-product-copy strong').textContent,b.querySelector('.transaction-product-copy strong').textContent)).forEach(line=>host.append(line));
+    if (kind !== 'order') {
+      [...host.querySelectorAll('.transaction-product-line')].sort((a,b)=>compareProductNames(a.querySelector('.transaction-product-copy strong').textContent,b.querySelector('.transaction-product-copy strong').textContent)).forEach(line=>host.append(line));
+    }
   }
   const search = document.getElementById(`${kind}-product-search`), suggestions = document.getElementById(`${kind}-product-suggestions`);
   if (search) search.value = ''; if (suggestions) { suggestions.hidden = true; suggestions.innerHTML = ''; }
@@ -1868,6 +1936,11 @@ function updateTransactionLines(kind) {
 }
 
 function seedTransactionLineValues(kind, items, priceKey) {
+  if (kind === 'order') {
+    for (const item of items) addTransactionProduct(kind, item.productId, item);
+    updateTransactionLines(kind);
+    return;
+  }
   const grouped = new Map();
   for (const item of items) {
     const entry = grouped.get(item.productId) || { qty: 0, value: 0 };
@@ -1903,7 +1976,7 @@ function openOrderPayment(id) {
 
 function openOrderReturn(id) {
   const order=state.orders.find(o=>o.id===id);if(!order)return;
-  const lines=(order.items||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return { id:l.productId, name:p?.name||l.productId, label:p?`${p.id} · ${p.name}`:l.productId };}).sort((a,b)=>compareProductNames(a.name,b.name)||compareProductNames(a.id,b.id)).map(l=>l.label);
+  const lines=(order.items||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return p?`${p.id} · ${p.name}`:l.productId;});
   openDialog('order-return','Manage return',`Record returned items for ${esc(order.id)}.`,`${selectField('return-product','Product',lines)}${inputField('return-qty','Quantity returned','','number',true,1)}${inputField('return-reason','Reason','Optional note')}<div class="field"><label><input type="checkbox" name="return-restock" checked> Restock returned items</label></div>`,'Save return');
   document.getElementById('modal-content').dataset.recordId=id;
 }
@@ -1936,7 +2009,7 @@ function handleDialogSubmit(form) {
     if (list.some(p => p.id !== existing?.id && p.name.toLowerCase() === val('party-name').toLowerCase())) { toast('That account already exists'); return; }
     const record={id:existing?.id||idFor(type === 'Supplier' ? 'SUP' : 'CUS', list),name:val('party-name'),phone:val('party-phone'),email:val('party-email'),terms:val('party-terms')||'Due on receipt',balance:existing?.balance||0,status:existing?.status||'Active'};
     if(type==='Customer')record.creditLimit=Math.max(0,Number(val('party-credit-limit'))||0);
-    if(existing){const previousName=existing.name;Object.assign(existing,record);if(type==='Customer'&&previousName!==record.name){state.orders.forEach(order=>{if(order.customer===previousName)order.customer=record.name;});state.sales.forEach(sale=>{if(sale.customer===previousName)sale.customer=record.name;});state.entries.forEach(entry=>{if(entry.partyType==='Customer'&&entry.party===previousName)entry.party=record.name;});}}else list.unshift(record);
+    if(existing){const previousName=existing.name;Object.assign(existing,record);if(previousName!==record.name){if(type==='Customer'){state.orders.forEach(order=>{if(order.customer===previousName)order.customer=record.name;});state.sales.forEach(sale=>{if(sale.customer===previousName)sale.customer=record.name;});}else state.purchases.forEach(purchase=>{if(purchase.supplier===previousName)purchase.supplier=record.name;});state.entries.forEach(entry=>{if(entry.partyType===type&&entry.party===previousName)entry.party=record.name;});}}else list.unshift(record);
     recordActivity(`${type} ${editing?'updated':'added'}`,val('party-name'),record.id);
     saveState(); document.getElementById('app-modal').close(); render(); toast(`${type} ${editing?'updated':'added'}`); return;
   }
@@ -2122,8 +2195,40 @@ function handleAction(button) {
     case 'new-product': openProductForm(); break;
     case 'edit-product': openProductForm(state.products.find(p => p.id === id)); break;
     case 'new-party': openPartyForm(type || 'Customer'); break;
-    case 'edit-party': { const party=state.customers.find(item=>item.name===button.dataset.partyName); if(party)openPartyForm('Customer',party); break; }
+    case 'edit-party': { const partyType=type==='Supplier'?'Supplier':'Customer',list=partyType==='Supplier'?state.suppliers:state.customers,party=list.find(item=>item.name===button.dataset.partyName); if(party)openPartyForm(partyType,party); break; }
+    case 'delete-party': {
+      if (!isWorkspaceAdministrator()) { toast('Only the Owner / Administrator can permanently delete customer or supplier accounts'); break; }
+      const partyType = type === 'Supplier' ? 'Supplier' : 'Customer', partyName = button.dataset.partyName;
+      const partyList = partyType === 'Supplier' ? state.suppliers : state.customers;
+      if (!partyList.some(item => item.name === partyName)) { toast(`${partyType} account could not be found`); break; }
+      const directSales = partyType === 'Customer' ? state.sales.filter(item => item.customer === partyName) : [];
+      const directSaleOrderIds = new Set(directSales.map(item => item.orderId).filter(Boolean));
+      const linkedOrders = partyType === 'Customer' ? state.orders.filter(item => item.customer === partyName || directSaleOrderIds.has(item.id)) : [];
+      const orderIds = new Set(linkedOrders.map(item => item.id));
+      const invoiceIds = new Set(linkedOrders.map(item => item.invoiceId).filter(Boolean));
+      const linkedSales = partyType === 'Customer' ? state.sales.filter(item => item.customer === partyName || orderIds.has(item.orderId) || invoiceIds.has(item.id)) : [];
+      const linkedPurchases = partyType === 'Supplier' ? state.purchases.filter(item => item.supplier === partyName) : [];
+      const linkedReturns = partyType === 'Customer'
+        ? (state.returns || []).filter(item => orderIds.has(item.saleId) || linkedSales.some(sale => sale.id === item.saleId))
+        : (state.purchaseReturns || []).filter(item => linkedPurchases.some(purchase => purchase.id === item.purchaseId || purchase.id === item.purchaseOrderId));
+      const linkedLedger = state.entries.filter(item => item.partyType === partyType && item.party === partyName).length;
+      const details = partyType === 'Customer'
+        ? `${linkedOrders.length} sales orders, ${linkedSales.length} invoices, ${linkedReturns.length} returns and ${linkedLedger} account entries`
+        : `${linkedPurchases.length} purchase orders, ${linkedReturns.length} returns and ${linkedLedger} account entries`;
+      if (!confirm(`PERMANENT ADMIN DELETE: remove the ${partyType.toLowerCase()} profile for ${partyName}? ${details} will be retained in transaction history and reports, with the party name kept as a historical reference. The profile and its contact details will be removed and cannot be restored from Trash.`)) break;
+      permanentlyDeleteParty(partyType, partyName);
+      saveState(); render(); toast(`${partyType} profile deleted; linked transaction history retained`); break;
+    }
     case 'view-customer-orders': openCustomerOrderHistory(button.dataset.partyName); break;
+    case 'view-party-orders': openPartyOrderHistory(type,button.dataset.partyName); break;
+    case 'toggle-party': {
+      const partyType=type==='Supplier'?'Supplier':'Customer',list=partyType==='Supplier'?state.suppliers:state.customers,party=list.find(item=>item.name===button.dataset.partyName);
+      if(!party)break;
+      if(!userHasPermission(partyType==='Supplier'?'suppliers':'customers','activate')){toast(`You do not have permission to activate or deactivate ${partyType.toLowerCase()} accounts`);break;}
+      party.status=party.status==='Inactive'?'Active':'Inactive';
+      recordActivity(`${partyType} ${party.status==='Active'?'activated':'deactivated'}`,party.name,party.id);
+      saveState();render();toast(`${partyType} ${party.name} ${party.status==='Active'?'activated':'deactivated'}`);break;
+    }
     case 'new-order': openOrderForm(); break;
     case 'edit-order': { const order=state.orders.find(item=>item.id===id); if(order)openOrderForm(order); break; }
     case 'record-payment': if(document.getElementById('app-modal')?.open)document.getElementById('app-modal').close();openPaymentForm(type || '', button.dataset.partyName || ''); break;
@@ -2176,7 +2281,7 @@ function handleAction(button) {
     }
     case 'view-order': {
       const order=salesOrderRows().find(o=>o.id===id);if(!order)break;
-      const lines=(order.items||[]).slice().sort((a,b)=>compareProductNames(state.products.find(p=>p.id===a.productId)?.name||a.productId,state.products.find(p=>p.id===b.productId)?.name||b.productId)).map(l=>{const p=state.products.find(x=>x.id===l.productId);return `<tr><td>${esc(p?.name||l.productId)}</td><td>${l.qty}</td><td>${money(l.unitPrice||p?.price||0)}</td><td>${money(l.qty*(l.unitPrice||p?.price||0))}</td></tr>`}).join('');
+      const lines=(order.items||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return `<tr><td>${esc(p?.name||l.productId)}</td><td>${l.qty}</td><td>${money(l.unitPrice??p?.price??0)}</td><td>${money(l.qty*(l.unitPrice??p?.price??0))}</td></tr>`}).join('');
       openModal('Order details',`${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div><p><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)} · ${orderPaymentStatus(order)}</strong></p>`,'Close');break;
     }
     case 'add-order-payment': openOrderPayment(id);break;
@@ -2296,8 +2401,8 @@ function handleAction(button) {
       break;
     case 'export-financial-report': {
       const report=reportPeriodData();
-      const receivables=state.customers.reduce((sum,customer)=>sum+Math.max(0,Number(customer.balance)||0),0);
-      const payables=state.suppliers.reduce((sum,supplier)=>sum+Math.max(0,-(Number(supplier.balance)||0)),0);
+      const receivables=accountOutstandingTotal('Customer');
+      const payables=accountOutstandingTotal('Supplier');
       const methodTotals=new Map();report.sales.forEach(sale=>{const method=sale.method||'Other';methodTotals.set(method,(methodTotals.get(method)||0)+(Number(sale.total)||0));});
       downloadCSV(`tide-financial-${reportPeriod}-${today()}.csv`,[['Report',report.label],['From',report.start],['To',report.end],[],['Measure','Amount TZS'],['Sales revenue',report.salesTotal],['Customer payments collected',report.collected],['Purchases ordered',report.purchaseTotal],['Supplier payments made',report.supplierPaid],['Net cash movement',report.netCollected],['Customer receivables',receivables],['Supplier payables',payables],[],['Sales by payment method','Amount TZS'],...Array.from(methodTotals)]);
       break;
@@ -2338,7 +2443,7 @@ function importProductsCSV(csv) {
   saveState();render();toast(`${added} product${added===1?'':'s'} imported`);
 }
 
-// Keep sales and purchase action menus outside the scroll-clipped table.
+// Keep table action menus outside the scroll-clipped table.
 let orderActionsPortal = null;
 let orderActionsAnchor = null;
 function closeOrderActionsPortal() {
@@ -2351,7 +2456,7 @@ function positionOrderActionsPortal() {
   const anchor = orderActionsAnchor.querySelector('summary');
   if (!anchor) { closeOrderActionsPortal(); return; }
   const rect = anchor.getBoundingClientRect();
-  const width = orderActionsAnchor.classList.contains('purchase-actions') ? 220 : 190;
+  const width = orderActionsAnchor.classList.contains('purchase-actions') ? 220 : orderActionsAnchor.classList.contains('party-actions') ? 210 : 190;
   const height = Math.min(orderActionsPortal.scrollHeight, window.innerHeight - 16);
   let left = rect.right - width;
   if (left < 8) left = rect.left;
@@ -2374,7 +2479,7 @@ function openOrderActionsPortal(details) {
   positionOrderActionsPortal();
 }
 document.addEventListener('click', event => {
-  const summary = event.target.closest('.sales-order-actions > summary, .purchase-actions > summary');
+  const summary = event.target.closest('.sales-order-actions > summary, .purchase-actions > summary, .party-actions > summary');
   if (summary) {
     event.preventDefault();
     const details = summary.closest('details');
