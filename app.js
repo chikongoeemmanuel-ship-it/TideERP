@@ -85,6 +85,12 @@ let deferredInstall = null;
 let dashboardRange = 'This month';
 let reportPeriod = 'monthly';
 let tableQuery = '';
+let salesStatusFilter = '';
+let salesDateFrom = '';
+let salesDateTo = '';
+let purchaseStatusFilter = '';
+let purchaseDateFrom = '';
+let purchaseDateTo = '';
 let orderMenuPortal = null;
 let pendingCompanyLogo = '';
 
@@ -237,6 +243,16 @@ function dateLabel(value) {
     day: 'numeric', month: 'short', year: 'numeric',
     timeZone: 'Africa/Dar_es_Salaam'
   }).format(date);
+}
+
+function dateRangeFilter(kind, from, to) {
+  const label = from && to ? `${dateLabel(from)} – ${dateLabel(to)}` : from ? `From ${dateLabel(from)}` : to ? `Until ${dateLabel(to)}` : 'Date range';
+  return `<details class="date-filter"><summary class="button small">▦ ${esc(label)}</summary><div class="date-filter-popover"><strong>Filter by date</strong><label>From<input type="date" id="${kind}-date-from" value="${esc(from)}"></label><label>To<input type="date" id="${kind}-date-to" value="${esc(to)}"></label><div class="date-filter-actions"><button class="button small" data-action="clear-date-range" data-filter-kind="${kind}">Clear</button><button class="button small primary" data-action="apply-date-range" data-filter-kind="${kind}">Apply</button></div></div></details>`;
+}
+
+function isWithinDateRange(value, from, to) {
+  const date = String(value || '').slice(0, 10);
+  return (!from || date >= from) && (!to || date <= to);
 }
 
 function money(value) {
@@ -546,6 +562,55 @@ function permanentlyDeleteParty(type, name) {
   return true;
 }
 
+function erasePartyHistory(type, name) {
+  if (type === 'Customer') {
+    const directSales = state.sales.filter(sale => sale.customer === name);
+    const orderIds = new Set([...state.orders.filter(order => order.customer === name).map(order => order.id), ...directSales.map(sale => sale.orderId).filter(Boolean)]);
+    const sales = state.sales.filter(sale => sale.customer === name || orderIds.has(sale.orderId) || orderIds.has(sale.id));
+    const saleIds = new Set(sales.map(sale => sale.id));
+    const returns = (state.returns || []).filter(record => orderIds.has(record.saleId) || saleIds.has(record.saleId));
+    const orders = state.orders.filter(order => orderIds.has(order.id));
+    for (const order of orders) {
+      const restocked = new Map();
+      for (const ret of returns) if (ret.restocked && [order.id, order.invoiceId].includes(ret.saleId)) restocked.set(ret.productId, (restocked.get(ret.productId) || 0) + (Number(ret.qty) || 0));
+      for (const line of order.items || []) {
+        const product = state.products.find(item => item.id === line.productId);
+        const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0));
+        if (product && qty) product.stock += qty;
+      }
+    }
+    for (const sale of sales.filter(item => !orderIds.has(item.orderId) && !orderIds.has(item.id))) for (const line of sale.items || []) {
+      const product = state.products.find(item => item.id === line.productId);
+      if (product) product.stock += Number(line.qty) || 0;
+    }
+    state.orders = state.orders.filter(order => !orderIds.has(order.id));
+    state.sales = state.sales.filter(sale => !sales.includes(sale));
+    state.returns = (state.returns || []).filter(record => !returns.includes(record));
+    for (const entry of state.entries) if (Array.isArray(entry.allocations)) entry.allocations = entry.allocations.filter(item => !orderIds.has(item.orderId));
+    state.entries = state.entries.filter(entry => entry.partyType !== type || entry.party !== name);
+    const removedIds = new Set([...orderIds, ...saleIds]);
+    state.stockMovements = state.stockMovements.filter(move => ![...removedIds].some(ref => String(move.reason || '').includes(ref)));
+  } else {
+    const purchases = state.purchases.filter(purchase => purchase.supplier === name);
+    const purchaseIds = new Set(purchases.map(purchase => purchase.id));
+    const returns = (state.purchaseReturns || []).filter(record => purchaseIds.has(record.purchaseId) || purchaseIds.has(record.purchaseOrderId));
+    for (const purchase of purchases) if (purchase.status === 'Received') {
+      const returned = new Map();
+      for (const ret of returns) if (ret.purchaseId === purchase.id || ret.purchaseOrderId === purchase.id) returned.set(ret.productId, (returned.get(ret.productId) || 0) + (Number(ret.qty) || 0));
+      for (const line of purchase.lines || []) {
+        const product = state.products.find(item => item.id === line.productId);
+        if (!product) continue;
+        product.stock = Math.max(0, product.stock - Math.max(0, (Number(line.qty) || 0) - (returned.get(line.productId) || 0)));
+      }
+    }
+    state.purchases = state.purchases.filter(purchase => !purchaseIds.has(purchase.id));
+    state.purchaseReturns = (state.purchaseReturns || []).filter(record => !returns.includes(record));
+    state.entries = state.entries.filter(entry => entry.partyType !== type || entry.party !== name);
+    state.stockMovements = state.stockMovements.filter(move => ![...purchaseIds].some(ref => String(move.reason || '').includes(ref)));
+  }
+  state.activityLog = (state.activityLog || []).filter(item => !String(item.details || '').includes(name));
+}
+
 function allocateCustomerAccountPayment(entry) {
   if (entry.paymentProcessed || entry.partyType !== 'Customer' || entry.type !== 'Credit') return false;
   let remaining = entry.amount;
@@ -625,6 +690,18 @@ function openModal(title, subtitle, content, confirmLabel = 'Save', extraAction 
   `;
   modal.classList.toggle('transaction-modal', /sales order|purchase order|pos sale/i.test(title));
   form.querySelectorAll('[data-action]').forEach(button=>{button.hidden=!canPerformAction(button.dataset.action,button);});
+  modal.showModal();
+}
+
+function openDeleteChoice(button, title, details, keepLabel = 'Delete, keep records', eraseLabel = 'Delete everything') {
+  const modal = document.getElementById('app-modal');
+  const form = document.getElementById('modal-content');
+  if (!modal || !form) return;
+  const attrs = ['data-action', 'data-id', 'data-party-type', 'data-party-name'];
+  const copied = attrs.filter(name => button.hasAttribute(name)).map(name => `${name}="${esc(button.getAttribute(name))}"`).join(' ');
+  delete form.dataset.dialogKind;
+  delete form.dataset.recordId;
+  form.innerHTML = `<div class="modal-head"><div><h2>${esc(title)}</h2><p>${esc(details)}</p></div><button type="button" class="modal-close" data-action="close-modal" aria-label="Close dialog">×</button></div><div class="delete-choice-note">Choose whether the related records stay available or are permanently erased. This cannot be undone.</div><div class="modal-actions"><button type="button" class="button" data-action="close-modal">Cancel</button><button type="button" class="button" ${copied} data-delete-mode="keep-history">${esc(keepLabel)}</button><button type="button" class="button danger-action" ${copied} data-delete-mode="erase-all">${esc(eraseLabel)}</button></div>`;
   modal.showModal();
 }
 
@@ -860,7 +937,7 @@ function savePOSDraft() {
   if (!posCart.length) return;
   const total = posCart.reduce((sum, line) => sum + line.qty * line.price, 0);
   const draftId = posDraftOrderId || idFor('POS-DRAFT', state.orders);
-  const items = posCart.map(l => ({ productId: l.id, qty: l.qty, unitPrice: l.price }));
+  const items = posCart.map(l => ({ productId: l.id, product: l.name, qty: l.qty, unitPrice: l.price }));
   const existing = state.orders.find(o => o.id === draftId);
   const order = {
     ...(existing || {}),
@@ -904,7 +981,7 @@ function completePOS() {
   }
 
   const saleId = existing?.id || idFor('POS', state.sales);
-  const items = posCart.map(l => ({ productId: l.id, qty: l.qty, unitPrice: l.price }));
+  const items = posCart.map(l => ({ productId: l.id, product: l.name, qty: l.qty, unitPrice: l.price }));
   const sale = {
     id: saleId, orderId: saleId, customer, date: today(),
     total, method, status: method === 'Credit' ? 'Pending' : 'Paid',
@@ -969,7 +1046,7 @@ function salesOrderRows() {
 }
 
 function renderSales() {
-  const rows = salesOrderRows().filter(row => `${row.id} ${row.customer} ${row.status} ${row.source || 'Order'}`.toLowerCase().includes(tableQuery.toLowerCase()));
+  const rows = salesOrderRows().filter(row => (!salesStatusFilter || row.status === salesStatusFilter) && isWithinDateRange(row.date, salesDateFrom, salesDateTo) && `${row.id} ${row.customer} ${row.status} ${row.source || 'Order'}`.toLowerCase().includes(tableQuery.toLowerCase()));
   return `
     ${heading('Sales & orders', 'Manage customer orders, fulfillments, invoices, and payments.', `
       <button class="button" data-page="pos">▦ Point of sale</button>
@@ -985,12 +1062,13 @@ function renderSales() {
         <div class="toolbar-left">
           <label class="search-box"><input id="table-search" placeholder="Search orders or customers…" value="${esc(tableQuery)}"></label>
           <select class="select-control" id="sales-status">
-            <option value="">All statuses</option>
-            <option>Draft</option>
-            <option>Final</option>
-            <option>Edited</option>
-            <option>Completed</option>
+            <option value="" ${salesStatusFilter === '' ? 'selected' : ''}>All statuses</option>
+            <option ${salesStatusFilter === 'Draft' ? 'selected' : ''}>Draft</option>
+            <option ${salesStatusFilter === 'Final' ? 'selected' : ''}>Final</option>
+            <option ${salesStatusFilter === 'Edited' ? 'selected' : ''}>Edited</option>
+            <option ${salesStatusFilter === 'Completed' ? 'selected' : ''}>Completed</option>
           </select>
+          ${dateRangeFilter('sales', salesDateFrom, salesDateTo)}
         </div>
         <div class="toolbar-right">
           <button class="button small" data-action="export-sales">↓ Export CSV</button>
@@ -1131,13 +1209,13 @@ function printOrderInvoice(order) {
   }
   const invoice = ensureOrderInvoice(order);
   const rows = (order.items || []).slice().sort((a, b) => {
-    const productA = state.products.find(p => p.id === a.productId)?.name || 'Product';
-    const productB = state.products.find(p => p.id === b.productId)?.name || 'Product';
+    const productA = state.products.find(p => p.id === a.productId)?.name || a.product || a.productName || a.productId || 'Product';
+    const productB = state.products.find(p => p.id === b.productId)?.name || b.product || b.productName || b.productId || 'Product';
     return compareProductNames(productA, productB) || compareProductNames(a.productId, b.productId);
   }).map(line => {
     const product = state.products.find(p => p.id === line.productId);
     const price = line.unitPrice ?? product?.price ?? 0;
-    return `<tr><td>${esc(product?.name || 'Product')}</td><td>${line.qty}</td><td>${money(price)}</td><td>${money(price * line.qty)}</td></tr>`;
+    return `<tr><td>${esc(product?.name || line.product || line.productName || line.productId || 'Product')}</td><td>${line.qty}</td><td>${money(price)}</td><td>${money(price * line.qty)}</td></tr>`;
   }).join('');
   const subtotal = order.subtotal ?? (order.total + (order.discount || 0));
   const paid = Math.max(0, Number(order.paid) || 0);
@@ -1318,28 +1396,93 @@ function inventoryRows(rows) {
   }).join('') || emptyRow(8, 'No matching products');
 }
 
-function deleteProduct(id) {
+function deleteProduct(id, button = null) {
   const product = state.products.find(p => p.id === id);
   if (!product) return;
-  const used = state.orders.some(o => (o.items || []).some(line => line.productId === id)) ||
-               state.sales.some(s => (s.items || []).some(line => line.productId === id)) ||
-               state.purchases.some(pu => (pu.lines || []).some(line => line.productId === id));
-  if (used) {
-    toast('This product is linked to saved transactions. Edit it or save it as a draft instead of deleting it.');
+  if (!button?.dataset?.deleteMode) {
+    if (button) {
+      const orders = state.orders.filter(order => (order.items || []).some(line => line.productId === id)).length;
+      const sales = state.sales.filter(sale => (sale.items || []).some(line => line.productId === id)).length;
+      const purchases = state.purchases.filter(purchase => (purchase.lines || []).some(line => line.productId === id)).length;
+      openDeleteChoice(button, `Delete product ${product.name}?`, `Keep its history (${orders} sales orders, ${sales} sales records, ${purchases} purchase orders), or permanently erase every linked transaction and its account impact.`, 'Delete product, keep history', 'Erase related transactions');
+    }
     return;
   }
-  if (!confirm(`Delete ${product.name}? The record will be archived in Settings → Trash bin.`)) return;
-  archiveToTrashBin(state, 'Product', product, product.name, currentWorkspaceUser().name);
+  const mode = button.dataset.deleteMode;
+  if (mode === 'erase-all') eraseProductHistory(id);
+  for (const record of [...state.orders, ...state.sales]) {
+    for (const line of record.items || []) {
+      if (line.productId === id && !line.product && !line.productName) line.product = product.name;
+    }
+  }
+  for (const purchase of state.purchases) {
+    for (const line of purchase.lines || []) {
+      if (line.productId === id && !line.product && !line.productName) line.product = product.name;
+    }
+  }
   state.products = state.products.filter(p => p.id !== id);
+  if (mode === 'erase-all') state.activityLog = (state.activityLog || []).filter(item => item.reference !== id && !String(item.details || '').includes(product.name));
+  recordActivity('Product deleted', mode === 'erase-all' ? `${product.name} · related records erased` : `${product.name} · previous records retained`, id);
   saveState();
   render();
-  toast('Product deleted and safely archived in Trash bin');
+  toast(mode === 'erase-all' ? 'Product and related transactions permanently erased' : 'Product deleted from the catalog; previous records were kept');
+}
+
+function eraseProductHistory(productId) {
+  const orders = state.orders.filter(order => (order.items || []).some(line => line.productId === productId));
+  const orderIds = new Set(orders.map(order => order.id));
+  const sales = state.sales.filter(sale => (sale.items || []).some(line => line.productId === productId) || orderIds.has(sale.orderId) || orders.some(order => order.invoiceId === sale.id));
+  const saleIds = new Set(sales.map(sale => sale.id));
+  const saleReturns = (state.returns || []).filter(record => orderIds.has(record.saleId) || saleIds.has(record.saleId));
+  for (const order of orders) {
+    const restocked = new Map();
+    for (const ret of saleReturns) if (ret.restocked && [order.id, order.invoiceId].includes(ret.saleId)) restocked.set(ret.productId, (restocked.get(ret.productId) || 0) + (Number(ret.qty) || 0));
+    for (const line of order.items || []) {
+      const product = state.products.find(item => item.id === line.productId);
+      const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0));
+      if (product && qty) product.stock += qty;
+    }
+  }
+  for (const sale of sales.filter(item => !orderIds.has(item.orderId) && !orderIds.has(item.id))) for (const line of sale.items || []) {
+    const product = state.products.find(item => item.id === line.productId);
+    if (product) product.stock += Number(line.qty) || 0;
+  }
+  const purchases = state.purchases.filter(purchase => (purchase.lines || []).some(line => line.productId === productId));
+  const purchaseIds = new Set(purchases.map(purchase => purchase.id));
+  const purchaseReturns = (state.purchaseReturns || []).filter(record => purchaseIds.has(record.purchaseId) || purchaseIds.has(record.purchaseOrderId));
+  for (const purchase of purchases) if (purchase.status === 'Received') {
+    const returned = new Map();
+    for (const ret of purchaseReturns) if (ret.purchaseId === purchase.id || ret.purchaseOrderId === purchase.id) returned.set(ret.productId, (returned.get(ret.productId) || 0) + (Number(ret.qty) || 0));
+    for (const line of purchase.lines || []) {
+      const product = state.products.find(item => item.id === line.productId);
+      const qty = Math.max(0, (Number(line.qty) || 0) - (returned.get(line.productId) || 0));
+      if (product && qty) product.stock = Math.max(0, product.stock - qty);
+    }
+  }
+  const removedOrderIds = new Set([...orderIds, ...sales.map(sale => sale.orderId).filter(Boolean)]);
+  const removedSaleIds = new Set([...saleIds, ...orders.map(order => order.invoiceId).filter(Boolean)]);
+  state.orders = state.orders.filter(order => !orderIds.has(order.id));
+  state.sales = state.sales.filter(sale => !sales.includes(sale));
+  state.returns = (state.returns || []).filter(record => !saleReturns.includes(record));
+  state.purchases = state.purchases.filter(purchase => !purchaseIds.has(purchase.id));
+  state.purchaseReturns = (state.purchaseReturns || []).filter(record => !purchaseReturns.includes(record));
+  const directRefs = new Set([...removedOrderIds, ...removedSaleIds, ...purchaseIds]);
+  removeAccountEntries(entry => directRefs.has(entry.sourceId) && ['order','order-payment','sales','sales-payment','purchase','purchase-payment'].includes(entry.sourceType));
+  state.entries = state.entries.filter(entry => {
+    if (entry.sourceType === 'account-payment' && Array.isArray(entry.allocations)) {
+      const removedAmount = entry.allocations.filter(allocation => removedOrderIds.has(allocation.orderId)).reduce((sum, allocation) => sum + (Number(allocation.amount) || 0), 0);
+      if (removedAmount) { adjustAccountEntry(entry, Math.max(0, Number(entry.amount) - removedAmount)); entry.allocations = entry.allocations.filter(allocation => !removedOrderIds.has(allocation.orderId)); }
+    }
+    return true;
+  });
+  const refs = new Set([...directRefs, ...removedSaleIds]);
+  state.stockMovements = state.stockMovements.filter(move => ![...refs].some(ref => String(move.reason || '').includes(ref)));
 }
 
 // Purchases
 function renderPurchases() {
   const due = state.purchases.filter(p => p.status !== 'Draft').reduce((sum, p) => sum + Math.max(0, p.total - (p.paid || 0) - (p.returned || 0)), 0);
-  const rows = state.purchases.map(p => {
+  const rows = state.purchases.filter(p => (!purchaseStatusFilter || p.status === purchaseStatusFilter) && isWithinDateRange(p.date, purchaseDateFrom, purchaseDateTo)).map(p => {
     const net = Math.max(0, p.total - (p.returned || 0));
     const paymentStatus = (p.paid || 0) >= net ? 'Fully paid' : p.paid ? 'Partially paid' : 'Due';
     const status = p.status === 'Pending' ? 'Final' : p.status;
@@ -1377,7 +1520,7 @@ function renderPurchases() {
       <div class="summary-mini"><small>Received</small><strong>${state.purchases.filter(p => p.status === 'Received').length}</strong></div>
     </section>
     <section class="table-panel">
-      <div class="table-heading"><h2>Purchase orders</h2></div>
+      <div class="toolbar"><div class="toolbar-left"><h2>Purchase orders</h2><select class="select-control" id="purchase-status"><option value="" ${purchaseStatusFilter === '' ? 'selected' : ''}>All statuses</option><option value="Draft" ${purchaseStatusFilter === 'Draft' ? 'selected' : ''}>Draft</option><option value="Pending" ${purchaseStatusFilter === 'Pending' ? 'selected' : ''}>Final</option><option value="Received" ${purchaseStatusFilter === 'Received' ? 'selected' : ''}>Received</option></select>${dateRangeFilter('purchase', purchaseDateFrom, purchaseDateTo)}</div></div>
       <div class="table-scroll"><table class="data-table"><thead><tr><th>Reference</th><th>Supplier</th><th>Date</th><th>Units</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>
   `;
@@ -1574,7 +1717,9 @@ function reportPeriodData() {
   const supplierPayments=periodPayments.filter(entry=>entry.partyType==='Supplier'&&entry.type==='Debit');
   const collected=customerReceipts.length?customerReceipts.reduce((sum,entry)=>sum+(Number(entry.amount)||0),0):sales.reduce((sum,sale)=>sum+(Number.isFinite(Number(sale.paid))?Number(sale.paid):(sale.status==='Paid'?Number(sale.total)||0:0)),0);
   const supplierPaid=supplierPayments.length?supplierPayments.reduce((sum,entry)=>sum+(Number(entry.amount)||0),0):purchases.reduce((sum,purchase)=>sum+(Number(purchase.paid)||0),0);
-  return {...range,sales,purchases,salesTotal,purchaseTotal,collected,supplierPaid,netCollected:collected-supplierPaid};
+  const hasTransactionHistory=state.sales.length>0||state.purchases.length>0;
+  const netCollected=hasTransactionHistory?collected-supplierPaid:0;
+  return {...range,sales,purchases,salesTotal,purchaseTotal,collected,supplierPaid,netCollected};
 }
 
 function reportBuckets(data) {
@@ -2018,7 +2163,7 @@ function handleDialogSubmit(form) {
     const order = editing ? state.orders.find(item => item.id === form.dataset.recordId) : null;
     if (editing && !order) { toast('This sales order could not be found'); return; }
     const totals = transactionLineTotals('order');
-    const items = totals.lines.map(row => ({ productId: row.dataset.productId, qty: Number(row.querySelector('[data-line-qty]').value) || 0, unitPrice: Number(row.querySelector('[data-line-price]').value) || 0 }));
+    const items = totals.lines.map(row => { const productId = row.dataset.productId, product = state.products.find(item => item.id === productId); return { productId, product: product?.name || productId, qty: Number(row.querySelector('[data-line-qty]').value) || 0, unitPrice: Number(row.querySelector('[data-line-price]').value) || 0 }; });
     if (!items.length || items.some(line => line.qty <= 0)) { toast('Search for and add at least one product with a valid quantity'); return; }
     if (totals.discount > totals.subtotal) { toast('Discount cannot be greater than the products subtotal'); return; }
     if (totals.paid > totals.total) { toast('Amount paid cannot be greater than the order total'); return; }
@@ -2192,6 +2337,22 @@ function handleAction(button) {
   if(!canPerformAction(action,button)){toast('Your account does not have permission to perform that action');return;}
 
   switch (action) {
+    case 'apply-date-range':
+    case 'clear-date-range': {
+      const kind = button.dataset.filterKind;
+      const isSales = kind === 'sales';
+      const fromInput = document.getElementById(`${kind}-date-from`);
+      const toInput = document.getElementById(`${kind}-date-to`);
+      const from = action === 'clear-date-range' ? '' : fromInput?.value || '';
+      const to = action === 'clear-date-range' ? '' : toInput?.value || '';
+      if (from && to && from > to) { toast('The start date must be before the end date'); break; }
+      if (isSales) { salesDateFrom = from; salesDateTo = to; }
+      else if (kind === 'purchase') { purchaseDateFrom = from; purchaseDateTo = to; }
+      closeDateFilterPortal();
+      button.closest('details')?.removeAttribute('open');
+      render();
+      break;
+    }
     case 'new-product': openProductForm(); break;
     case 'edit-product': openProductForm(state.products.find(p => p.id === id)); break;
     case 'new-party': openPartyForm(type || 'Customer'); break;
@@ -2215,9 +2376,10 @@ function handleAction(button) {
       const details = partyType === 'Customer'
         ? `${linkedOrders.length} sales orders, ${linkedSales.length} invoices, ${linkedReturns.length} returns and ${linkedLedger} account entries`
         : `${linkedPurchases.length} purchase orders, ${linkedReturns.length} returns and ${linkedLedger} account entries`;
-      if (!confirm(`PERMANENT ADMIN DELETE: remove the ${partyType.toLowerCase()} profile for ${partyName}? ${details} will be retained in transaction history and reports, with the party name kept as a historical reference. The profile and its contact details will be removed and cannot be restored from Trash.`)) break;
+      if (!button.dataset.deleteMode) { openDeleteChoice(button, `Delete ${partyType.toLowerCase()} ${partyName}?`, `Keep ${details} in history, or permanently erase them with the profile.`, 'Delete profile, keep history', 'Erase profile and history'); break; }
+      if (button.dataset.deleteMode === 'erase-all') erasePartyHistory(partyType, partyName);
       permanentlyDeleteParty(partyType, partyName);
-      saveState(); render(); toast(`${partyType} profile deleted; linked transaction history retained`); break;
+      saveState(); render(); toast(button.dataset.deleteMode === 'erase-all' ? `${partyType} profile and linked records permanently erased` : `${partyType} profile deleted; linked transaction history retained`); break;
     }
     case 'view-customer-orders': openCustomerOrderHistory(button.dataset.partyName); break;
     case 'view-party-orders': openPartyOrderHistory(type,button.dataset.partyName); break;
@@ -2260,8 +2422,7 @@ function handleAction(button) {
       if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can permanently delete users');break;}
       const user=state.users.find(item=>item.id===id);
       if(!user||user.isBootstrap||isAdministratorUser(user)){toast('Owner / Administrator accounts cannot be deleted');break;}
-      const confirmed=confirm(`Permanently delete ${user.name} (${user.email||user.id})?\n\nThis removes the user account and access settings only. Sales, purchases, payments, stock movements, and other records already entered will be kept.`);
-      if(!confirmed)break;
+      if(!button.dataset.deleteMode){openDeleteChoice(button,`Delete user ${user.name}?`,'Keep the user’s activity and stock history, or erase the user account and its audit trail.','Delete user, keep records','Erase user and audit trail');break;}
       state.users=state.users.filter(item=>item.id!==user.id);
       if(state.currentUserId===user.id){
         const builtInOwner=state.users.find(item=>item.isBootstrap&&item.status==='Active');
@@ -2270,8 +2431,11 @@ function handleAction(button) {
         state.currentUserId=(builtInOwner||nextAdmin||nextActive)?.id||'';
         if(state.currentUserId)safeStorageSet(AUTH_SESSION_KEY,state.currentUserId);else safeStorageRemove(AUTH_SESSION_KEY);
       }
-      recordActivity('User deleted',`${user.name} · existing records retained`,user.id);
-      saveState();render();toast(`User ${user.name} deleted; existing records were kept`);break;
+      if(button.dataset.deleteMode==='erase-all'){
+        state.activityLog=(state.activityLog||[]).filter(item=>item.actor!==user.name);
+        state.stockMovements=state.stockMovements.filter(item=>item.user!==user.name);
+      }else recordActivity('User deleted',`${user.name} · existing records retained`,user.id);
+      saveState();render();toast(button.dataset.deleteMode==='erase-all'?`User ${user.name} and audit trail erased`:`User ${user.name} deleted; existing records were kept`);break;
     }
     case 'new-branch': openDialog('new-branch','Add branch','Create an independent workspace for another location.',inputField('branch-name','Branch name','e.g. Arusha branch','text',true));break;
     case 'finalize-order': {
@@ -2281,7 +2445,7 @@ function handleAction(button) {
     }
     case 'view-order': {
       const order=salesOrderRows().find(o=>o.id===id);if(!order)break;
-      const lines=(order.items||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return `<tr><td>${esc(p?.name||l.productId)}</td><td>${l.qty}</td><td>${money(l.unitPrice??p?.price??0)}</td><td>${money(l.qty*(l.unitPrice??p?.price??0))}</td></tr>`}).join('');
+      const lines=(order.items||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return `<tr><td>${esc(p?.name||l.product||l.productName||l.productId)}</td><td>${l.qty}</td><td>${money(l.unitPrice??p?.price??0)}</td><td>${money(l.qty*(l.unitPrice??p?.price??0))}</td></tr>`}).join('');
       openModal('Order details',`${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div><p><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)} · ${orderPaymentStatus(order)}</strong></p>`,'Close');break;
     }
     case 'add-order-payment': openOrderPayment(id);break;
@@ -2290,20 +2454,21 @@ function handleAction(button) {
       const order=state.orders.find(o=>o.id===id);if(!order)break;
       const adminOverride=isWorkspaceAdministrator()&&order.status!=='Draft';
       if(order.status!=='Draft'&&!adminOverride){toast('Only the Owner / Administrator can override deletion of a finalized order');break;}
-      if(!confirm(adminOverride?`ADMIN OVERRIDE: delete finalized order ${id}? Its linked invoice and account entries will be archived, and its net stock effect will be reversed.`:`Delete draft order ${id}?`))break;
+      if(!button.dataset.deleteMode){openDeleteChoice(button,`Delete sales order ${id}?`,adminOverride?'Choose whether to move the order bundle to Trash or permanently erase its invoice, account entries, returns, and stock impact.':'Choose whether to move the draft to Trash or permanently erase it.','Move bundle to Trash','Erase everything');break;}
+      const invoice=state.sales.find(sale=>sale.id===order.invoiceId||sale.orderId===order.id);
+      const returns=state.returns.filter(record=>record.saleId===(order.invoiceId||order.id));
+      const entryMatches=entry=>['order','order-payment','sales','sales-payment'].includes(entry.sourceType)&&[order.id,order.invoiceId].includes(entry.sourceId);
+      const accountEntries=state.entries.filter(entryMatches);
+      if(button.dataset.deleteMode==='keep-history')archiveToTrashBin(state,order.source==='POS'?'POS sale':'Sales order',{order,invoice,returns,accountEntries},order.id,currentWorkspaceUser().name);
       if(adminOverride){
-        const invoice=state.sales.find(sale=>sale.id===order.invoiceId||sale.orderId===order.id);
-        const returns=state.returns.filter(record=>record.saleId===(order.invoiceId||order.id));
-        const entryMatches=entry=>['order','order-payment','sales','sales-payment'].includes(entry.sourceType)&&[order.id,order.invoiceId].includes(entry.sourceId);
-        const accountEntries=state.entries.filter(entryMatches);
-        archiveToTrashBin(state,order.source==='POS'?'POS sale':'Sales order',{order,invoice,returns,accountEntries},order.id,currentWorkspaceUser().name);
         const restocked=new Map();for(const ret of returns)if(ret.restocked)restocked.set(ret.productId,(restocked.get(ret.productId)||0)+(Number(ret.qty)||0));
         for(const line of order.items||[]){const product=state.products.find(p=>p.id===line.productId);if(!product)continue;const qty=Math.max(0,(Number(line.qty)||0)-(restocked.get(line.productId)||0));if(!qty)continue;const before=product.stock;product.stock+=qty;state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:qty,reason:`Admin deleted sale ${id}`,user:currentWorkspaceUser().name});}
-        removeAccountEntries(entryMatches);state.returns=state.returns.filter(record=>!returns.some(ret=>ret.id===record.id));
         state.sales=state.sales.filter(sale=>sale.id!==invoice?.id&&sale.orderId!==order.id);
         for(const entry of state.entries)if(entry.sourceType==='account-payment'&&Array.isArray(entry.allocations))entry.allocations=entry.allocations.filter(allocation=>allocation.orderId!==order.id);
       }
-      state.orders=state.orders.filter(o=>o.id!==id);recordActivity(adminOverride?'Finalized sales order deleted by administrator':'Draft sales order deleted',id,id);saveState();render();toast(adminOverride?'Finalized order deleted and archived':'Draft order deleted');break;
+      removeAccountEntries(entryMatches);state.returns=state.returns.filter(record=>!returns.some(ret=>ret.id===record.id));
+      if(!adminOverride&&invoice)state.sales=state.sales.filter(sale=>sale.id!==invoice.id);
+      state.orders=state.orders.filter(o=>o.id!==id);recordActivity(adminOverride?'Finalized sales order deleted by administrator':'Draft sales order deleted',id,id);saveState();render();toast(button.dataset.deleteMode==='keep-history'?'Order bundle moved to Trash':adminOverride?'Finalized order and linked records erased':'Draft order permanently erased');break;
     }
     case 'receive-purchase': {
       const purchase=state.purchases.find(p=>p.id===id);if(!purchase||purchase.status!=='Pending')break;
@@ -2314,15 +2479,16 @@ function handleAction(button) {
       const purchase=state.purchases.find(p=>p.id===id);if(!purchase)break;
       const adminOverride=isWorkspaceAdministrator()&&purchase.status==='Received';
       if(purchase.status==='Received'&&!adminOverride){toast('Only the Owner / Administrator can override deletion of a received purchase');break;}
-      if(!confirm(adminOverride?`ADMIN OVERRIDE: delete received purchase ${id}? Its account entries will be archived and its net stock effect will be reversed.`:`Delete purchase order ${id}?`))break;
+      if(!button.dataset.deleteMode){openDeleteChoice(button,`Delete purchase ${id}?`,adminOverride?'Choose whether to move the purchase bundle to Trash or permanently erase its account entries, returns, and stock impact.':'Choose whether to move the purchase to Trash or permanently erase its account entries.','Move bundle to Trash','Erase everything');break;}
+      const returns=(state.purchaseReturns||[]).filter(record=>record.purchaseId===id||record.purchaseOrderId===id);
+      const accountEntries=state.entries.filter(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===id);
+      if(button.dataset.deleteMode==='keep-history')archiveToTrashBin(state,'Purchase order',{purchase,returns,accountEntries},id,currentWorkspaceUser().name);
       if(adminOverride){
-        const returns=(state.purchaseReturns||[]).filter(record=>record.purchaseId===id||record.purchaseOrderId===id);
-        const accountEntries=state.entries.filter(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===id);
-        archiveToTrashBin(state,'Purchase order',{purchase,returns,accountEntries},id,currentWorkspaceUser().name);
-        for(const line of purchase.lines||[]){const product=state.products.find(p=>p.id===line.productId);if(!product)continue;const before=product.stock,qty=Number(line.qty)||0;if(!qty)continue;product.stock=Math.max(0,product.stock-qty);state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:product.stock-before,reason:`Admin deleted received purchase ${id}`,user:currentWorkspaceUser().name});}
-        removeAccountEntries(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===id);state.purchaseReturns=(state.purchaseReturns||[]).filter(record=>!returns.some(ret=>ret.id===record.id));
+        const returnedByProduct=new Map();for(const ret of returns)returnedByProduct.set(ret.productId,(returnedByProduct.get(ret.productId)||0)+(Number(ret.qty)||0));
+        for(const line of purchase.lines||[]){const product=state.products.find(p=>p.id===line.productId);if(!product)continue;const before=product.stock,qty=Math.max(0,(Number(line.qty)||0)-(returnedByProduct.get(line.productId)||0));if(!qty)continue;product.stock=Math.max(0,product.stock-qty);state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:product.stock-before,reason:`Admin deleted received purchase ${id}`,user:currentWorkspaceUser().name});}
       }
-      state.purchases=state.purchases.filter(p=>p.id!==id);recordActivity(adminOverride?'Received purchase deleted by administrator':'Purchase order deleted',id,id);saveState();render();toast(adminOverride?'Received purchase deleted and archived':'Purchase order deleted');break;
+      removeAccountEntries(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===id);state.purchaseReturns=(state.purchaseReturns||[]).filter(record=>!returns.some(ret=>ret.id===record.id));
+      state.purchases=state.purchases.filter(p=>p.id!==id);recordActivity(adminOverride?'Received purchase deleted by administrator':'Purchase order deleted',id,id);saveState();render();toast(button.dataset.deleteMode==='keep-history'?'Purchase bundle moved to Trash':adminOverride?'Received purchase and linked records erased':'Purchase order permanently erased');break;
     }
     case 'export-parties': {
       const list=type==='Supplier'?state.suppliers:state.customers;
@@ -2348,8 +2514,28 @@ function handleAction(button) {
     }
     case 'import-products': document.getElementById('product-csv-file')?.click(); break;
     case 'restore-trash': {
+      const archived = state.trashBin.find(item => item.id === id);
       const res = restoreFromTrash(state, id);
       if (res.success) {
+        for (const entry of archived?.data?.accountEntries || []) {
+          const account = (entry.partyType === 'Supplier' ? state.suppliers : state.customers).find(item => item.name === entry.party);
+          if (account) account.balance += entryBalanceDelta(entry.partyType, entry.type, Number(entry.amount) || 0);
+        }
+        if (archived?.type === 'Sales order' || archived?.type === 'POS sale') {
+          const order = archived.data.order || archived.data;
+          const restocked = new Map();
+          for (const ret of archived.data.returns || []) if (ret.restocked) restocked.set(ret.productId, (restocked.get(ret.productId) || 0) + (Number(ret.qty) || 0));
+          for (const line of order.items || []) {
+            const product = state.products.find(item => item.id === line.productId);
+            if (product) product.stock = Math.max(0, product.stock - Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0)));
+          }
+        } else if (archived?.type === 'Purchase order') {
+          const purchase = archived.data.purchase || archived.data;
+          if (purchase.status === 'Received') for (const line of purchase.lines || []) {
+            const product = state.products.find(item => item.id === line.productId);
+            if (product) product.stock += Number(line.qty) || 0;
+          }
+        }
         saveState();
         render();
         toast(res.message);
@@ -2388,7 +2574,7 @@ function handleAction(button) {
       if(['weekly','monthly','annual'].includes(period)){reportPeriod=period;render();}
       break;
     }
-    case 'delete-product': deleteProduct(id); break;
+    case 'delete-product': deleteProduct(id, button); break;
     case 'open-branch': switchBranch(id); break;
     case 'print-order-invoice': {
       const order = state.orders.find(o => o.id === id) || state.sales.find(s => s.id === id);
@@ -2446,6 +2632,49 @@ function importProductsCSV(csv) {
 // Keep table action menus outside the scroll-clipped table.
 let orderActionsPortal = null;
 let orderActionsAnchor = null;
+let dateFilterPortal = null;
+let dateFilterAnchor = null;
+function closeDateFilterPortal() {
+  dateFilterPortal?.remove();
+  dateFilterPortal = null;
+  dateFilterAnchor = null;
+}
+function positionDateFilterPortal() {
+  if (!dateFilterPortal || !dateFilterAnchor?.isConnected) { closeDateFilterPortal(); return; }
+  const rect = dateFilterAnchor.getBoundingClientRect();
+  const width = Math.min(250, window.innerWidth - 24);
+  const height = dateFilterPortal.getBoundingClientRect().height;
+  let left = Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
+  let top = rect.bottom + 6;
+  if (top + height > window.innerHeight - 8 && rect.top - height - 6 >= 8) top = rect.top - height - 6;
+  top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
+  Object.assign(dateFilterPortal.style, { left: `${left}px`, top: `${top}px`, width: `${width}px` });
+}
+function openDateFilterPortal(details) {
+  closeDateFilterPortal();
+  const popover = details.querySelector('.date-filter-popover');
+  if (!popover) return;
+  dateFilterAnchor = details.querySelector('summary');
+  dateFilterPortal = document.createElement('div');
+  dateFilterPortal.className = 'date-filter-popover date-filter-portal';
+  dateFilterPortal.innerHTML = popover.innerHTML;
+  document.body.append(dateFilterPortal);
+  positionDateFilterPortal();
+}
+document.addEventListener('click', event => {
+  const summary = event.target.closest('.date-filter > summary');
+  if (summary) {
+    event.preventDefault();
+    const details = summary.closest('details');
+    if (dateFilterAnchor === summary) closeDateFilterPortal(); else openDateFilterPortal(details);
+    return;
+  }
+  if (dateFilterPortal && !event.target.closest('.date-filter-portal')) closeDateFilterPortal();
+}, true);
+window.addEventListener('scroll', positionDateFilterPortal, true);
+window.addEventListener('resize', positionDateFilterPortal);
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeDateFilterPortal(); });
+
 function closeOrderActionsPortal() {
   orderActionsPortal?.remove();
   orderActionsPortal = null;
@@ -2535,6 +2764,8 @@ document.addEventListener('input', event => {
 });
 
 document.addEventListener('change', event => {
+  if (event.target.id === 'sales-status') { salesStatusFilter = event.target.value; render(); }
+  if (event.target.id === 'purchase-status') { purchaseStatusFilter = event.target.value; render(); }
   if(event.target.matches('[data-permission-module]')){
     const group=event.target.closest('fieldset');
     group?.querySelectorAll('input[name="user-permission"]').forEach(input=>{input.checked=event.target.checked;});
@@ -2587,7 +2818,8 @@ document.addEventListener('keydown', event => {
 });
 
 const sidebar = document.getElementById('sidebar');
-const mobileMenuButton = document.getElementById('mobile-menu');
+const sidebarToggleButton = document.getElementById('sidebar-toggle');
+const sidebarHoverZone = document.getElementById('sidebar-hover-zone');
 let sidebarCloseTimer = 0;
 const isDesktopSidebar = () => window.innerWidth > 760;
 if (sidebar) {
@@ -2596,52 +2828,68 @@ if (sidebar) {
   else sidebar.classList.remove('collapsed');
 }
 
-function updateMobileMenuLabel() {
-  if (!mobileMenuButton) return;
-  const open = sidebar?.classList.contains('open') || false;
-  mobileMenuButton.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
-  mobileMenuButton.textContent = open ? '×' : '☰';
+function updateSidebarToggleLabel() {
+  if (!sidebarToggleButton) return;
+  const open = sidebar?.classList.contains('open') || sidebar?.classList.contains('pinned-open') || false;
+  const label = open ? 'Close navigation' : sidebar?.classList.contains('hover-expanded') ? 'Keep navigation open' : 'Open navigation';
+  sidebarToggleButton.setAttribute('aria-label', label);
+  sidebarToggleButton.setAttribute('title', label);
+  sidebarToggleButton.textContent = open ? '×' : '☰';
 }
 function expandSidebarForPointer() {
   window.clearTimeout(sidebarCloseTimer);
   if (isDesktopSidebar() && sidebar?.classList.contains('collapsed')) sidebar.classList.add('hover-expanded');
+  updateSidebarToggleLabel();
 }
 function scheduleSidebarCollapse() {
   window.clearTimeout(sidebarCloseTimer);
   sidebarCloseTimer = window.setTimeout(() => {
-    if (isDesktopSidebar() && sidebar?.classList.contains('collapsed') && !sidebar.matches(':hover') && !sidebar.contains(document.activeElement)) {
+    if (isDesktopSidebar() && sidebar?.classList.contains('collapsed') && !sidebar.classList.contains('pinned-open') && !sidebar.matches(':hover') && !sidebar.contains(document.activeElement)) {
       sidebar.classList.remove('hover-expanded');
+      updateSidebarToggleLabel();
     }
   }, 1000);
 }
-mobileMenuButton?.addEventListener('click', () => {
-  sidebar?.classList.toggle('open');
-  updateMobileMenuLabel();
+sidebarToggleButton?.addEventListener('click', () => {
+  if (isDesktopSidebar()) {
+    if (sidebar?.classList.contains('pinned-open')) {
+      sidebar.classList.remove('pinned-open', 'hover-expanded');
+    } else if (sidebar?.classList.contains('collapsed')) {
+      sidebar.classList.add('pinned-open', 'hover-expanded');
+    } else {
+      sidebar?.classList.add('collapsed');
+    }
+  } else {
+    sidebar?.classList.toggle('open');
+  }
+  updateSidebarToggleLabel();
 });
 sidebar?.addEventListener('pointerenter', expandSidebarForPointer);
 sidebar?.addEventListener('pointerleave', scheduleSidebarCollapse);
 sidebar?.addEventListener('focusin', expandSidebarForPointer);
 sidebar?.addEventListener('focusout', scheduleSidebarCollapse);
+sidebarHoverZone?.addEventListener('pointerenter', expandSidebarForPointer);
+sidebarHoverZone?.addEventListener('pointerleave', scheduleSidebarCollapse);
 document.addEventListener('click', event => {
-  const clickedOutside = !sidebar?.contains(event.target) && !mobileMenuButton?.contains(event.target);
+  const clickedOutside = !sidebar?.contains(event.target) && !sidebarToggleButton?.contains(event.target) && !sidebarHoverZone?.contains(event.target);
   if (!clickedOutside) return;
-  if (isDesktopSidebar() && sidebar?.classList.contains('hover-expanded')) {
+  if (isDesktopSidebar() && sidebar?.classList.contains('hover-expanded') && !sidebar.classList.contains('pinned-open')) {
     window.clearTimeout(sidebarCloseTimer);
     sidebar.classList.remove('hover-expanded');
   }
   if (window.innerWidth <= 760 && sidebar?.classList.contains('open')) {
     sidebar.classList.remove('open');
-    updateMobileMenuLabel();
+    updateSidebarToggleLabel();
   }
 });
-updateMobileMenuLabel();
+updateSidebarToggleLabel();
 window.addEventListener('resize', () => {
   window.clearTimeout(sidebarCloseTimer);
   if (!sidebar) return;
-  sidebar.classList.remove('hover-expanded', 'open');
+  sidebar.classList.remove('hover-expanded', 'pinned-open', 'open');
   if (isDesktopSidebar()) sidebar.classList.add('collapsed');
   else sidebar.classList.remove('collapsed');
-  updateMobileMenuLabel();
+  updateSidebarToggleLabel();
 });
 // App Initialization
 async function initApp() {

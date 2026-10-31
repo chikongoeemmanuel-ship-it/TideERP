@@ -13,6 +13,7 @@
 <body>
   <section class="auth-gate" id="auth-gate" aria-live="polite" hidden></section>
   <div class="app-shell">
+    <div class="sidebar-hover-zone" id="sidebar-hover-zone" aria-hidden="true"></div>
     <aside class="sidebar" id="sidebar">
       
       <div class="workspace-switch" id="workspace-switch" aria-label="Company" title="Company logo"><span class="workspace-avatar">K</span></div>
@@ -34,7 +35,7 @@
     </aside>
 
     <main class="main-area">
-      <header class="topbar"><a class="topbar-brand" href="#dashboard" aria-label="TideERP home"><span class="brand-mark">t</span><span>Tide<span class="brand-muted">ERP</span></span></a><button class="mobile-menu" id="mobile-menu" aria-label="Open navigation">☰</button><button class="back-button" id="back-button" aria-label="Go to previous section" disabled>← <span>Back</span></button><div class="breadcrumb"><strong id="crumb-current">Overview</strong></div><div class="topbar-actions"><span class="today-label" id="today-label"></span><button class="icon-button" id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode">☾</button><button class="icon-button" id="install-button" title="Install Tide ERP" hidden>⇩</button><button class="icon-button notification-button" id="notifications-button" type="button" aria-label="Notifications" title="Notifications">🔔<i></i></button><button class="icon-button activity-button" id="activity-button" type="button" aria-label="Activity history" title="Activity history" hidden>◷</button><button class="topbar-avatar profile-trigger" id="user-profile-button" type="button" aria-label="User credentials and profile" title="User profile">AM</button></div></header>
+      <header class="topbar"><button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Open navigation" title="Open navigation">☰</button><a class="topbar-brand" href="#dashboard" aria-label="TideERP home"><span class="brand-mark">t</span><span>Tide<span class="brand-muted">ERP</span></span></a><button class="back-button" id="back-button" aria-label="Go to previous section" disabled>← <span>Back</span></button><div class="breadcrumb"><strong id="crumb-current">Overview</strong></div><div class="topbar-actions"><span class="today-label" id="today-label"></span><button class="icon-button" id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode">☾</button><button class="icon-button" id="install-button" title="Install Tide ERP" hidden>⇩</button><button class="icon-button notification-button" id="notifications-button" type="button" aria-label="Notifications" title="Notifications">🔔<i></i></button><button class="icon-button activity-button" id="activity-button" type="button" aria-label="Activity history" title="Activity history" hidden>◷</button><button class="topbar-avatar profile-trigger" id="user-profile-button" type="button" aria-label="User credentials and profile" title="User profile">AM</button></div></header>
       <div class="page-wrap" id="page-content" aria-live="polite"></div>
     </main>
   </div>
