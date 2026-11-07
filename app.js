@@ -13,7 +13,7 @@ function safeSessionRemove(key) { try { sessionStorage.removeItem(key); } catch 
 
 const initialState = {
   version: 3,
-  companyName: 'Kipepeo Traders',
+  companyName: 'My Company',
   companyLogo: '',
   companyAddress: 'Dar es Salaam, Tanzania',
   companyPhone: '',
@@ -2045,7 +2045,7 @@ function renderSettings() {
         <div class="settings-section">
           <h2>Company Identity</h2>
           <div class="form-grid">
-            <div class="field full"><label for="company-name">Business name</label><input id="company-name" name="company-name" value="${esc(state.companyName || 'Kipepeo Traders')}" required></div>
+            <div class="field full"><label for="company-name">Business name</label><input id="company-name" name="company-name" value="${esc(state.companyName || '')}" placeholder="e.g. My Company" required></div>
             <div class="field"><label for="company-phone">Phone number</label><input id="company-phone" name="company-phone" value="${esc(state.companyPhone || '')}" placeholder="+255 …"></div>
             <div class="field"><label for="company-email">Company email</label><input id="company-email" name="company-email" type="email" value="${esc(state.companyEmail || '')}"></div>
             <div class="field full"><label for="company-address">Physical address</label><input id="company-address" name="company-address" value="${esc(state.companyAddress || 'Dar es Salaam, Tanzania')}"></div>
@@ -3408,6 +3408,9 @@ async function initApp() {
       user.name = 'Administrator';
     }
   });
+  if (!state.companyName || state.companyName === 'Kipepeo Traders' || /kipepeo/i.test(state.companyName)) {
+    state.companyName = 'My Company';
+  }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => {});

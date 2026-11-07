@@ -146,6 +146,9 @@ function sanitizeState(restored, initialState) {
       u.name = 'Administrator';
     }
   }
+  if (!clean.companyName || clean.companyName === 'Kipepeo Traders' || /kipepeo/i.test(clean.companyName || '')) {
+    clean.companyName = 'My Company';
+  }
   if (!clean.currency) clean.currency = 'TZS';
   if (typeof clean.vatEnabled !== 'boolean') clean.vatEnabled = true;
   if (typeof clean.vatRate !== 'number') clean.vatRate = 18;
