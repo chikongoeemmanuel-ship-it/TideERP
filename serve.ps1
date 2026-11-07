@@ -34,6 +34,8 @@ try {
       }
       $bytes = [System.IO.File]::ReadAllBytes($target)
       $context.Response.ContentLength64 = $bytes.Length
+      $context.Response.Headers.Add('Cache-Control', 'no-store, no-cache, must-revalidate')
+      $context.Response.Headers.Add('Pragma', 'no-cache')
       if ($context.Request.HttpMethod -ne 'HEAD') {
         $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
       }
