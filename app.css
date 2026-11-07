@@ -498,3 +498,5 @@ body{font-weight:700;-webkit-font-smoothing:auto}
 #auth-gate.auth-gate{display:grid;place-items:center;grid-template-columns:minmax(0,1fr);align-items:center;padding:24px;background:radial-gradient(circle at 50% 18%,#e0f4f8 0,transparent 38%),linear-gradient(135deg,#f4f8fa,#e8eff2)}
 #auth-gate .auth-card{width:min(100%,440px)}
 :root[data-theme="dark"] #auth-gate.auth-gate{background:radial-gradient(circle at 50% 18%,#344951 0,transparent 38%),#25282b}
+
+.bulk-action-bar{display:flex;align-items:center;gap:10px;padding:6px 12px;background:var(--ocean-light,#dff0f4);border:1px solid #b6dce2;border-radius:8px;margin-left:8px}.bulk-action-bar .danger-action{border-color:#e8c1c1;color:#a64242;background:#fff;padding:4px 10px;font-size:12px;border-radius:6px;cursor:pointer}

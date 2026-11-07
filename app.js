@@ -91,6 +91,7 @@ let deferredInstall = null;
 let dashboardRange = 'This month';
 let reportPeriod = 'monthly';
 let tableQuery = '';
+let selectedProductIds = new Set();
 let salesStatusFilter = '';
 let salesDateFrom = '';
 let salesDateTo = '';
@@ -224,6 +225,7 @@ function canPerformAction(action,element=null) {
     case 'new-product':return require('inventory','add-products');
     case 'edit-product':return require('inventory','edit-products');
     case 'delete-product':return require('inventory','delete-products');
+    case 'bulk-delete-products':return require('inventory','delete-products');
     case 'adjust-stock':case 'bulk-stock-adjust':return require('inventory','adjust-stock');
     case 'bulk-stocktake':return require('inventory','stocktake');
     case 'product-stock-history':return require('inventory','stock-history');
@@ -634,6 +636,7 @@ function setPage(next) {
   page = next;
   history.pushState({ erpPage: next }, '', `#${next}`);
   tableQuery = '';
+  selectedProductIds.clear();
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === next));
   document.getElementById('sidebar')?.classList.remove('open');
   render();
@@ -658,6 +661,7 @@ function navigateBack() {
   page = previous;
   history.pushState({ erpPage: page }, '', `#${page}`);
   tableQuery = '';
+  selectedProductIds.clear();
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
   render();
 }
@@ -1520,11 +1524,15 @@ function renderInventory() {
           </select>
         </div>
         <span class="muted" id="inventory-result-count" style="font-size:11px">${rows.length} of ${state.products.length} products</span>
+        <div id="bulk-product-bar" class="bulk-action-bar" hidden>
+          <span id="bulk-product-count" class="muted" style="font-size:11px"></span>
+          <button class="button small danger-action" data-action="bulk-delete-products">Delete selected</button>
+        </div>
       </div>
       <div class="table-scroll">
         <table class="data-table">
           <thead>
-            <tr><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Cost</th><th>Stock</th><th>Status</th><th>Actions</th></tr>
+            <tr><th style="width:36px"><input type="checkbox" id="select-all-products" title="Select all" style="cursor:pointer"></th><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Cost</th><th>Stock</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody id="inventory-table-body">${inventoryRows(rows)}</tbody>
         </table>
@@ -1559,6 +1567,7 @@ function inventoryRows(rows) {
     const draft = p.status === 'Draft';
     return `
       <tr>
+        <td style="width:36px"><input type="checkbox" class="product-row-check" data-id="${esc(p.id)}" ${selectedProductIds.has(p.id) ? 'checked' : ''} style="cursor:pointer"></td>
         <td><strong>${esc(p.name)}</strong></td>
         <td>${esc(p.id)}</td>
         <td>${esc(p.category)}</td>
@@ -1580,7 +1589,22 @@ function inventoryRows(rows) {
         </td>
       </tr>
     `;
-  }).join('') || emptyRow(8, 'No matching products');
+  }).join('') || emptyRow(9, 'No matching products');
+}
+
+function updateBulkProductBar() {
+  const bar = document.getElementById('bulk-product-bar');
+  const count = document.getElementById('bulk-product-count');
+  if (!bar) return;
+  const n = selectedProductIds.size;
+  bar.hidden = n === 0;
+  if (count) count.textContent = `${n} product${n !== 1 ? 's' : ''} selected`;
+  const allChecks = document.querySelectorAll('.product-row-check');
+  const selectAll = document.getElementById('select-all-products');
+  if (selectAll && allChecks.length) {
+    selectAll.checked = n > 0 && n === allChecks.length;
+    selectAll.indeterminate = n > 0 && n < allChecks.length;
+  }
 }
 
 function deleteProduct(id, button = null) {
@@ -2991,6 +3015,40 @@ function handleAction(button) {
       break;
     }
     case 'delete-product': deleteProduct(id, button); break;
+    case 'bulk-delete-products': {
+      if (!canPerformAction('delete-product')) { toast('You do not have permission to delete products'); break; }
+      const ids = [...selectedProductIds];
+      if (!ids.length) break;
+      if (!button.dataset.deleteMode) {
+        openDeleteChoice(button, `Delete ${ids.length} product${ids.length !== 1 ? 's' : ''}?`,
+          'Keep sales and purchase history linked to these products, or permanently erase all linked transactions.',
+          'Delete products, keep history', 'Erase related transactions');
+        break;
+      }
+      const bulkMode = button.dataset.deleteMode;
+      for (const pid of ids) {
+        const product = state.products.find(p => p.id === pid);
+        if (!product) continue;
+        if (bulkMode === 'erase-all') eraseProductHistory(pid);
+        for (const record of [...state.orders, ...state.sales]) {
+          for (const line of record.items || []) {
+            if (line.productId === pid && !line.product && !line.productName) line.product = product.name;
+          }
+        }
+        for (const purchase of state.purchases) {
+          for (const line of purchase.lines || []) {
+            if (line.productId === pid && !line.product && !line.productName) line.product = product.name;
+          }
+        }
+        state.products = state.products.filter(p => p.id !== pid);
+        if (bulkMode === 'erase-all') state.activityLog = (state.activityLog || []).filter(item => item.reference !== pid);
+      }
+      recordActivity('Bulk product delete', `${ids.length} product${ids.length !== 1 ? 's' : ''} removed`);
+      selectedProductIds.clear();
+      saveState(); render();
+      toast(bulkMode === 'erase-all' ? `${ids.length} product${ids.length !== 1 ? 's' : ''} and related transactions erased` : `${ids.length} product${ids.length !== 1 ? 's' : ''} deleted; history retained`);
+      break;
+    }
     case 'open-branch': switchBranch(id); break;
     case 'print-order-invoice': {
       const order = state.orders.find(o => o.id === id) || state.sales.find(s => s.id === id);
@@ -3195,6 +3253,18 @@ document.addEventListener('input', event => {
 });
 
 document.addEventListener('change', event => {
+  if (event.target.id === 'select-all-products') {
+    const checks = document.querySelectorAll('.product-row-check');
+    checks.forEach(cb => {
+      selectedProductIds[event.target.checked ? 'add' : 'delete'](cb.dataset.id);
+      cb.checked = event.target.checked;
+    });
+    updateBulkProductBar();
+  }
+  if (event.target.classList.contains('product-row-check')) {
+    selectedProductIds[event.target.checked ? 'add' : 'delete'](event.target.dataset.id);
+    updateBulkProductBar();
+  }
   if (event.target.id === 'sales-status') { salesStatusFilter = event.target.value; render(); }
   if (event.target.id === 'purchase-status') { purchaseStatusFilter = event.target.value; render(); }
   if(event.target.matches('[data-permission-module]')){
