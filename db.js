@@ -141,6 +141,11 @@ function sanitizeState(restored, initialState) {
   if (!clean.users.length) {
     clean.users = structuredClone(initialState.users);
   }
+  for (const u of clean.users) {
+    if (u.name === 'Amina Mwinyi' || u.name === 'Amina' || /amina/i.test(u.name || '')) {
+      u.name = 'Administrator';
+    }
+  }
   if (!clean.currency) clean.currency = 'TZS';
   if (typeof clean.vatEnabled !== 'boolean') clean.vatEnabled = true;
   if (typeof clean.vatRate !== 'number') clean.vatRate = 18;

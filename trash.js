@@ -29,13 +29,17 @@ function restoreFromTrash(state, trashId) {
         }
         state.products.unshift(data);
         if (!Array.isArray(state.stockMovements)) state.stockMovements = [];
+        const stockQty = Number(data.stock) || 0;
         state.stockMovements.unshift({
+          id: `STK-RESTORE-${Date.now().toString().slice(-6)}`,
           productId: data.id,
+          product: data.name || data.id,
           date: new Date().toISOString().slice(0, 10),
-          ref: `RESTORE-${data.id}`,
-          type: 'Stock restore',
+          before: 0,
+          after: stockQty,
+          delta: stockQty,
           reason: 'Restored from Trash bin',
-          change: Number(data.stock) || 0
+          user: item.deletedBy || 'Administrator'
         });
         break;
       }

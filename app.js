@@ -37,7 +37,7 @@ const initialState = {
   users: [
     {
       id: 'USR-OWNER',
-      name: 'Amina Mwinyi',
+      name: 'Administrator',
       username: '',
       email: '',
       phone: '',
@@ -192,6 +192,7 @@ function effectiveUserPermissions(user = currentWorkspaceUser()) {
 }
 
 function userHasPermission(module,action,user=currentWorkspaceUser()) {
+  if(!user || user.role === 'Guest') return false;
   if(isAdministratorUser(user))return true;
   return (effectiveUserPermissions(user)[module]||[]).includes(action);
 }
@@ -199,6 +200,7 @@ function userHasPermission(module,action,user=currentWorkspaceUser()) {
 function canViewPage(module,user=currentWorkspaceUser()) { return userHasPermission(module,'view',user); }
 
 function canPerformAction(action,element=null) {
+  if (!state.currentUserId || currentWorkspaceUser().role === 'Guest') return false;
   if(isWorkspaceAdministrator())return true;
   const type=element?.dataset?.partyType;
   const require=(module,permission)=>userHasPermission(module,permission);
@@ -231,6 +233,7 @@ function canPerformAction(action,element=null) {
     case 'edit-purchase':return require('purchases','edit');
     case 'receive-purchase':return require('purchases','receive');
     case 'purchase-payment':return require('purchases','payments');
+    case 'return-purchase':return require('purchases','returns');
     case 'delete-purchase':return require('purchases','delete');
     case 'new-party':return require(type==='Supplier'?'suppliers':'customers','add');
     case 'export-parties':return require(type==='Supplier'?'suppliers':'customers','export');
@@ -246,11 +249,12 @@ function canPerformAction(action,element=null) {
     case 'clear-trash':case 'restore-trash':return require('settings','edit-company');
     case 'new-user':return require('users','add');
     case 'edit-user':return isWorkspaceAdministrator()&&require('users','edit');
+    case 'set-user-credentials':return isWorkspaceAdministrator();
     case 'edit-user-permissions':return isWorkspaceAdministrator()&&require('users','manage-permissions');
     case 'toggle-user':return require('users','activate');
     case 'delete-user':return isWorkspaceAdministrator()&&require('users','delete');
-    case 'new-branch':return require('branches','manage')||require('settings','manage-branches');
-    case 'open-branch':return require('branches','open');
+    case 'new-branch':return false;
+    case 'open-branch':return userCanManageAllBranches()&&require('branches','open');
     case 'select-transaction-product':case 'remove-transaction-product':return element?.dataset?.kind==='purchase'?require('purchases','create'):require('sales','create');
     default:return true;
   }
@@ -323,6 +327,7 @@ async function ensureAdministratorLogin() {
   if (!admin) return false;
   if (!admin.username) admin.username = ADMIN_LOGIN_USERNAME;
   if (!admin.email) admin.email = ADMIN_LOGIN_EMAIL;
+  if (admin.name === 'Amina Mwinyi' || admin.name === 'Amina' || /amina/i.test(admin.name || '')) admin.name = 'Administrator';
   if (!admin.initialAdminLoginSeeded || !admin.passwordHash || !admin.passwordSalt) {
     await setUserPassword(admin, ADMIN_INITIAL_PASSWORD);
     admin.initialAdminLoginSeeded = true;
@@ -339,7 +344,13 @@ async function handleLogin(form) {
   catch (error) { renderAuthGate(error.message || 'Sign-in could not be completed.'); return; }
   if (!valid) { renderAuthGate('The username/email or password is incorrect, or this account is inactive.'); return; }
   state.currentUserId = user.id;
+  if(!activateAssignedBranch(user)){
+    state.currentUserId='';
+    renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
+    return;
+  }
   safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
+  saveState();
   authErrorMessage = '';
   document.getElementById('auth-gate').hidden = true;
   document.querySelector('.app-shell').hidden = false;
@@ -367,18 +378,43 @@ function idFor(prefix, list = []) {
 }
 
 function toast(message) {
+  let region = document.getElementById('toast-region');
+  const modal = document.getElementById('app-modal');
+  if (modal?.open && !region?.showPopover) {
+    let modalRegion = modal.querySelector('.toast-region');
+    if (!modalRegion) {
+      modalRegion = document.createElement('div');
+      modalRegion.className = 'toast-region';
+      modal.append(modalRegion);
+    }
+    region = modalRegion;
+  }
+  if (!region) return;
+  try {
+    if (region.showPopover && !region.matches(':popover-open')) {
+      region.showPopover();
+    }
+  } catch {}
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = message;
-  document.getElementById('toast-region').append(el);
-  setTimeout(() => el.remove(), 3200);
+  region.append(el);
+  setTimeout(() => {
+    el.remove();
+    try {
+      if (region.children.length === 0 && region.hidePopover) {
+        region.hidePopover();
+      }
+    } catch {}
+  }, 3200);
 }
 
 function currentWorkspaceUser() {
-  return state.users.find(u => u.id === state.currentUserId && u.status === 'Active') ||
-         state.users.find(u => u.role === 'Owner / Administrator' && u.status === 'Active') ||
-         state.users.find(u => u.status === 'Active') ||
-         { name: 'Amina Mwinyi', role: 'Owner / Administrator' };
+  if (state.currentUserId) {
+    const user = state.users.find(u => u.id === state.currentUserId && u.status === 'Active');
+    if (user) return user;
+  }
+  return { name: 'Guest', role: 'Guest', modules: [], permissions: {} };
 }
 
 function isWorkspaceAdministrator() {
@@ -386,14 +422,28 @@ function isWorkspaceAdministrator() {
 }
 
 function userCanManageAllBranches() {
-  const user = currentWorkspaceUser();
-  return user.role === 'Owner / Administrator' || (user.role === 'Manager' && user.crossBranchApproved === true);
+  return isWorkspaceAdministrator();
 }
 
 function accessibleBranches() {
   if (userCanManageAllBranches()) return state.branches.filter(b => b.status !== 'Inactive');
   const assigned = state.branches.find(b => b.id === currentWorkspaceUser().branchId && b.status !== 'Inactive');
-  return assigned ? [assigned] : [activeBranch];
+  return assigned ? [assigned] : [];
+}
+
+function activateAssignedBranch(user=currentWorkspaceUser()) {
+  if(isAdministratorUser(user))return true;
+  const branch=state.branches.find(item=>item.id===user?.branchId&&item.status!=='Inactive');
+  if(!branch)return false;
+  if(activeBranch?.id!==branch.id){
+    snapshotCurrentBranch();
+    activeBranch=branch;
+    const saved=state.branchData?.[branch.id]||{};
+    branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]||[]);});
+  }
+  state.activeBranchId=branch.id;
+  state.branch=branch.name;
+  return true;
 }
 
 function snapshotCurrentBranch() {
@@ -414,6 +464,10 @@ function saveState() {
 
 function updateConnection() {
   const offline = !navigator.onLine;
+  if (!offline && state.queue.length > 0) {
+    state.queue = [];
+    persistState(state);
+  }
   const dot = document.getElementById('connection-dot');
   const label = document.getElementById('connection-label');
   if (dot) dot.classList.toggle('offline', offline || state.queue.length > 0);
@@ -477,7 +531,7 @@ function refreshActivityVisibility() {
 function recordActivity(action, details, reference = '') {
   if (!Array.isArray(state.activityLog)) state.activityLog=[];
   const actor=currentWorkspaceUser();
-  state.activityLog.unshift({id:idFor('ACT',state.activityLog),date:new Date().toISOString(),actorId:actor.id||'',actor:actor.name||'User',action,details,reference});
+  state.activityLog.unshift({id:idFor('ACT',state.activityLog),date:new Date().toISOString(),actorId:actor.id||'',actor:actor.name||'User',branchId:activeBranch?.id||'',action,details,reference});
   state.activityLog=state.activityLog.slice(0,300);
 }
 
@@ -528,12 +582,12 @@ function openNotificationsPanel() {
 }
 
 function recentActivityItems(limit = 100) {
-  const saved=(state.activityLog||[]).map(item=>({id:item.id,date:item.date,actorId:item.actorId||'',actor:item.actor||'User',action:item.action||'Updated records',details:item.details||'',reference:item.reference||''}));
+  const saved=(state.activityLog||[]).map(item=>({id:item.id,date:item.date,actorId:item.actorId||'',actor:item.actor||'User',branchId:item.branchId||'',action:item.action||'Updated records',details:item.details||'',reference:item.reference||''}));
   const fallback=[];
-  for(const sale of state.sales)fallback.push({id:`sale-${sale.id}`,date:sale.date,actor:'',action:'Sale recorded',details:`${sale.customer||'Walk-in customer'} · ${money(sale.total||0)}`,reference:sale.id});
-  for(const purchase of state.purchases)fallback.push({id:`purchase-${purchase.id}`,date:purchase.date,actor:'',action:'Purchase order recorded',details:`${purchase.supplier||'Supplier'} · ${money(purchase.total||0)}`,reference:purchase.id});
-  for(const entry of state.entries)fallback.push({id:`entry-${entry.id}`,date:entry.date,actor:'',action:entry.sourceType?.includes('payment')?'Payment recorded':'Account entry recorded',details:`${entry.partyType||''} · ${entry.party||''} · ${money(entry.amount||0)} · ${entry.memo||''}`,reference:entry.id});
-  for(const movement of state.stockMovements)fallback.push({id:`stock-${movement.id}`,date:movement.date,actor:movement.user||'',action:'Stock updated',details:`${movement.product||movement.productId} · ${movement.delta>0?'+':''}${movement.delta}`,reference:movement.id});
+  for(const sale of state.sales)fallback.push({id:`sale-${sale.id}`,date:sale.date,actor:'',branchId:activeBranch?.id||'',action:'Sale recorded',details:`${sale.customer||'Walk-in customer'} · ${money(sale.total||0)}`,reference:sale.id});
+  for(const purchase of state.purchases)fallback.push({id:`purchase-${purchase.id}`,date:purchase.date,actor:'',branchId:activeBranch?.id||'',action:'Purchase order recorded',details:`${purchase.supplier||'Supplier'} · ${money(purchase.total||0)}`,reference:purchase.id});
+  for(const entry of state.entries)fallback.push({id:`entry-${entry.id}`,date:entry.date,actor:'',branchId:activeBranch?.id||'',action:entry.sourceType?.includes('payment')?'Payment recorded':'Account entry recorded',details:`${entry.partyType||''} · ${entry.party||''} · ${money(entry.amount||0)} · ${entry.memo||''}`,reference:entry.id});
+  for(const movement of state.stockMovements)fallback.push({id:`stock-${movement.id}`,date:movement.date,actor:movement.user||'',branchId:activeBranch?.id||'',action:'Stock updated',details:`${movement.product||movement.productId} · ${movement.delta>0?'+':''}${movement.delta}`,reference:movement.id});
   const known=new Set(saved.map(item=>item.reference).filter(Boolean));
   const combined=[...saved,...fallback.filter(item=>!known.has(item.reference))];
   return combined.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).slice(0,limit);
@@ -552,7 +606,7 @@ function openUserActivityHistory(user) {
 
 function openActivityHistory() {
   if(!canViewActivity()){toast('You do not have permission to view the activity history');return;}
-  const items=recentActivityItems();
+  const items=recentActivityItems().filter(item=>isWorkspaceAdministrator()||item.branchId===activeBranch?.id);
   const rows=items.map(item=>`<div class="activity-entry"><span class="activity-entry-icon">◷</span><div><strong>${esc(item.action)}</strong><small>${esc(item.details)}${item.reference?` · ${esc(item.reference)}`:''}</small>${item.actor?`<small>By ${esc(item.actor)}</small>`:''}</div><time>${dateLabel(String(item.date||'').slice(0,10))}</time></div>`).join('');
   openModal('Activity history',`${items.length} recent item${items.length===1?'':'s'} · saved actions and transaction history`,items.length?`<div class="activity-list">${rows}</div>`:'<div class="notification-empty"><p>No activity has been recorded yet.</p></div>','Close');
 }
@@ -808,6 +862,10 @@ function inputField(name, label, placeholder = '', type = 'text', required = fal
 
 function selectField(name, label, options = [], selected = '') {
   return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}">${options.map(opt => `<option ${opt === selected ? 'selected' : ''}>${esc(opt)}</option>`).join('')}</select></div>`;
+}
+
+function branchSelectField(name,label,selectedId='',branches=state.branches.filter(branch=>branch.status!=='Inactive')) {
+  return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}" required>${branches.map(branch=>`<option value="${esc(branch.id)}" ${branch.id===selectedId?'selected':''}>${esc(branch.name)}</option>`).join('')}</select></div>`;
 }
 
 // Dashboard Page
@@ -1067,6 +1125,10 @@ function completePOS() {
   if (!posCart.length) return;
   const method = document.getElementById('pos-method')?.value || posMethod;
   const customer = document.getElementById('pos-customer')?.value || posCustomer;
+  if (method === 'Credit' && (!customer || customer === 'Walk-in customer')) {
+    toast('Credit sales require a registered customer account');
+    return;
+  }
   const total = posCart.reduce((sum, line) => sum + line.qty * line.price, 0);
   const existing = state.orders.find(order => order.id === posDraftOrderId && order.source === 'POS' && order.status === 'Draft');
   const creditCustomer=state.customers.find(item=>item.name===customer),creditLimit=Number(creditCustomer?.creditLimit)||0;
@@ -1074,10 +1136,32 @@ function completePOS() {
 
   for (const line of posCart) {
     const product = state.products.find(p => p.id === line.id);
-    if (product) product.stock = Math.max(0, product.stock - line.qty);
+    if (!product || product.stock < line.qty) {
+      toast(`Insufficient stock for ${product?.name || 'an item'} (${product?.stock || 0} in stock)`);
+      return;
+    }
   }
 
   const saleId = existing?.id || idFor('POS', state.sales);
+  for (const line of posCart) {
+    const product = state.products.find(p => p.id === line.id);
+    if (product) {
+      const before = product.stock;
+      product.stock = Math.max(0, product.stock - line.qty);
+      state.stockMovements.unshift({
+        id: idFor('STK', state.stockMovements),
+        productId: product.id,
+        product: product.name,
+        date: today(),
+        before,
+        after: product.stock,
+        delta: product.stock - before,
+        reason: `POS sale ${saleId}`,
+        user: currentWorkspaceUser().name
+      });
+    }
+  }
+
   const items = posCart.map(l => ({ productId: l.id, product: l.name, qty: l.qty, unitPrice: l.price }));
   const sale = {
     id: saleId, orderId: saleId, customer, date: today(),
@@ -1317,6 +1401,7 @@ function printOrderInvoice(order) {
   const subtotal = order.subtotal ?? (order.total + (order.discount || 0));
   const paid = Math.max(0, Number(order.paid) || 0);
   const balance = Math.max(0, order.total - paid);
+  const tax = calculateTaxBreakdown(order.total, state.vatEnabled !== false, state.vatRate || 18);
   const priorOrderBalance = state.orders
     .filter(other => other.id !== order.id && other.customer === order.customer && other.status !== 'Draft')
     .reduce((sum, other) => sum + Math.max(0, Number(other.total) - (Number(other.paid) || 0)), 0);
@@ -1333,7 +1418,7 @@ function printOrderInvoice(order) {
     <html>
     <head>
       <meta charset="utf-8">
-      <title>Invoice ${esc(invoice.id)}</title>
+      <title>Tax Invoice ${esc(invoice.id)}</title>
       <style>
         body{font:14px Arial,sans-serif;color:#172f3b;padding:36px;max-width:820px;margin:auto}
         header{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;border-bottom:2px solid #087f9d;padding-bottom:20px}
@@ -1366,9 +1451,10 @@ function printOrderInvoice(order) {
           ${contacts ? `<small>${contacts}</small>` : ''}
         </div>
         <div style="text-align:right">
-          <h2 style="margin:0;color:#087f9d">INVOICE</h2>
+          <h2 style="margin:0;color:#087f9d">TAX INVOICE</h2>
           <strong>${esc(invoice.id)}</strong><br>
-          <small>Order ${esc(order.id)} · ${dateLabel(invoice.date)}</small>
+          <small>Order ${esc(order.id)} · ${dateLabel(invoice.date)}</small><br>
+          <small style="color:#526973">TRA Electronic Fiscal Receipt</small>
         </div>
       </header>
       <p style="margin-top:20px"><strong>Billed to:</strong> ${esc(order.customer)}</p>
@@ -1385,9 +1471,13 @@ function printOrderInvoice(order) {
         </section>
         <section class="summary-column">
           <h2>Invoice total</h2>
-          <div class="summary-row"><span>Subtotal</span><strong>${money(subtotal)}</strong></div>
+          <div class="summary-row"><span>Gross subtotal</span><strong>${money(subtotal)}</strong></div>
           ${order.discount ? `<div class="summary-row"><span>Discount</span><strong>− ${money(order.discount)}</strong></div>` : ''}
           ${order.additionalCharges ? `<div class="summary-row"><span>Additional charges</span><strong>${money(order.additionalCharges)}</strong></div>` : ''}
+          ${tax.isEnabled && tax.vat > 0 ? `
+            <div class="summary-row"><span>Taxable amount (Net)</span><strong>${money(tax.net)}</strong></div>
+            <div class="summary-row"><span>VAT (${tax.vatRate}%)</span><strong>${money(tax.vat)}</strong></div>
+          ` : ''}
           <div class="summary-row total"><span>Total amount to be paid</span><strong>${money(order.total)}</strong></div>
           <div class="summary-row emphasis"><span>Amount paid</span><strong>${money(paid)}</strong></div>
         </section>
@@ -1599,6 +1689,7 @@ function renderPurchases() {
               <button data-action="edit-purchase" data-id="${esc(p.id)}">Edit purchase order</button>
               ${p.status === 'Pending' ? `<button data-action="receive-purchase" data-id="${esc(p.id)}">Receive stock</button>` : ''}
               ${p.status === 'Received' && (p.paid || 0) < net ? `<button data-action="purchase-payment" data-id="${esc(p.id)}">Add payment</button>` : ''}
+              ${p.status === 'Received' ? `<button data-action="return-purchase" data-id="${esc(p.id)}">Supplier return</button>` : ''}
               <button class="danger-action" data-action="delete-purchase" data-id="${esc(p.id)}">Delete purchase${isWorkspaceAdministrator()&&p.status==='Received'?' · admin override':''}</button>
             </div>
           </details>
@@ -1686,7 +1777,7 @@ function renderParties(type) {
 
 // Users Page
 function renderUsers() {
-  const visibleUsers = state.users.filter(u => !u.isBootstrap);
+  const visibleUsers = state.users.filter(u => isWorkspaceAdministrator() || u.branchId===activeBranch?.id);
   const rows = visibleUsers.map(user => {
     const full = user.role === 'Owner / Administrator';
     const permissions=effectiveUserPermissions(user);
@@ -1697,13 +1788,15 @@ function renderUsers() {
         <td><strong>${esc(user.name)}</strong><small>${esc(user.id)}</small></td>
         <td>${esc(user.email || '—')}<small>@${esc(user.username || 'credentials needed')}</small><small>${esc(user.phone || '')}</small></td>
         <td><strong>${esc(user.role)}</strong></td>
+        <td>${esc(state.branches.find(branch=>branch.id===user.branchId)?.name||'Unassigned')}</td>
         <td class="user-access-summary">${esc(accessLabel)}<small>${full?'Permissions are always enabled for the Owner / Administrator':`${Object.values(permissions).reduce((sum,actions)=>sum+actions.length,0)} actions granted`}</small></td>
         <td><span class="status-pill ${user.status === 'Active' ? 'paid' : 'pending'}">${esc(user.status || 'Active')}</span></td>
         <td>
           <details class="order-actions user-actions">
             <summary aria-label="Actions for ${esc(user.name)}">•••</summary>
             <div class="order-actions-menu user-actions-menu">
-              ${isWorkspaceAdministrator()&&!user.isBootstrap?`<button data-action="edit-user" data-id="${esc(user.id)}">Edit user and login</button>`:''}
+              ${isWorkspaceAdministrator()?`<button data-action="edit-user" data-id="${esc(user.id)}">Edit user</button>`:''}
+              ${isWorkspaceAdministrator()?`<button data-action="set-user-credentials" data-id="${esc(user.id)}">Set password & credentials</button>`:''}
               ${isWorkspaceAdministrator()?`<button data-action="view-user-activity" data-id="${esc(user.id)}">View activity</button>`:''}
               ${!full&&isWorkspaceAdministrator()?`<button data-action="edit-user-permissions" data-id="${esc(user.id)}">Permissions</button>`:''}
               ${!user.isBootstrap&&canPerformAction('toggle-user')?`<button data-action="toggle-user" data-id="${esc(user.id)}">${user.status === 'Active' ? 'Deactivate' : 'Activate'}</button>`:''}
@@ -1713,14 +1806,14 @@ function renderUsers() {
         </td>
       </tr>
     `;
-  }).join('') || emptyRow(6, 'No users added yet');
+  }).join('') || emptyRow(7, 'No users added yet');
 
   return `
     ${heading('Users', 'Manage workspace team members, roles, and access credentials.', `
       ${canPerformAction('new-user')?'<button class="button primary" data-action="new-user">＋ Add user</button>':''}
     `)}
     <section class="table-panel">
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>User</th><th>Email / Phone</th><th>Role</th><th>Access</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>User</th><th>Email / Phone</th><th>Role</th><th>Branch</th><th>Access</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>
   `;
 }
@@ -1745,20 +1838,20 @@ function openUserPermissionsForm(user) {
 
 function openUserCredentialsForm(user) {
   if (!user) return;
-  openDialog('set-user-credentials', 'Set login credentials', `Assign a unique username, email, and initial password for ${esc(user.name)}.`, `<div class="form-grid">${inputField('credential-username','Username','e.g. chiko','text',true,user.username||'')}${inputField('credential-email','Email','name@example.com','email',true,user.email||'')}${inputField('credential-password','Initial password','At least 8 characters','password',true)}${inputField('credential-password-confirm','Confirm password','Re-enter password','password',true)}</div>`,'Save credentials');
+  openDialog('set-user-credentials', 'Set login credentials', `Assign a full name, username, email, and password for ${esc(user.name)}.`, `<div class="form-grid">${inputField('credential-name','Full name','e.g. John Doe','text',true,user.name||'')}${inputField('credential-username','Username','e.g. chiko','text',true,user.username||'')}${inputField('credential-email','Email','name@example.com','email',true,user.email||'')}${inputField('credential-password',user.passwordHash?'New password':'Initial password',user.passwordHash?'Leave blank to keep current password':'At least 8 characters','password',!user.passwordHash)}${inputField('credential-password-confirm','Confirm password','Re-enter password','password',!user.passwordHash)}</div>`,'Save credentials');
   document.getElementById('modal-content').dataset.recordId = user.id;
 }
 
 function openUserEditForm(user) {
-  if(!user||user.isBootstrap||!isWorkspaceAdministrator())return;
+  if(!user||!isWorkspaceAdministrator())return;
   const roles=['Salesman','Storekeeper','Manager','Owner / Administrator'];
-  openDialog('edit-user',`Edit ${esc(user.name)}`,'Update this user’s profile and login credentials. Leave the password blank to keep the current password.',`<div class="form-grid">${inputField('edit-user-name','Full name','', 'text',true,user.name||'')}${inputField('edit-user-username','Username','Choose a unique username','text',true,user.username||'')}${inputField('edit-user-email','Email','name@example.com','email',true,user.email||'')}${inputField('edit-user-phone','Phone','', 'tel',false,user.phone||'')}${inputField('edit-user-password','New password','Leave blank to keep current password','password')}${inputField('edit-user-password-confirm','Confirm new password','Re-enter new password','password')}${selectField('edit-user-role','Role',roles,user.role||'Salesman')}</div>`,'Save user');
+  openDialog('edit-user',`Edit ${esc(user.name)}`,'Update this user’s profile, assigned branch, role, and login credentials. Leave the password blank to keep the current password.',`<div class="form-grid">${inputField('edit-user-name','Full name','', 'text',true,user.name||'')}${inputField('edit-user-username','Username','Choose a unique username','text',true,user.username||'')}${inputField('edit-user-email','Email','name@example.com','email',true,user.email||'')}${inputField('edit-user-phone','Phone','', 'tel',false,user.phone||'')}${branchSelectField('edit-user-branch','Assigned branch',user.branchId)}${inputField('edit-user-password','New password','Leave blank to keep current password','password')}${inputField('edit-user-password-confirm','Confirm new password','Re-enter new password','password')}${selectField('edit-user-role','Role',roles,user.role||'Salesman')}</div>`,'Save user');
   document.getElementById('modal-content').dataset.recordId=user.id;
 }
 
 function openOwnCredentialsForm() {
   const user = currentWorkspaceUser();
-  openModal('My account', 'Update the credentials for your signed-in account.', `<input type="hidden" name="dialog-kind" value="own-credentials"><div class="form-grid">${inputField('own-current-password','Current password','','password',true)}${inputField('own-username','Username','', 'text',true,user.username||'')}${inputField('own-email','Email','', 'email',true,user.email||'')}${inputField('own-new-password','New password','Leave blank to keep current password','password')}${inputField('own-new-password-confirm','Confirm new password','','password')}</div>`, 'Save changes', '<button type="button" class="button" data-action="logout">Sign out</button>');
+  openModal('My account', 'Update your personal name and credentials for your signed-in account.', `<input type="hidden" name="dialog-kind" value="own-credentials"><div class="form-grid">${inputField('own-name','Your full name','e.g. Emmanuel','text',true,user.name||'')}${inputField('own-current-password','Current password (required only if changing password)','','password',false)}${inputField('own-username','Username','', 'text',true,user.username||'')}${inputField('own-email','Email','', 'email',true,user.email||'')}${inputField('own-new-password','New password','Leave blank to keep current password','password')}${inputField('own-new-password-confirm','Confirm new password','','password')}</div>`, 'Save changes', '<button type="button" class="button" data-action="logout">Sign out</button>');
   document.getElementById('modal-content').dataset.dialogKind = 'own-credentials';
 }
 
@@ -1766,7 +1859,7 @@ function openOwnCredentialsForm() {
 function renderBranches() {
   const admin = isWorkspaceAdministrator();
   const allowed = new Set(accessibleBranches().map(b => b.id));
-  const cards = state.branches.filter(b => b.status !== 'Inactive').map(b => {
+  const cards = state.branches.filter(b => b.status !== 'Inactive' && allowed.has(b.id)).map(b => {
     const active = b.id === activeBranch.id;
     return `
       <article class="branch-card">
@@ -1774,7 +1867,7 @@ function renderBranches() {
         <h2>${esc(b.name)}</h2>
         <p>${esc(b.id)}</p>
         <div class="branch-actions">
-          ${allowed.has(b.id) ? (active ? '<button class="button" disabled>Current workspace</button>' : `<button class="button primary" data-action="open-branch" data-id="${esc(b.id)}">Open workspace</button>`) : '<span class="muted">Access restricted</span>'}
+          ${active ? '<button class="button" disabled>Current workspace</button>' : `<button class="button primary" data-action="open-branch" data-id="${esc(b.id)}">Open workspace</button>`}
         </div>
       </article>
     `;
@@ -1842,7 +1935,16 @@ function reportPeriodData() {
   const supplierPaid=supplierPayments.length?supplierPayments.reduce((sum,entry)=>sum+(Number(entry.amount)||0),0):purchases.reduce((sum,purchase)=>sum+(Number(purchase.paid)||0),0);
   const hasTransactionHistory=state.sales.length>0||state.purchases.length>0;
   const netCollected=hasTransactionHistory?collected-supplierPaid:0;
-  return {...range,sales,purchases,salesTotal,purchaseTotal,collected,supplierPaid,netCollected};
+  let cogsTotal = 0;
+  for (const sale of sales) {
+    for (const item of sale.items || []) {
+      const prod = state.products.find(p => p.id === item.productId);
+      const unitCost = Number(prod?.cost) || 0;
+      cogsTotal += (Number(item.qty) || 0) * unitCost;
+    }
+  }
+  const grossProfit = salesTotal - cogsTotal;
+  return {...range,sales,purchases,salesTotal,purchaseTotal,collected,supplierPaid,netCollected,cogsTotal,grossProfit};
 }
 
 function reportBuckets(data) {
@@ -1892,7 +1994,7 @@ function renderReports() {
     <section class="metric-grid report-metrics">${metric('Sales revenue',money(data.salesTotal),'↗',`${periodLabel} · ${data.sales.length} transactions`)}${metric('Purchases',money(data.purchaseTotal),'▤',`${periodLabel} · ${data.purchases.length} orders`)}${metric('Net cash movement',`${data.netCollected<0?'− ':''}${money(data.netCollected)}`,'⇄',`Collected less paid · ${periodLabel}`,data.netCollected<0?'down':'up')}${metric('Open receivables',money(receivable),'◷','All customer accounts')}</section>
     <section class="panel financial-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Sales and purchases</h2><p class="panel-subtitle">${esc(periodLabel)} comparison by ${reportPeriod==='weekly'?'day':reportPeriod==='annual'?'month':'week'}.</p></div><div class="report-chart-legend"><span><i style="background:#087f9d"></i>Sales</span><span><i style="background:#ff8c42"></i>Purchases</span></div></div>${renderFinancialBarChart(data)}</section>
     <section class="report-pie-grid">${reportPieCard('Sales by payment method',`${periodLabel} sales value`,[...paymentGroups],'Sales')}${reportPieCard('Revenue and purchases',`${periodLabel} transaction mix`,revenueMix,'Total value')}</section>
-    <section class="table-panel financial-summary-table"><div class="table-heading"><div><h2>Financial summary</h2><p class="panel-subtitle">${esc(data.label)} and current account balances.</p></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Measure</th><th>Amount</th><th>Basis</th></tr></thead><tbody><tr><td><strong>Sales revenue</strong></td><td>${money(data.salesTotal)}</td><td>${periodLabel} transactions</td></tr><tr><td><strong>Customer payments collected</strong></td><td>${money(data.collected)}</td><td>${periodLabel} receipts</td></tr><tr><td><strong>Purchases ordered</strong></td><td>${money(data.purchaseTotal)}</td><td>${periodLabel} purchase orders</td></tr><tr><td><strong>Supplier payments made</strong></td><td>${money(data.supplierPaid)}</td><td>${periodLabel} payments</td></tr><tr><td><strong>Supplier payables</strong></td><td>${money(payable)}</td><td>Current balance</td></tr></tbody></table></div></section>
+    <section class="table-panel financial-summary-table"><div class="table-heading"><div><h2>Financial summary</h2><p class="panel-subtitle">${esc(data.label)} and current account balances.</p></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Measure</th><th>Amount</th><th>Basis</th></tr></thead><tbody><tr><td><strong>Sales revenue</strong></td><td>${money(data.salesTotal)}</td><td>${periodLabel} transactions</td></tr><tr><td><strong>Cost of goods sold (COGS)</strong></td><td>${money(data.cogsTotal)}</td><td>${periodLabel} inventory cost</td></tr><tr><td><strong>Gross profit</strong></td><td>${money(data.grossProfit)}</td><td>Revenue less COGS</td></tr><tr><td><strong>Customer payments collected</strong></td><td>${money(data.collected)}</td><td>${periodLabel} receipts</td></tr><tr><td><strong>Purchases ordered</strong></td><td>${money(data.purchaseTotal)}</td><td>${periodLabel} purchase orders</td></tr><tr><td><strong>Supplier payments made</strong></td><td>${money(data.supplierPaid)}</td><td>${periodLabel} payments</td></tr><tr><td><strong>Supplier payables</strong></td><td>${money(payable)}</td><td>Current balance</td></tr></tbody></table></div></section>
     <div class="report-cards"><article class="report-card"><h3>Inventory Valuation</h3><p>Current on-hand stock valuation at cost.</p><button class="button" data-action="export-inventory">Export Inventory CSV</button></article><article class="report-card"><h3>General Activity Ledger</h3><p>Complete customer and supplier account transactions.</p><button class="button" data-action="export-ledger">Export Ledger CSV</button></article></div>
   `;
 }
@@ -2250,8 +2352,17 @@ function openOrderReturn(id) {
   document.getElementById('modal-content').dataset.recordId=id;
 }
 
+function openPurchaseReturn(id) {
+  const purchase=state.purchases.find(p=>p.id===id);if(!purchase)return;
+  const lines=(purchase.lines||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return p?`${p.id} · ${p.name}`:l.productId;});
+  openDialog('purchase-return','Supplier return',`Record returned items to ${esc(purchase.supplier)} for ${esc(purchase.id)}.`,`${selectField('purchase-return-product','Product',lines)}${inputField('purchase-return-qty','Quantity returned','','number',true,1)}${inputField('purchase-return-reason','Reason','Optional note')}`,'Record return');
+  document.getElementById('modal-content').dataset.recordId=id;
+}
+
 function switchBranch(id) {
-  const branch=state.branches.find(b=>b.id===id);if(!branch||branch.id===activeBranch.id)return;
+  const branch=state.branches.find(b=>b.id===id&&b.status!=='Inactive');if(!branch)return;
+  if(!accessibleBranches().some(item=>item.id===branch.id)){toast('You can only open your assigned branch workspace');return;}
+  if(branch.id===activeBranch.id)return;
   snapshotCurrentBranch();activeBranch=branch;
   const saved=state.branchData?.[id]||{};
   branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]||[]);});
@@ -2407,6 +2518,58 @@ async function handleDialogSubmit(form) {
     recordActivity('Supplier payment recorded',`${purchase.supplier} · ${money(applied)}`,purchase.id);
     saveState();document.getElementById('app-modal').close();render();toast('Supplier payment recorded');return;
   }
+  if (kind === 'purchase-return') {
+    const purchase=state.purchases.find(p=>p.id===form.dataset.recordId);
+    if (!purchase) { toast('Purchase order not found'); return; }
+    const productId=val('purchase-return-product').split(' · ')[0];
+    const line=purchase.lines?.find(l=>l.productId===productId);
+    const qty=Math.max(1,Number(val('purchase-return-qty'))||1);
+    if(!line||qty>line.qty){toast('Return quantity must be within the received quantity');return;}
+    const product=state.products.find(p=>p.id===productId);
+    if(product){
+      const before=product.stock;
+      product.stock=Math.max(0,product.stock-qty);
+      state.stockMovements.unshift({
+        id: idFor('STK', state.stockMovements),
+        productId: product.id,
+        product: product.name,
+        date: today(),
+        before,
+        after: product.stock,
+        delta: product.stock-before,
+        reason: `Supplier return ${purchase.id}`,
+        user: currentWorkspaceUser().name
+      });
+    }
+    const unitCost = Number(line.unitCost) || Number(product?.cost) || 0;
+    const returnAmount = qty * unitCost;
+    if(!Array.isArray(state.purchaseReturns)) state.purchaseReturns=[];
+    state.purchaseReturns.unshift({
+      id: idFor('PRET', state.purchaseReturns),
+      purchaseId: purchase.id,
+      purchaseOrderId: purchase.id,
+      supplier: purchase.supplier,
+      productId,
+      product: product?.name || productId,
+      qty,
+      amount: returnAmount,
+      date: today(),
+      reason: val('purchase-return-reason')
+    });
+    purchase.returned = (Number(purchase.returned) || 0) + returnAmount;
+    postAccountEntry({
+      partyType: 'Supplier',
+      party: purchase.supplier,
+      date: today(),
+      type: 'Debit',
+      amount: returnAmount,
+      memo: `Supplier return · ${purchase.id}`,
+      sourceType: 'purchase-return',
+      sourceId: purchase.id
+    });
+    recordActivity('Supplier return recorded',`${purchase.supplier} · ${product?.name||productId} · ${qty}`,purchase.id);
+    saveState();document.getElementById('app-modal').close();render();toast('Supplier return recorded');return;
+  }
   if (kind === 'order-payment') {
     const order=state.orders.find(o=>o.id===form.dataset.recordId),amount=Number(val('order-payment-amount'))||0;
     if(!order||amount<=0){toast('Enter a payment amount greater than zero');return;}
@@ -2419,10 +2582,53 @@ async function handleDialogSubmit(form) {
   if (kind === 'order-return') {
     const order=state.orders.find(o=>o.id===form.dataset.recordId),productId=val('return-product').split(' · ')[0],line=order?.items?.find(i=>i.productId===productId),qty=Math.max(1,Number(val('return-qty'))||1);
     if(!order||!line||qty>line.qty){toast('Return quantity must be within the original sale quantity');return;}
-    const product=state.products.find(p=>p.id===productId);if(data.get('return-restock')&&product)product.stock+=qty;
-    state.returns.unshift({id:idFor('RET',state.returns),saleId:order.invoiceId||order.id,customer:order.customer,product:product?.name||productId,productId,qty,date:today(),reason:val('return-reason'),restocked:Boolean(data.get('return-restock'))});
+    const product=state.products.find(p=>p.id===productId);
+    const restock = Boolean(data.get('return-restock'));
+    if(restock && product){
+      const before = product.stock;
+      product.stock += qty;
+      state.stockMovements.unshift({
+        id: idFor('STK', state.stockMovements),
+        productId: product.id,
+        product: product.name,
+        date: today(),
+        before,
+        after: product.stock,
+        delta: qty,
+        reason: `Sales return ${order.id}`,
+        user: currentWorkspaceUser().name
+      });
+    }
+    const unitPrice = line.unitPrice ?? product?.price ?? 0;
+    const returnAmount = qty * unitPrice;
+    const retRecord = {
+      id: idFor('RET', state.returns),
+      saleId: order.invoiceId || order.id,
+      customer: order.customer,
+      product: product?.name || productId,
+      productId,
+      qty,
+      amount: returnAmount,
+      date: today(),
+      reason: val('return-reason'),
+      restocked: restock
+    };
+    state.returns.unshift(retRecord);
+    if(order.customer !== 'Walk-in customer' && state.customers.some(c=>c.name===order.customer)){
+      postAccountEntry({
+        partyType: 'Customer',
+        party: order.customer,
+        date: today(),
+        type: 'Credit',
+        amount: returnAmount,
+        memo: `Return credit · ${retRecord.id} · ${order.id}`,
+        sourceType: 'sales-return',
+        sourceId: retRecord.id,
+        relatedId: order.id
+      });
+    }
     recordActivity('Sales return recorded',`${order.customer} · ${product?.name||productId} · ${qty}`,order.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Return recorded');return;
+    saveState();document.getElementById('app-modal').close();render();toast('Return recorded and balance adjusted');return;
   }
   if (kind === 'new-user') {
     if(!canPerformAction('new-user')){toast('You do not have permission to add users');return;}
@@ -2433,7 +2639,9 @@ async function handleDialogSubmit(form) {
     const role=val('user-role')||'Salesman';
     if(role==='Owner / Administrator'&&!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can assign the administrator role');return;}
     const modules=userRoleDefaults[role]||userRoleDefaults.Salesman;
-    const user={id:idFor('USR',state.users),name,username,email,phone:val('user-phone'),role,modules:[...modules],permissions:rolePermissionMap(role,modules),branchId:activeBranch.id,status:'Active'};
+    const branchId=val('user-branch');
+    if(!accessibleBranches().some(branch=>branch.id===branchId)){toast('Assign this user to a branch you are allowed to manage');return;}
+    const user={id:idFor('USR',state.users),name,username,email,phone:val('user-phone'),role,modules:[...modules],permissions:rolePermissionMap(role,modules),branchId,status:'Active'};
     await setUserPassword(user,password);
     state.users.push(user);
     recordActivity('User added',`${name} · ${role}`);
@@ -2442,18 +2650,23 @@ async function handleDialogSubmit(form) {
   if(kind==='edit-user'){
     if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can edit user accounts');return;}
     const user=state.users.find(item=>item.id===form.dataset.recordId);
-    if(!user||user.isBootstrap){toast('This user account cannot be edited');return;}
-    const name=val('edit-user-name'),username=val('edit-user-username'),email=val('edit-user-email'),phone=val('edit-user-phone'),role=val('edit-user-role');
+    if(!user){toast('This user account could not be found');return;}
+    const name=val('edit-user-name'),username=val('edit-user-username'),email=val('edit-user-email'),phone=val('edit-user-phone'),role=val('edit-user-role'),branchId=val('edit-user-branch');
     const password=String(data.get('edit-user-password')||''),passwordConfirm=String(data.get('edit-user-password-confirm')||'');
     if(!name){toast('Enter the user name');return;}
     if(!username||!email||!credentialsAvailable(username,email,user.id)){toast('Choose a username and email that are unique to this user');return;}
+    if(!accessibleBranches().some(branch=>branch.id===branchId)){toast('Choose an active branch');return;}
     if(password&&(password.length<8||password!==passwordConfirm)){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
+    if(user.isBootstrap && role !== 'Owner / Administrator'){toast('The primary workspace owner must keep the Owner / Administrator role');return;}
     if(role==='Owner / Administrator'&&!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can assign the administrator role');return;}
     const roleChanged=user.role!==role;
-    Object.assign(user,{name,username,email,phone,role});
+    Object.assign(user,{name,username,email,phone,role,branchId});
     if(roleChanged){const modules=userRoleDefaults[role]||userRoleDefaults.Salesman;user.modules=[...modules];user.permissions=rolePermissionMap(role,modules);}
     if(password)await setUserPassword(user,password);
-    if(state.currentUserId===user.id)safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
+    if(state.currentUserId===user.id){
+      if(!activateAssignedBranch(user)){toast('This account must remain assigned to an active branch');return;}
+      safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
+    }
     recordActivity('User account updated',`${name} · ${role}`,user.id);
     saveState();document.getElementById('app-modal').close();render();toast(`User ${name} updated`);return;
   }
@@ -2469,23 +2682,34 @@ async function handleDialogSubmit(form) {
     saveState();document.getElementById('app-modal').close();render();toast(`Permissions updated for ${user.name}`);return;
   }
   if(kind==='set-user-credentials'){
-    if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can set another user’s login credentials');return;}
-    const user=state.users.find(item=>item.id===form.dataset.recordId),username=val('credential-username'),email=val('credential-email'),password=String(data.get('credential-password')||'');
+    if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can set user login credentials');return;}
+    const user=state.users.find(item=>item.id===form.dataset.recordId),name=val('credential-name'),username=val('credential-username'),email=val('credential-email'),password=String(data.get('credential-password')||''),passwordConfirm=String(data.get('credential-password-confirm')||'');
     if(!user){toast('This user account could not be found');return;}
+    if(!name){toast('Enter the user full name');return;}
     if(!credentialsAvailable(username,email,user.id)){toast('That username or email is already assigned to another user');return;}
-    if(password.length<8||password!==String(data.get('credential-password-confirm')||'')){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
-    Object.assign(user,{username,email});await setUserPassword(user,password);
+    if(password || !user.passwordHash){
+      if(password.length<8||password!==passwordConfirm){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
+      await setUserPassword(user,password);
+    }
+    Object.assign(user,{name,username,email});
+    if(state.currentUserId===user.id){
+      safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
+    }
     saveState();document.getElementById('app-modal').close();render();toast(`Login credentials saved for ${user.name}`);return;
   }
   if(kind==='own-credentials'){
-    const user=currentWorkspaceUser(),username=val('own-username'),email=val('own-email'),currentPassword=String(data.get('own-current-password')||''),newPassword=String(data.get('own-new-password')||''),newPasswordConfirm=String(data.get('own-new-password-confirm')||'');
-    if(!await verifyUserPassword(user,currentPassword)){toast('Current password is incorrect');return;}
+    const user=currentWorkspaceUser(),name=val('own-name'),username=val('own-username'),email=val('own-email'),currentPassword=String(data.get('own-current-password')||''),newPassword=String(data.get('own-new-password')||''),newPasswordConfirm=String(data.get('own-new-password-confirm')||'');
+    if(!name){toast('Enter your full name');return;}
     if(!credentialsAvailable(username,email,user.id)){toast('That username or email is already assigned to another user');return;}
-    if(newPassword&&(newPassword.length<8||newPassword!==newPasswordConfirm)){toast(newPassword.length<8?'New passwords must be at least 8 characters':'New passwords do not match');return;}
-    Object.assign(user,{username,email});if(newPassword)await setUserPassword(user,newPassword);
+    if(newPassword){
+      if(user.passwordHash && !await verifyUserPassword(user,currentPassword)){toast('Current password is incorrect');return;}
+      if(newPassword.length<8||newPassword!==newPasswordConfirm){toast(newPassword.length<8?'New passwords must be at least 8 characters':'New passwords do not match');return;}
+      await setUserPassword(user,newPassword);
+    }
+    Object.assign(user,{name,username,email});
     safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
-    recordActivity('Login credentials updated',user.name,user.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Account credentials updated');return;
+    recordActivity('Account profile and credentials updated',user.name,user.id);
+    saveState();document.getElementById('app-modal').close();render();toast('Account profile updated');return;
   }
   if (kind === 'new-branch') {
     const name=val('branch-name');if(!name){toast('Enter a branch name');return;}
@@ -2577,8 +2801,9 @@ function handleAction(button) {
       openDialog('purchase-payment','Add supplier payment',`Record a payment for ${esc(purchase.id)} to ${esc(purchase.supplier)}.`,`${inputField('purchase-payment-amount','Amount (TZS)','','number',true,Math.max(0,purchase.total-(purchase.paid||0)-(purchase.returned||0)))}${selectField('purchase-payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}`,'Record payment');
       document.getElementById('modal-content').dataset.recordId=id;break;
     }
+    case 'return-purchase': openPurchaseReturn(id); break;
     case 'new-user':
-      openDialog('new-user','Add user','Create the user profile and their personal login together.',`<div class="form-grid">${inputField('user-name','Full name','', 'text',true)}${inputField('user-username','Username','Choose a unique username','text',true)}${inputField('user-email','Email','name@example.com','email',true)}${inputField('user-phone','Phone','', 'tel')}${inputField('user-password','Password','At least 8 characters','password',true)}${inputField('user-password-confirm','Confirm password','Re-enter password','password',true)}${selectField('user-role','Role',['Salesman','Storekeeper','Manager','Owner / Administrator'],'Salesman')}</div>`,'Create account');break;
+      openDialog('new-user','Add user','Create the user profile, assigned branch, and personal login together.',`<div class="form-grid">${inputField('user-name','Full name','', 'text',true)}${branchSelectField('user-branch','Assigned branch',activeBranch.id,accessibleBranches())}${inputField('user-username','Username','Choose a unique username','text',true)}${inputField('user-email','Email','name@example.com','email',true)}${inputField('user-phone','Phone','', 'tel')}${inputField('user-password','Password','At least 8 characters','password',true)}${inputField('user-password-confirm','Confirm password','Re-enter password','password',true)}${selectField('user-role','Role',['Salesman','Storekeeper','Manager','Owner / Administrator'],'Salesman')}</div>`,'Create account');break;
     case 'edit-user': { const user=state.users.find(item=>item.id===id);openUserEditForm(user);break; }
     case 'view-user-activity': { const user=state.users.find(item=>item.id===id);openUserActivityHistory(user);break; }
     case 'set-user-credentials': { const user=state.users.find(item=>item.id===id);openUserCredentialsForm(user);break; }
@@ -2604,7 +2829,7 @@ function handleAction(button) {
       }
       if(button.dataset.deleteMode==='erase-all'){
         state.activityLog=(state.activityLog||[]).filter(item=>item.actor!==user.name);
-        state.stockMovements=state.stockMovements.filter(item=>item.user!==user.name);
+        (state.stockMovements||[]).forEach(m => { if (m.user === user.name) m.user = `${user.name} (deleted)`; });
       }else recordActivity('User deleted',`${user.name} · existing records retained`,user.id);
       saveState();render();toast(button.dataset.deleteMode==='erase-all'?`User ${user.name} and audit trail erased`:`User ${user.name} deleted; existing records were kept`);break;
     }
@@ -2643,8 +2868,28 @@ function handleAction(button) {
     }
     case 'receive-purchase': {
       const purchase=state.purchases.find(p=>p.id===id);if(!purchase||purchase.status!=='Pending')break;
-      for(const line of purchase.lines||[]){const product=state.products.find(p=>p.id===line.productId);if(product){const before=product.stock;product.stock+=Number(line.qty)||0;state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:product.stock-before,reason:`Received ${purchase.id}`,user:currentWorkspaceUser().name});}}
-      purchase.status='Received';recordActivity('Purchase order received',`${purchase.supplier} · ${purchase.lines.length} product lines`,purchase.id);saveState();render();toast('Purchase received and stock updated');break;
+      for(const line of purchase.lines||[]){
+        const product=state.products.find(p=>p.id===line.productId);
+        if(product){
+          const before=product.stock;
+          const qty=Number(line.qty)||0;
+          product.stock+=qty;
+          const unitCost=Number(line.unitCost)||0;
+          if(unitCost>0 && product.stock>0){
+            const oldVal=before*(Number(product.cost)||0);
+            const newVal=qty*unitCost;
+            product.cost=Math.round((oldVal+newVal)/product.stock);
+          }
+          state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:product.stock-before,reason:`Received ${purchase.id}`,user:currentWorkspaceUser().name});
+        }
+      }
+      purchase.status='Received';
+      const existingCredit = (state.entries||[]).find(e => e.sourceType === 'purchase' && e.sourceId === purchase.id && e.type === 'Credit');
+      if (!existingCredit) {
+        postAccountEntry({partyType:'Supplier',party:purchase.supplier,date:today(),type:'Credit',amount:purchase.total,memo:`Received purchase · ${purchase.id}`,sourceType:'purchase',sourceId:purchase.id});
+      }
+      recordActivity('Purchase order received',`${purchase.supplier} · ${purchase.lines.length} product lines`,purchase.id);
+      saveState();render();toast('Purchase received, stock & cost updated');break;
     }
     case 'delete-purchase': {
       const purchase=state.purchases.find(p=>p.id===id);if(!purchase)break;
@@ -2776,9 +3021,16 @@ function handleAction(button) {
 }
 
 function downloadCSV(filename, rows) {
-  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replaceAll('"', '""')}"`).join(',')).join('\r\n');
+  const sanitizeCell = (v) => {
+    let str = String(v ?? '');
+    if (/^[=+\-@\t\r]/.test(str)) {
+      str = "'" + str;
+    }
+    return `"${str.replaceAll('"', '""')}"`;
+  };
+  const csv = rows.map(r => r.map(sanitizeCell).join(',')).join('\r\n');
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
   link.download = filename;
   link.click();
   URL.revokeObjectURL(link.href);
@@ -3080,6 +3332,12 @@ async function initApp() {
   activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
   state.activeBranchId = activeBranch.id;
   state.branch = activeBranch.name;
+  state.users.forEach(user=>{
+    if(!user.branchId)user.branchId=activeBranch.id;
+    if(user.name && (user.name === 'Amina Mwinyi' || user.name === 'Amina' || /amina/i.test(user.name))) {
+      user.name = 'Administrator';
+    }
+  });
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
@@ -3105,6 +3363,12 @@ async function initApp() {
   const signedInUser = state.users.find(user => user.id === session?.id && user.passwordHash === session?.passwordHash && user.status !== 'Inactive');
   if (signedInUser) {
     state.currentUserId = signedInUser.id;
+    if(!activateAssignedBranch(signedInUser)){
+      state.currentUserId='';safeSessionRemove(AUTH_SESSION_KEY);
+      renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
+      return;
+    }
+    saveState();
     document.getElementById('auth-gate').hidden = true;
     document.querySelector('.app-shell').hidden = false;
     render();
