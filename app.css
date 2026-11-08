@@ -464,11 +464,13 @@ body{font-weight:700;-webkit-font-smoothing:auto}
 
 .sidebar-toggle{display:grid;place-items:center;flex:none;width:36px;height:36px;border:1px solid var(--line);border-radius:8px;background:var(--white);color:var(--ink);font-size:18px;line-height:1}
 .sidebar-toggle:hover{background:var(--ocean-light);border-color:#a9d9df}
-.sidebar-hover-zone{position:fixed;left:0;top:0;bottom:0;width:9px;z-index:46}
+.sidebar-hover-zone{position:fixed;left:0;top:0;bottom:0;width:24px;z-index:46}
 .sidebar.collapsed+.main-area{margin-left:0}
+.sidebar{transition:transform .15s cubic-bezier(0.16,1,0.3,1),width .15s ease,padding .15s ease;will-change:transform}
 @media(min-width:761px){
   .sidebar.collapsed:not(.hover-expanded):not(.pinned-open){width:0;padding-left:0;padding-right:0;transform:translateX(-100%);border-right:0;box-shadow:none}
-  .sidebar.collapsed.hover-expanded{transform:translateX(0)}
+  .sidebar.collapsed.hover-expanded{transform:translateX(0);box-shadow:6px 0 24px rgba(15,35,45,.14)}
+  .sidebar.collapsed.pinned-open{transform:translateX(0);box-shadow:none}
   .sidebar.collapsed.hover-expanded+.main-area,.sidebar.collapsed.pinned-open+.main-area{margin-left:0}
 }
 @media(max-width:760px){

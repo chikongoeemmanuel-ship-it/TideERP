@@ -638,7 +638,11 @@ function setPage(next) {
   tableQuery = '';
   selectedProductIds.clear();
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === next));
-  document.getElementById('sidebar')?.classList.remove('open');
+  const sb = document.getElementById('sidebar');
+  sb?.classList.remove('open');
+  if (window.innerWidth > 760 && !sb?.classList.contains('pinned-open')) {
+    sb?.classList.remove('hover-expanded');
+  }
   render();
 }
 
@@ -3318,6 +3322,7 @@ document.addEventListener('keydown', event => {
   }
 });
 
+const SIDEBAR_PINNED_KEY = 'tide-erp-sidebar-pinned';
 const sidebar = document.getElementById('sidebar');
 const sidebarToggleButton = document.getElementById('sidebar-toggle');
 const sidebarHoverZone = document.getElementById('sidebar-hover-zone');
@@ -3325,8 +3330,13 @@ let sidebarCloseTimer = 0;
 const isDesktopSidebar = () => window.innerWidth > 760;
 if (sidebar) {
   sidebar.classList.remove('hover-expanded', 'open');
-  if (isDesktopSidebar()) sidebar.classList.add('collapsed');
-  else sidebar.classList.remove('collapsed');
+  const wasPinned = safeStorageGet(SIDEBAR_PINNED_KEY) === 'true';
+  if (isDesktopSidebar()) {
+    sidebar.classList.add('collapsed');
+    if (wasPinned) sidebar.classList.add('pinned-open', 'hover-expanded');
+  } else {
+    sidebar.classList.remove('collapsed');
+  }
 }
 
 function updateSidebarToggleLabel() {
@@ -3339,44 +3349,52 @@ function updateSidebarToggleLabel() {
 }
 function expandSidebarForPointer() {
   window.clearTimeout(sidebarCloseTimer);
-  if (isDesktopSidebar() && sidebar?.classList.contains('collapsed')) sidebar.classList.add('hover-expanded');
+  if (isDesktopSidebar() && sidebar?.classList.contains('collapsed')) {
+    sidebar.classList.add('hover-expanded');
+  }
   updateSidebarToggleLabel();
 }
-function scheduleSidebarCollapse() {
+function scheduleSidebarCollapse(delay = 180) {
   window.clearTimeout(sidebarCloseTimer);
   sidebarCloseTimer = window.setTimeout(() => {
     if (isDesktopSidebar() && sidebar?.classList.contains('collapsed') && !sidebar.classList.contains('pinned-open') && !sidebar.matches(':hover') && !sidebar.contains(document.activeElement)) {
       sidebar.classList.remove('hover-expanded');
       updateSidebarToggleLabel();
     }
-  }, 1000);
+  }, delay);
 }
 sidebarToggleButton?.addEventListener('click', () => {
   if (isDesktopSidebar()) {
     if (sidebar?.classList.contains('pinned-open')) {
       sidebar.classList.remove('pinned-open', 'hover-expanded');
-    } else if (sidebar?.classList.contains('collapsed')) {
-      sidebar.classList.add('pinned-open', 'hover-expanded');
+      safeStorageSet(SIDEBAR_PINNED_KEY, 'false');
     } else {
-      sidebar?.classList.add('collapsed');
+      sidebar?.classList.add('collapsed', 'pinned-open', 'hover-expanded');
+      safeStorageSet(SIDEBAR_PINNED_KEY, 'true');
     }
   } else {
     sidebar?.classList.toggle('open');
   }
   updateSidebarToggleLabel();
 });
+sidebarToggleButton?.addEventListener('pointerenter', expandSidebarForPointer);
 sidebar?.addEventListener('pointerenter', expandSidebarForPointer);
-sidebar?.addEventListener('pointerleave', scheduleSidebarCollapse);
+sidebar?.addEventListener('pointerleave', () => scheduleSidebarCollapse(180));
 sidebar?.addEventListener('focusin', expandSidebarForPointer);
-sidebar?.addEventListener('focusout', scheduleSidebarCollapse);
+sidebar?.addEventListener('focusout', () => scheduleSidebarCollapse(180));
 sidebarHoverZone?.addEventListener('pointerenter', expandSidebarForPointer);
-sidebarHoverZone?.addEventListener('pointerleave', scheduleSidebarCollapse);
+sidebarHoverZone?.addEventListener('pointerleave', () => scheduleSidebarCollapse(180));
+document.addEventListener('pointermove', event => {
+  if (!isDesktopSidebar() || !sidebar?.classList.contains('collapsed') || sidebar.classList.contains('pinned-open')) return;
+  if (event.clientX <= 24) expandSidebarForPointer();
+});
 document.addEventListener('click', event => {
   const clickedOutside = !sidebar?.contains(event.target) && !sidebarToggleButton?.contains(event.target) && !sidebarHoverZone?.contains(event.target);
   if (!clickedOutside) return;
   if (isDesktopSidebar() && sidebar?.classList.contains('hover-expanded') && !sidebar.classList.contains('pinned-open')) {
     window.clearTimeout(sidebarCloseTimer);
     sidebar.classList.remove('hover-expanded');
+    updateSidebarToggleLabel();
   }
   if (window.innerWidth <= 760 && sidebar?.classList.contains('open')) {
     sidebar.classList.remove('open');
@@ -3387,9 +3405,14 @@ updateSidebarToggleLabel();
 window.addEventListener('resize', () => {
   window.clearTimeout(sidebarCloseTimer);
   if (!sidebar) return;
+  const wasPinned = safeStorageGet(SIDEBAR_PINNED_KEY) === 'true';
   sidebar.classList.remove('hover-expanded', 'pinned-open', 'open');
-  if (isDesktopSidebar()) sidebar.classList.add('collapsed');
-  else sidebar.classList.remove('collapsed');
+  if (isDesktopSidebar()) {
+    sidebar.classList.add('collapsed');
+    if (wasPinned) sidebar.classList.add('pinned-open', 'hover-expanded');
+  } else {
+    sidebar.classList.remove('collapsed');
+  }
   updateSidebarToggleLabel();
 });
 // App Initialization
