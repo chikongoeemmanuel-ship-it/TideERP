@@ -879,9 +879,9 @@ function branchSelectField(name,label,selectedId='',branches=state.branches.filt
 // Dashboard Page
 function greetingTitle() {
   const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Dar_es_Salaam', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
-  const greeting = hour >= 5 && hour < 12 ? 'Good morning' : hour >= 12 && hour < 17 ? 'Good afternoon' : 'Good evening';
+  const greeting = hour >= 5 && hour < 12 ? 'GOOD MORNING' : hour >= 12 && hour < 17 ? 'GOOD AFTERNOON' : 'GOOD EVENING';
   const firstName = (currentWorkspaceUser().name || 'there').trim().split(/\s+/)[0] || 'there';
-  return `${greeting}, ${firstName} 👋`;
+  return `${greeting}, ${firstName.toUpperCase()} 👋`;
 }
 
 function metric(label, value, icon, foot, trend = 'up') {

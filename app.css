@@ -528,7 +528,7 @@ strong,b{font-weight:900!important}
 .metric-foot .up{color:#00a651!important;font-weight:900!important}
 .metric-foot .down{color:#ef233c!important;font-weight:900!important}
 .eyebrow{font-weight:900!important;color:var(--ocean);text-transform:uppercase!important;letter-spacing:1.8px!important;font-size:11.5px}
-.page-heading h1{font-weight:900!important;font-size:30px;letter-spacing:-0.8px;color:var(--ink);-webkit-text-stroke:0.4px currentColor}
+.page-heading h1{font-weight:900!important;font-size:30px;letter-spacing:-0.5px;color:var(--ink);text-transform:uppercase!important;-webkit-text-stroke:0.4px currentColor}
 .page-heading p{font-weight:800!important;color:#1f3b4d}
 .panel-title,.table-heading h2{font-weight:900!important;color:var(--ink);-webkit-text-stroke:0.3px currentColor}
 .panel-subtitle{font-weight:800!important;color:#274354}
