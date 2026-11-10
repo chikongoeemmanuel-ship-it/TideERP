@@ -2579,7 +2579,7 @@ function openOrderForm(existing = null) {
   const products = activeProducts();
   if (!products.length && !existing) { toast('Add an active product to Inventory before creating a sales order'); return; }
   const names = [...new Set([...state.customers.filter(c => c.status !== 'Inactive').map(c => c.name), ...(existing?.customer ? [existing.customer] : [])])];
-  const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${inputField('order-due','Due date','', 'date',false,existing?.due || today())}</div>${transactionProductPicker('order')}<div class="transaction-lines" id="order-product-lines"><div class="transaction-empty">Search and select products to add them to this order.</div></div>${transactionPaymentSummary('order')}`;
+  const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${inputField('order-due','Due date','', 'date',false,existing?.due || today())}</div><div class="transaction-lines" id="order-product-lines"></div>${transactionProductPicker('order')}${transactionPaymentSummary('order')}`;
   openDialog(existing ? 'edit-order' : 'new-order',existing ? `${existing.source === 'POS' ? 'Edit POS sale' : 'Edit sales order'}` : 'Create sales order',existing ? `Update ${esc(existing.id)}. Finalized sales update inventory and the customer account.` : 'Choose the customer and date, then search to add as many products as needed. The order will be saved as a draft.',content,existing ? 'Save changes' : 'Save draft');
   const form = document.getElementById('modal-content');
   if (existing) {
@@ -2597,7 +2597,7 @@ function openPurchaseForm(existing = null) {
   const activeSuppliers = state.suppliers.filter(supplier => supplier.status !== 'Inactive');
   if ((!products.length || !activeSuppliers.length) && !existing) { toast('Add an active product and supplier before creating a purchase order'); return; }
   const supplierNames = [...new Set([...activeSuppliers.map(p => p.name), ...(existing?.supplier ? [existing.supplier] : [])])];
-  const content = `<div class="form-grid">${selectField('purchase-supplier','Supplier',supplierNames,existing?.supplier || supplierNames[0])}${inputField('purchase-date','Order date','','date',true,existing?.date || today())}</div>${transactionProductPicker('purchase')}<div class="transaction-lines" id="purchase-product-lines"><div class="transaction-empty">Search and select products to add them to this order.</div></div>${transactionPaymentSummary('purchase')}`;
+  const content = `<div class="form-grid">${selectField('purchase-supplier','Supplier',supplierNames,existing?.supplier || supplierNames[0])}${inputField('purchase-date','Order date','','date',true,existing?.date || today())}</div><div class="transaction-lines" id="purchase-product-lines"></div>${transactionProductPicker('purchase')}${transactionPaymentSummary('purchase')}`;
   openDialog(existing ? 'edit-purchase' : 'new-purchase','Purchase order',existing ? `Update ${esc(existing.id)}. Received purchases adjust stock and the supplier account.` : 'Choose the supplier and date, then search to add as many products as needed. Receive the order to update stock.',content,existing ? 'Save changes' : 'Save purchase order');
   const form = document.getElementById('modal-content');
   if (existing) {
@@ -2611,7 +2611,7 @@ function openPurchaseForm(existing = null) {
 }
 
 function transactionProductPicker(kind) {
-  return `<div class="transaction-product-search"><div class="field"><label for="${kind}-product-search">Search products</label><input id="${kind}-product-search" type="search" autocomplete="off" placeholder="Type a product name, SKU, or category…" data-transaction-search="${kind}"></div><div class="transaction-suggestions" id="${kind}-product-suggestions" hidden></div></div>`;
+  return `<div class="transaction-product-search"><div class="field"><label for="${kind}-product-search">＋ Add products</label><input id="${kind}-product-search" type="search" autocomplete="off" placeholder="Type a product name, SKU, or category to search and add…" data-transaction-search="${kind}"></div><div class="transaction-suggestions" id="${kind}-product-suggestions" hidden></div></div>`;
 }
 
 function transactionPaymentSummary(kind) {
@@ -2661,7 +2661,9 @@ function addTransactionProduct(kind, productId, line = null) {
     }
   }
   const search = document.getElementById(`${kind}-product-search`), suggestions = document.getElementById(`${kind}-product-suggestions`);
-  if (search) search.value = ''; if (suggestions) { suggestions.hidden = true; suggestions.innerHTML = ''; }
+  if (search) { search.value = ''; search.focus(); }
+  if (suggestions) { suggestions.hidden = true; suggestions.innerHTML = ''; }
+  host.scrollTop = host.scrollHeight;
   updateTransactionLines(kind);
 }
 
