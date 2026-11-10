@@ -151,6 +151,10 @@ function sanitizeState(restored, initialState) {
       u.permissions = { '*': ['*'] };
     }
   }
+  for (const p of clean.products) {
+    if (typeof p.expiryDate !== 'string') p.expiryDate = '';
+    if (typeof p.batchNumber !== 'string') p.batchNumber = '';
+  }
   if (!clean.companyName || clean.companyName === 'Kipepeo Traders' || /kipepeo/i.test(clean.companyName || '')) {
     clean.companyName = 'My Company';
   }

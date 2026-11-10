@@ -92,6 +92,7 @@ let dashboardRange = 'This month';
 let reportPeriod = 'monthly';
 let tableQuery = '';
 let selectedProductIds = new Set();
+let inventoryExpiryTab = 'attention';
 let salesStatusFilter = '';
 let salesDateFrom = '';
 let salesDateTo = '';
@@ -101,6 +102,102 @@ let purchaseDateTo = '';
 let orderMenuPortal = null;
 let pendingCompanyLogo = '';
 let authErrorMessage = '';
+
+function getProductExpiryInfo(product) {
+  if (!product || !product.expiryDate) {
+    return { status: 'none', label: 'No expiry', days: null, class: 'muted' };
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp = new Date(product.expiryDate);
+  exp.setHours(0, 0, 0, 0);
+  if (isNaN(exp.getTime())) {
+    return { status: 'none', label: 'Invalid date', days: null, class: 'muted' };
+  }
+  const diffDays = Math.round((exp - today) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) {
+    return { status: 'expired', label: `Expired (${Math.abs(diffDays)}d ago)`, days: diffDays, class: 'expired' };
+  } else if (diffDays === 0) {
+    return { status: 'expiring-soon', label: 'Expires today', days: 0, class: 'expiring-soon' };
+  } else if (diffDays <= 30) {
+    return { status: 'expiring-soon', label: `Expires in ${diffDays}d`, days: diffDays, class: 'expiring-soon' };
+  } else if (diffDays <= 90) {
+    return { status: 'expiring-warning', label: `Expires in ${diffDays}d`, days: diffDays, class: 'expiring-warning' };
+  } else {
+    return { status: 'healthy', label: `Valid (${product.expiryDate})`, days: diffDays, class: 'healthy' };
+  }
+}
+
+function parseCSVNumber(val) {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  let s = String(val).trim();
+  s = s.replace(/^["'\s]+|["'\s]+$/g, '');
+  s = s.replace(/^[^\d.-]+/, '').replace(/[^\d.-]+$/, '').trim();
+  s = s.replace(/(\d)\s+(\d)/g, '$1$2');
+  if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) {
+    s = s.replace(/,/g, '');
+  } else if (/^\d+(,\d{3})+(\.\d+)?$/.test(s)) {
+    s = s.replace(/,/g, '');
+  } else if (s.includes(',') && s.includes('.')) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  } else if (s.includes(',') && !s.includes('.')) {
+    const parts = s.split(',');
+    if (parts.length === 2 && parts[1].length === 3 && parts[0].length >= 1) {
+      s = s.replace(/,/g, '');
+    } else if (parts.length === 2 && parts[1].length <= 2) {
+      s = parts[0] + '.' + parts[1];
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function parseCSVDate(val) {
+  if (!val) return '';
+  const s = String(val).trim().replace(/^["']|["']$/g, '');
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dmy = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  const ymd = s.match(/^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$/);
+  if (ymd) {
+    const [, y, m, d] = ymd;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  return '';
+}
+
+function detectCSVDelimiter(headerLine) {
+  const commas = (headerLine.match(/,/g) || []).length;
+  const semis = (headerLine.match(/;/g) || []).length;
+  const tabs = (headerLine.match(/\t/g) || []).length;
+  if (tabs > commas && tabs > semis) return '\t';
+  if (semis > commas) return ';';
+  return ',';
+}
+
+function parseCSVLine(line, delimiter = ',') {
+  if (delimiter === '\t') {
+    return line.split('\t').map(c => c.trim().replace(/^"|"$/g, '').replaceAll('""', '"'));
+  }
+  const sep = delimiter === ';' ? ';' : ',';
+  const regex = new RegExp(`${sep}(?=(?:[^"]*"[^"]*")*[^"]*$)`);
+  return line.split(regex).map(c => c.trim().replace(/^"|"$/g, '').replaceAll('""', '"'));
+}
 
 function toBase64(bytes) { return btoa(String.fromCharCode(...new Uint8Array(bytes))); }
 function fromBase64(value) { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
@@ -236,6 +333,10 @@ function canPerformAction(action,element=null) {
     case 'product-stock-history':return require('inventory','stock-history');
     case 'import-products':return require('inventory','bulk-import');
     case 'download-product-template':return require('inventory','export');
+    case 'export-expiry-report':return require('inventory','export');
+    case 'write-off-expired':return require('inventory','adjust-stock');
+    case 'clearance-discount':case 'edit-expiry':return require('inventory','edit-products');
+    case 'jump-to-expiry':case 'filter-expiry-tab':return true;
     case 'new-purchase':return require('purchases','create');
     case 'edit-purchase':return require('purchases','edit');
     case 'receive-purchase':return require('purchases','receive');
@@ -1508,8 +1609,29 @@ function printOrderInvoice(order) {
 function renderInventory() {
   const rows = inventoryRowsFiltered();
   const selectedCount = selectedProductIds.size;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const expiredProducts = state.products.filter(p => {
+    if (!p.expiryDate) return false;
+    const exp = new Date(p.expiryDate);
+    exp.setHours(0, 0, 0, 0);
+    return exp < today;
+  });
+
+  const expiring30Products = state.products.filter(p => {
+    if (!p.expiryDate) return false;
+    const exp = new Date(p.expiryDate);
+    exp.setHours(0, 0, 0, 0);
+    const diff = Math.round((exp - today) / (1000 * 60 * 60 * 24));
+    return diff >= 0 && diff <= 30;
+  });
+
+  const allWithExpiry = state.products.filter(p => p.expiryDate);
+  const expiryAlertsCount = expiredProducts.length + expiring30Products.length;
+
   return `
-    ${heading('Inventory', 'Manage product details, save drafts, and track stock movements.', `
+    ${heading('Inventory', 'Manage product details, save drafts, track expiration, and control stock movements.', `
       <button class="button" data-action="export-inventory">↓ Export CSV</button>
       <button class="button" data-action="import-products">↑ Upload CSV</button>
       <button class="button" data-action="download-product-template">↓ CSV template</button>
@@ -1520,17 +1642,26 @@ function renderInventory() {
       <div class="summary-mini"><small>Total Products</small><strong>${state.products.length}</strong></div>
       <div class="summary-mini"><small>Stock Value (at cost)</small><strong>${money(state.products.reduce((sum, p) => sum + p.stock * p.cost, 0))}</strong></div>
       <div class="summary-mini"><small>Low stock items</small><strong>${state.products.filter(p => p.stock <= p.low && p.status !== 'Draft').length}</strong></div>
+      <div class="summary-mini" style="cursor:pointer" data-action="jump-to-expiry" title="Jump to Product Expiration & Management">
+        <small>Expiring / Expired</small>
+        <strong style="color:${expiredProducts.length > 0 ? '#ef233c' : expiring30Products.length > 0 ? '#f57c00' : 'var(--ink)'}">
+          ${expiryAlertsCount} alert${expiryAlertsCount !== 1 ? 's' : ''}
+        </strong>
+      </div>
     </section>
     <section class="table-panel">
       <div class="toolbar">
         <div class="toolbar-left">
-          <label class="search-box"><input id="table-search" placeholder="Search product name, SKU, or category…" value="${esc(tableQuery)}"></label>
+          <label class="search-box"><input id="table-search" placeholder="Search product name, SKU, category, batch…" value="${esc(tableQuery)}"></label>
           <select class="select-control" id="inventory-filter">
             <option value="">All products</option>
             <option value="low">Low stock</option>
             <option value="healthy">In stock</option>
             <option value="draft">Drafts</option>
             <option value="active">Active</option>
+            <option value="expired">Expired (${expiredProducts.length})</option>
+            <option value="expiring-soon">Expiring in ≤ 30 days (${expiring30Products.length})</option>
+            <option value="has-expiry">All with expiry dates (${allWithExpiry.length})</option>
           </select>
         </div>
         <span class="muted" id="inventory-result-count" style="font-size:11px">${rows.length} of ${state.products.length} products</span>
@@ -1548,6 +1679,9 @@ function renderInventory() {
         </table>
       </div>
     </section>
+
+    ${renderExpiryManagementSection()}
+
     <section class="panel stock-control-panel">
       <div class="panel-header"><div><h2 class="panel-title">Stock control</h2><p class="panel-subtitle">Count physical quantities or perform bulk adjustments.</p></div></div>
       <div class="stock-control-actions">
@@ -1561,13 +1695,32 @@ function renderInventory() {
 function inventoryRowsFiltered() {
   const term = tableQuery.toLowerCase();
   const filter = document.getElementById('inventory-filter')?.value || '';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   return state.products.filter(p => {
-    const matches = `${p.id} ${p.name} ${p.category} ${p.unit} ${p.status || 'Active'}`.toLowerCase().includes(term);
+    const matches = `${p.id} ${p.name} ${p.category} ${p.unit} ${p.batchNumber || ''} ${p.expiryDate || ''} ${p.status || 'Active'}`.toLowerCase().includes(term);
     if (!matches) return false;
     if (filter === 'low') return p.stock <= p.low && p.status !== 'Draft';
     if (filter === 'healthy') return p.stock > p.low && p.status !== 'Draft';
     if (filter === 'draft') return p.status === 'Draft';
     if (filter === 'active') return p.status !== 'Draft';
+    if (filter === 'expired') {
+      if (!p.expiryDate) return false;
+      const exp = new Date(p.expiryDate);
+      exp.setHours(0, 0, 0, 0);
+      return exp < today;
+    }
+    if (filter === 'expiring-soon') {
+      if (!p.expiryDate) return false;
+      const exp = new Date(p.expiryDate);
+      exp.setHours(0, 0, 0, 0);
+      const diff = Math.round((exp - today) / (1000 * 60 * 60 * 24));
+      return diff <= 30;
+    }
+    if (filter === 'has-expiry') {
+      return Boolean(p.expiryDate);
+    }
     return true;
   });
 }
@@ -1575,21 +1728,43 @@ function inventoryRowsFiltered() {
 function inventoryRows(rows) {
   return sortProducts(rows).map(p => {
     const draft = p.status === 'Draft';
+    const expiryInfo = getProductExpiryInfo(p);
+    let expiryBadge = '';
+    if (p.expiryDate) {
+      if (expiryInfo.status === 'expired') {
+        expiryBadge = `<div style="margin-top:3px"><span class="countdown-badge expired" title="Expired on ${esc(p.expiryDate)}">⚠ Expired ${Math.abs(expiryInfo.days)}d ago</span></div>`;
+      } else if (expiryInfo.status === 'expiring-soon') {
+        expiryBadge = `<div style="margin-top:3px"><span class="countdown-badge soon" title="Expires on ${esc(p.expiryDate)}">⌛ ${expiryInfo.label}</span></div>`;
+      } else if (expiryInfo.status === 'expiring-warning') {
+        expiryBadge = `<div style="margin-top:3px"><span class="countdown-badge warning" title="Expires on ${esc(p.expiryDate)}">${expiryInfo.label}</span></div>`;
+      } else {
+        expiryBadge = `<div style="margin-top:3px"><small class="muted" style="font-size:10px" title="Expiry date">Exp: ${esc(p.expiryDate)}</small></div>`;
+      }
+    }
     return `
       <tr>
         <td style="width:36px"><input type="checkbox" class="product-row-check" data-id="${esc(p.id)}" ${selectedProductIds.has(p.id) ? 'checked' : ''} style="cursor:pointer"></td>
-        <td><strong>${esc(p.name)}</strong></td>
+        <td>
+          <strong>${esc(p.name)}</strong>
+          ${p.batchNumber ? `<br><span class="batch-tag">Batch: ${esc(p.batchNumber)}</span>` : ''}
+        </td>
         <td>${esc(p.id)}</td>
         <td>${esc(p.category)}</td>
         <td>${money(p.price)}</td>
         <td>${money(p.cost)}</td>
         <td><strong>${p.stock} ${esc(p.unit)}</strong></td>
-        <td>${draft ? '<span class="status-pill draft">Draft</span>' : `<span class="status-pill ${p.stock <= p.low ? 'low' : 'paid'}">${p.stock <= p.low ? 'Low stock' : 'Active'}</span>`}</td>
+        <td>
+          ${draft ? '<span class="status-pill draft">Draft</span>' : `<span class="status-pill ${p.stock <= p.low ? 'low' : 'paid'}">${p.stock <= p.low ? 'Low stock' : 'Active'}</span>`}
+          ${expiryBadge}
+        </td>
         <td>
           <details class="order-actions inventory-actions">
             <summary aria-label="Actions for ${esc(p.name)}" title="Product actions">⋮</summary>
             <div class="order-actions-menu inventory-actions-menu">
               <button data-action="edit-product" data-id="${esc(p.id)}">Edit product</button>
+              <button data-action="edit-expiry" data-id="${esc(p.id)}">Edit expiry / batch</button>
+              ${p.expiryDate && expiryInfo.status === 'expired' && p.stock > 0 ? `<button class="danger-action" data-action="write-off-expired" data-id="${esc(p.id)}">Write off expired</button>` : ''}
+              ${p.expiryDate && (expiryInfo.status === 'expiring-soon' || expiryInfo.status === 'expiring-warning') ? `<button data-action="clearance-discount" data-id="${esc(p.id)}">Clearance discount</button>` : ''}
               <button data-action="adjust-stock" data-id="${esc(p.id)}">Adjust stock</button>
               <button data-action="product-stock-history" data-id="${esc(p.id)}">Stock history</button>
               <div class="menu-divider"></div>
@@ -1600,6 +1775,147 @@ function inventoryRows(rows) {
       </tr>
     `;
   }).join('') || emptyRow(9, 'No matching products');
+}
+
+function renderExpiryManagementSection() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const allWithExpiry = state.products.filter(p => p.expiryDate);
+  const expiredList = allWithExpiry.filter(p => {
+    const exp = new Date(p.expiryDate);
+    exp.setHours(0, 0, 0, 0);
+    return exp < today;
+  });
+  const expiring30List = allWithExpiry.filter(p => {
+    const exp = new Date(p.expiryDate);
+    exp.setHours(0, 0, 0, 0);
+    const diff = Math.round((exp - today) / (1000 * 60 * 60 * 24));
+    return diff >= 0 && diff <= 30;
+  });
+  const expiring90List = allWithExpiry.filter(p => {
+    const exp = new Date(p.expiryDate);
+    exp.setHours(0, 0, 0, 0);
+    const diff = Math.round((exp - today) / (1000 * 60 * 60 * 24));
+    return diff > 30 && diff <= 90;
+  });
+
+  const expiredValue = expiredList.reduce((sum, p) => sum + (Number(p.stock) || 0) * (Number(p.cost) || 0), 0);
+  const expiring30Value = expiring30List.reduce((sum, p) => sum + (Number(p.stock) || 0) * (Number(p.cost) || 0), 0);
+  const expiring90Value = expiring90List.reduce((sum, p) => sum + (Number(p.stock) || 0) * (Number(p.cost) || 0), 0);
+
+  let displayList = [];
+  if (inventoryExpiryTab === 'expired') {
+    displayList = expiredList;
+  } else if (inventoryExpiryTab === 'soon') {
+    displayList = expiring30List;
+  } else if (inventoryExpiryTab === 'upcoming') {
+    displayList = expiring90List;
+  } else if (inventoryExpiryTab === 'all-tracked') {
+    displayList = allWithExpiry;
+  } else {
+    displayList = allWithExpiry.filter(p => {
+      const exp = new Date(p.expiryDate);
+      exp.setHours(0, 0, 0, 0);
+      const diff = Math.round((exp - today) / (1000 * 60 * 60 * 24));
+      return diff <= 90;
+    });
+  }
+
+  displayList.sort((a, b) => String(a.expiryDate).localeCompare(String(b.expiryDate)));
+
+  const rows = displayList.map(p => {
+    const info = getProductExpiryInfo(p);
+    const totalCost = (Number(p.stock) || 0) * (Number(p.cost) || 0);
+    const isExpired = info.status === 'expired';
+    const isSoon = info.status === 'expiring-soon';
+    return `
+      <tr>
+        <td>
+          <strong>${esc(p.name)}</strong>
+          <small class="muted" style="display:block;font-size:11px">${esc(p.id)} · ${esc(p.category)}</small>
+        </td>
+        <td>${p.batchNumber ? `<span class="batch-tag">${esc(p.batchNumber)}</span>` : '<span class="muted">—</span>'}</td>
+        <td><strong>${p.stock} ${esc(p.unit)}</strong></td>
+        <td>${money(totalCost)} <small class="muted" style="display:block;font-size:10px">@ ${money(p.cost)}</small></td>
+        <td><strong>${esc(p.expiryDate)}</strong></td>
+        <td>
+          <span class="countdown-badge ${isExpired ? 'expired' : isSoon ? 'soon' : info.status === 'expiring-warning' ? 'warning' : 'good'}">
+            ${isExpired ? `⚠ Expired ${Math.abs(info.days)}d ago` : info.label}
+          </span>
+        </td>
+        <td>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            ${isExpired && p.stock > 0 ? `<button class="button small danger-action" data-action="write-off-expired" data-id="${esc(p.id)}">Write off</button>` : ''}
+            ${!isExpired && (isSoon || info.status === 'expiring-warning') ? `<button class="button small" data-action="clearance-discount" data-id="${esc(p.id)}" style="color:#0056cc;font-weight:900">Clearance %</button>` : ''}
+            <button class="button small" data-action="edit-expiry" data-id="${esc(p.id)}">Update</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('') || emptyRow(7, 'No products found for this expiration filter.');
+
+  return `
+    <section class="panel expiry-management-panel" id="product-expiration-section">
+      <div class="panel-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 class="panel-title">Product Expiration &amp; Management</h2>
+          <p class="panel-subtitle">Monitor perishables, track upcoming shelf-life expiries, apply clearance pricing, or record write-offs.</p>
+        </div>
+        <div class="heading-actions">
+          <button class="button" data-action="export-expiry-report">↓ Expiration CSV Report</button>
+        </div>
+      </div>
+
+      <div class="expiry-stats-strip">
+        <div class="expiry-stat-card danger" style="cursor:pointer" data-action="filter-expiry-tab" data-tab="expired">
+          <small>Expired Stock</small>
+          <strong>${expiredList.length} product${expiredList.length !== 1 ? 's' : ''}</strong>
+          <span class="expiry-val">${money(expiredValue)} at risk</span>
+        </div>
+        <div class="expiry-stat-card warning" style="cursor:pointer" data-action="filter-expiry-tab" data-tab="soon">
+          <small>Expiring in ≤ 30 Days</small>
+          <strong>${expiring30List.length} product${expiring30List.length !== 1 ? 's' : ''}</strong>
+          <span class="expiry-val">${money(expiring30Value)} value</span>
+        </div>
+        <div class="expiry-stat-card info" style="cursor:pointer" data-action="filter-expiry-tab" data-tab="upcoming">
+          <small>Expiring in 31–90 Days</small>
+          <strong>${expiring90List.length} product${expiring90List.length !== 1 ? 's' : ''}</strong>
+          <span class="expiry-val">${money(expiring90Value)} value</span>
+        </div>
+        <div class="expiry-stat-card neutral" style="cursor:pointer" data-action="filter-expiry-tab" data-tab="all-tracked">
+          <small>Total Perishables Tracked</small>
+          <strong>${allWithExpiry.length} product${allWithExpiry.length !== 1 ? 's' : ''}</strong>
+          <span class="expiry-val">With expiry date</span>
+        </div>
+      </div>
+
+      <div class="expiry-filter-tabs">
+        <button class="expiry-filter-btn ${inventoryExpiryTab === 'attention' ? 'active' : ''}" data-action="filter-expiry-tab" data-tab="attention">Action Required (${expiredList.length + expiring30List.length})</button>
+        <button class="expiry-filter-btn ${inventoryExpiryTab === 'expired' ? 'active' : ''}" data-action="filter-expiry-tab" data-tab="expired">Expired (${expiredList.length})</button>
+        <button class="expiry-filter-btn ${inventoryExpiryTab === 'soon' ? 'active' : ''}" data-action="filter-expiry-tab" data-tab="soon">Expiring in ≤ 30 Days (${expiring30List.length})</button>
+        <button class="expiry-filter-btn ${inventoryExpiryTab === 'upcoming' ? 'active' : ''}" data-action="filter-expiry-tab" data-tab="upcoming">Expiring 31–90 Days (${expiring90List.length})</button>
+        <button class="expiry-filter-btn ${inventoryExpiryTab === 'all-tracked' ? 'active' : ''}" data-action="filter-expiry-tab" data-tab="all-tracked">All Tracked (${allWithExpiry.length})</button>
+      </div>
+
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Batch / Lot</th>
+              <th>On-hand Stock</th>
+              <th>At-Cost Value</th>
+              <th>Expiry Date</th>
+              <th>Status / Timeline</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
 }
 
 function updateBulkProductBar() {
@@ -2187,9 +2503,20 @@ function openDialog(kind, title, subtitle, content, confirmLabel = 'Save') {
 }
 
 function openProductForm(product = null) {
-  const p = product || { name: '', id: '', category: 'General', price: 0, cost: 0, stock: 0, low: 5, unit: 'Piece', status: 'Active' };
-  const content = `<div class="form-grid">${inputField('product-name','Product name','e.g. Maize flour','text',true,p.name)}${inputField('product-sku','SKU / code','Leave blank to generate','text',false,p.id)}${inputField('product-category','Category','e.g. Grocery','text',true,p.category)}${inputField('product-price','Selling price (TZS)','','number',true,p.price)}${inputField('product-cost','Unit cost (TZS)','','number',true,p.cost)}${inputField('product-stock','Opening stock','','number',true,p.stock)}${inputField('product-low','Low stock alert at','','number',false,p.low)}${selectField('product-unit','Unit',state.measurementUnits,p.unit)}</div>`;
-  openDialog(product ? 'edit-product' : 'new-product', product ? 'Edit product' : 'Add a product', 'Set the product details, price, and on-hand quantity.', content, product ? 'Save changes' : 'Add product');
+  const p = product || { name: '', id: '', category: 'General', price: 0, cost: 0, stock: 0, low: 5, unit: 'Piece', status: 'Active', expiryDate: '', batchNumber: '' };
+  const content = `<div class="form-grid">
+    ${inputField('product-name','Product name','e.g. Maize flour','text',true,p.name)}
+    ${inputField('product-sku','SKU / code','Leave blank to generate','text',false,p.id)}
+    ${inputField('product-category','Category','e.g. Grocery','text',true,p.category)}
+    ${inputField('product-price','Selling price (TZS)','','number',true,p.price)}
+    ${inputField('product-cost','Unit cost (TZS)','','number',true,p.cost)}
+    ${inputField('product-stock','Opening stock','','number',true,p.stock)}
+    ${inputField('product-low','Low stock alert at','','number',false,p.low)}
+    ${selectField('product-unit','Unit',state.measurementUnits,p.unit)}
+    ${inputField('product-expiry','Expiry date (optional)','','date',false,p.expiryDate||'')}
+    ${inputField('product-batch','Batch / Lot # (optional)','e.g. BATCH-2026-01','text',false,p.batchNumber||'')}
+  </div>`;
+  openDialog(product ? 'edit-product' : 'new-product', product ? 'Edit product' : 'Add a product', 'Set the product details, price, on-hand quantity, and shelf-life.', content, product ? 'Save changes' : 'Add product');
   document.getElementById('modal-content').dataset.recordId = product?.id || '';
 }
 
@@ -2415,12 +2742,72 @@ async function handleDialogSubmit(form) {
   const val = key => String(data.get(key) || '').trim();
   if (kind === 'new-product' || kind === 'edit-product') {
     const id = kind === 'edit-product' ? form.dataset.recordId : (val('product-sku') || idFor('SKU', state.products));
-    const product = { id, name: val('product-name'), category: val('product-category') || 'General', price: Number(val('product-price')) || 0, cost: Number(val('product-cost')) || 0, stock: Math.max(0, Number(val('product-stock')) || 0), low: Math.max(0, Number(val('product-low')) || 0), unit: val('product-unit') || 'Piece', status: 'Active' };
+    const product = {
+      id,
+      name: val('product-name'),
+      category: val('product-category') || 'General',
+      price: Number(val('product-price')) || 0,
+      cost: Number(val('product-cost')) || 0,
+      stock: Math.max(0, Number(val('product-stock')) || 0),
+      low: Math.max(0, Number(val('product-low')) || 0),
+      unit: val('product-unit') || 'Piece',
+      status: 'Active',
+      expiryDate: val('product-expiry') || '',
+      batchNumber: val('product-batch') || ''
+    };
     const old = state.products.find(p => p.id === id);
     if (old) Object.assign(old, product); else state.products.unshift(product);
     if (!state.productCategories.includes(product.category)) state.productCategories.push(product.category);
     recordActivity(old?'Product updated':'Product added',product.name,product.id);
     saveState(); document.getElementById('app-modal').close(); render(); toast(old ? 'Product updated' : 'Product added'); return;
+  }
+  if (kind === 'confirm-write-off') {
+    const product = state.products.find(p => p.id === form.dataset.recordId);
+    if (!product) return;
+    const qty = Math.min(product.stock, Math.max(1, Number(val('writeoff-qty')) || product.stock));
+    const reason = val('writeoff-reason') || 'Expired stock disposal';
+    const before = product.stock;
+    product.stock = Math.max(0, product.stock - qty);
+    state.stockMovements.unshift({
+      date: new Date().toISOString(),
+      productId: product.id,
+      reason: `Write-off: ${reason} (Expired ${product.expiryDate || 'N/A'}${product.batchNumber ? ' · Lot ' + product.batchNumber : ''})`,
+      before,
+      after: product.stock,
+      delta: -qty,
+      user: currentWorkspaceUser().name || 'Administrator'
+    });
+    recordActivity('Expired stock written off', `${qty} ${product.unit} of ${product.name}`, product.id);
+    saveState();
+    document.getElementById('app-modal').close();
+    render();
+    toast(`${qty} ${product.unit} of ${product.name} written off`);
+    return;
+  }
+  if (kind === 'confirm-clearance-discount') {
+    const product = state.products.find(p => p.id === form.dataset.recordId);
+    if (!product) return;
+    const newPrice = Math.max(0, Number(val('clearance-price')) || 0);
+    const oldPrice = product.price;
+    product.price = newPrice;
+    recordActivity('Clearance discount applied', `${product.name} discounted from ${money(oldPrice)} to ${money(newPrice)}`, product.id);
+    saveState();
+    document.getElementById('app-modal').close();
+    render();
+    toast(`Selling price for ${product.name} updated to ${money(newPrice)}`);
+    return;
+  }
+  if (kind === 'update-product-expiry') {
+    const product = state.products.find(p => p.id === form.dataset.recordId);
+    if (!product) return;
+    product.expiryDate = val('edit-expiry-date') || '';
+    product.batchNumber = val('edit-expiry-batch') || '';
+    recordActivity('Product expiry updated', `${product.name} · Expiry: ${product.expiryDate || 'None'} · Batch: ${product.batchNumber || 'None'}`, product.id);
+    saveState();
+    document.getElementById('app-modal').close();
+    render();
+    toast(`Expiry details updated for ${product.name}`);
+    return;
   }
   if (kind === 'new-party' || kind === 'edit-party') {
     const editing=kind==='edit-party', type = val('party-type'), list = type === 'Supplier' ? state.suppliers : state.customers;
@@ -2950,7 +3337,14 @@ function handleAction(button) {
       const list=type==='Supplier'?state.suppliers:state.customers;
       downloadCSV(type==='Supplier'?'tide-suppliers.csv':'tide-customers.csv',type==='Supplier'?[['Name','Phone','Email','Terms','Balance','Status'],...list.map(p=>[p.name,p.phone,p.email,p.terms,p.balance,p.status])]:[['Name','Phone','Email','Terms','Credit limit','Balance','Status'],...list.map(p=>[p.name,p.phone,p.email,p.terms,p.creditLimit||0,p.balance,p.status])]);break;
     }
-    case 'download-product-template': downloadCSV('tide-product-template.csv',[['SKU','Name','Category','Price','Cost','Stock','Low stock','Unit']]);break;
+    case 'download-product-template':
+      downloadCSV('tide-product-template.csv', [
+        ['SKU', 'Name', 'Category', 'Selling Price', 'Unit Cost', 'Stock', 'Low stock', 'Unit', 'Expiry Date', 'Batch'],
+        ['SKU-1001', 'Maize Flour 1kg', 'Food & Grains', '2500', '1800', '50', '10', 'Piece', '2026-12-31', 'BATCH-001'],
+        ['SKU-1002', 'Fresh Whole Milk 500ml', 'Dairy', '1500', '1100', '35', '5', 'Piece', '2026-11-25', 'LOT-DAIRY-02']
+      ]);
+      toast('Product template downloaded with pricing and expiration sample rows');
+      break;
     case 'remove-company-logo': state.companyLogo='';saveState();render();toast('Company logo removed');break;
     case 'product-stock-history': {
       const product=state.products.find(p=>p.id===id);if(!product)break;
@@ -3084,8 +3478,99 @@ function handleAction(button) {
       break;
     }
     case 'export-inventory':
-      downloadCSV('tide-inventory.csv', [['SKU', 'Product', 'Category', 'Price TZS', 'Cost TZS', 'Stock', 'Unit'], ...sortProducts(state.products).map(p => [p.id, p.name, p.category, p.price, p.cost, p.stock, p.unit])]);
+      downloadCSV('tide-inventory.csv', [
+        ['SKU', 'Product', 'Category', 'Price TZS', 'Cost TZS', 'Stock', 'Low stock alert', 'Unit', 'Expiry Date', 'Batch / Lot #', 'Status'],
+        ...sortProducts(state.products).map(p => [p.id, p.name, p.category, p.price, p.cost, p.stock, p.low, p.unit, p.expiryDate || '', p.batchNumber || '', p.status || 'Active'])
+      ]);
       break;
+    case 'export-expiry-report': {
+      const expiringList = state.products.filter(p => p.expiryDate).sort((a, b) => String(a.expiryDate).localeCompare(String(b.expiryDate)));
+      downloadCSV('tide-product-expiry-report.csv', [
+        ['SKU', 'Product', 'Category', 'Batch #', 'Stock', 'Unit', 'Unit Cost TZS', 'Total Cost Value TZS', 'Selling Price TZS', 'Expiry Date', 'Days Status', 'Status'],
+        ...expiringList.map(p => {
+          const info = getProductExpiryInfo(p);
+          const totalCost = (Number(p.stock) || 0) * (Number(p.cost) || 0);
+          return [p.id, p.name, p.category, p.batchNumber || '', p.stock, p.unit, p.cost, totalCost, p.price, p.expiryDate, info.label, info.status.toUpperCase()];
+        })
+      ]);
+      toast('Product expiration report downloaded');
+      break;
+    }
+    case 'jump-to-expiry': {
+      const el = document.getElementById('product-expiration-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      break;
+    }
+    case 'filter-expiry-tab': {
+      inventoryExpiryTab = button.dataset.tab || 'attention';
+      render();
+      const el = document.getElementById('product-expiration-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      break;
+    }
+    case 'write-off-expired': {
+      const product = state.products.find(p => p.id === id);
+      if (!product) break;
+      if (!product.stock || product.stock <= 0) {
+        toast(`${product.name} currently has 0 on-hand stock`);
+        break;
+      }
+      openDialog('confirm-write-off', `Write off expired stock: ${product.name}`,
+        'Record an inventory loss and write off remaining stock for this expired product.',
+        `<div class="form-grid">
+          <div class="field"><label>Product</label><strong>${esc(product.name)} (${esc(product.id)})</strong></div>
+          <div class="field"><label>Batch / Lot #</label><span>${esc(product.batchNumber || 'None')}</span></div>
+          <div class="field"><label>Expiry Date</label><span style="color:#ef233c;font-weight:900">${esc(product.expiryDate)}</span></div>
+          <div class="field"><label>Quantity to write off</label><input type="number" name="writeoff-qty" value="${product.stock}" min="1" max="${product.stock}" class="text-input" required></div>
+          <div class="field full"><label>Reason / Disposal method</label><input type="text" name="writeoff-reason" value="Expired stock disposal" class="text-input" required></div>
+        </div>`,
+        'Confirm write-off'
+      );
+      document.getElementById('modal-content').dataset.recordId = product.id;
+      break;
+    }
+    case 'clearance-discount': {
+      const product = state.products.find(p => p.id === id);
+      if (!product) break;
+      const p10 = Math.round(product.price * 0.9);
+      const p20 = Math.round(product.price * 0.8);
+      const p30 = Math.round(product.price * 0.7);
+      const p50 = Math.round(product.price * 0.5);
+      openDialog('confirm-clearance-discount', `Clearance discount: ${product.name}`,
+        `Reduce selling price to clear expiring inventory before ${product.expiryDate || 'expiry'}.`,
+        `<div class="form-grid">
+          <div class="field"><label>Current Selling Price</label><strong>${money(product.price)}</strong></div>
+          <div class="field"><label>Unit Cost (Floor)</label><span>${money(product.cost)}</span></div>
+          <div class="field full">
+            <label>Suggested clearance discounts</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0">
+              <button type="button" class="button small" onclick="document.getElementById('clearance-price-input').value='${p10}'">10% off (${money(p10)})</button>
+              <button type="button" class="button small" onclick="document.getElementById('clearance-price-input').value='${p20}'">20% off (${money(p20)})</button>
+              <button type="button" class="button small" onclick="document.getElementById('clearance-price-input').value='${p30}'">30% off (${money(p30)})</button>
+              <button type="button" class="button small danger-action" onclick="document.getElementById('clearance-price-input').value='${p50}'">50% off (${money(p50)})</button>
+            </div>
+          </div>
+          <div class="field full"><label>New Selling Price (TZS)</label><input type="number" id="clearance-price-input" name="clearance-price" value="${p20}" min="0" class="text-input" required></div>
+        </div>`,
+        'Apply discount'
+      );
+      document.getElementById('modal-content').dataset.recordId = product.id;
+      break;
+    }
+    case 'edit-expiry': {
+      const product = state.products.find(p => p.id === id);
+      if (!product) break;
+      openDialog('update-product-expiry', `Update Expiry & Batch: ${product.name}`,
+        'Set or update expiration date and batch/lot identifier.',
+        `<div class="form-grid">
+          ${inputField('edit-expiry-date', 'Expiration date', '', 'date', false, product.expiryDate || '')}
+          ${inputField('edit-expiry-batch', 'Batch / Lot #', 'e.g. B-2026-001', 'text', false, product.batchNumber || '')}
+        </div>`,
+        'Save expiry details'
+      );
+      document.getElementById('modal-content').dataset.recordId = product.id;
+      break;
+    }
     case 'export-ledger':
       downloadCSV('tide-ledger.csv', [['Reference', 'Type', 'Party', 'Date', 'Entry', 'Amount TZS', 'Memo'], ...state.entries.map(e => [e.id, e.partyType, e.party, e.date, e.type, e.amount, e.memo])]);
       break;
@@ -3112,18 +3597,78 @@ function downloadCSV(filename, rows) {
 }
 
 function importProductsCSV(csv) {
-  const rows=csv.split(/\r?\n/).filter(line=>line.trim());if(rows.length<2){toast('CSV has no product rows');return;}
-  const parse=line=>line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(cell=>cell.trim().replace(/^"|"$/g,'').replaceAll('""','"'));
-  const headers=parse(rows[0]).map(h=>h.toLowerCase().replace(/[ _-]/g,''));
-  const index=(...names)=>headers.findIndex(h=>names.includes(h));
-  let added=0;
-  for(const rowText of rows.slice(1)){
-    const row=parse(rowText),name=row[index('name','product','productname')]||'';if(!name)continue;
-    const sku=row[index('sku','code','id')]||idFor('SKU',state.products);
-    const product={id:sku,name,category:row[index('category')]||'General',price:Number(row[index('price','sellingprice')])||0,cost:Number(row[index('cost','unitcost')])||0,stock:Math.max(0,Number(row[index('stock','quantity')])||0),low:Math.max(0,Number(row[index('lowstock','reorderlevel')])||0),unit:row[index('unit','measurementunit')]||'Piece',status:'Active'};
-    const existing=state.products.find(p=>p.id===sku);if(existing)Object.assign(existing,product);else{state.products.unshift(product);added++;}
+  const rows = csv.split(/\r?\n/).filter(line => line.trim());
+  if (rows.length < 2) { toast('CSV has no product rows'); return; }
+  const delimiter = detectCSVDelimiter(rows[0]);
+  const rawHeaders = parseCSVLine(rows[0], delimiter);
+  const headers = rawHeaders.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+  const findCol = (...aliases) => {
+    let idx = headers.findIndex(h => aliases.includes(h));
+    if (idx !== -1) return idx;
+    idx = headers.findIndex(h => aliases.some(a => h.includes(a)));
+    return idx;
+  };
+
+  const nameIdx = findCol('name', 'product', 'productname', 'item', 'itemname', 'description', 'title');
+  const skuIdx = findCol('sku', 'code', 'id', 'productcode', 'itemcode', 'barcode');
+  const catIdx = findCol('category', 'group', 'type', 'department');
+  const priceIdx = findCol('price', 'sellingprice', 'selling', 'saleprice', 'salesprice', 'retailprice', 'unitprice', 'retail', 'rate');
+  const costIdx = findCol('cost', 'unitcost', 'costprice', 'buyprice', 'buyingprice', 'purchaseprice', 'purchasecost', 'buying');
+  const stockIdx = findCol('stock', 'quantity', 'qty', 'openingstock', 'onhand', 'inventory', 'balance');
+  const lowIdx = findCol('lowstock', 'reorderlevel', 'reorder', 'minstock', 'alert', 'low');
+  const unitIdx = findCol('unit', 'measurementunit', 'uom', 'measure');
+  const expiryIdx = findCol('expirydate', 'expiry', 'expirationdate', 'expiration', 'expires', 'bestbefore', 'useby', 'exp');
+  const batchIdx = findCol('batchnumber', 'batch', 'batchno', 'lot', 'lotnumber', 'lotno');
+
+  let added = 0;
+  let updated = 0;
+
+  for (const rowText of rows.slice(1)) {
+    const row = parseCSVLine(rowText, delimiter);
+    const name = (nameIdx !== -1 ? row[nameIdx] : '') || '';
+    if (!name) continue;
+
+    const sku = (skuIdx !== -1 && row[skuIdx]) ? row[skuIdx].trim() : idFor('SKU', state.products);
+    const category = (catIdx !== -1 && row[catIdx]) ? row[catIdx].trim() : 'General';
+    const price = priceIdx !== -1 ? parseCSVNumber(row[priceIdx]) : 0;
+    const cost = costIdx !== -1 ? parseCSVNumber(row[costIdx]) : 0;
+    const stock = stockIdx !== -1 ? Math.max(0, parseCSVNumber(row[stockIdx])) : 0;
+    const low = lowIdx !== -1 ? Math.max(0, parseCSVNumber(row[lowIdx])) : 5;
+    const unit = (unitIdx !== -1 && row[unitIdx]) ? row[unitIdx].trim() : 'Piece';
+    const expiryDate = expiryIdx !== -1 ? parseCSVDate(row[expiryIdx]) : '';
+    const batchNumber = (batchIdx !== -1 && row[batchIdx]) ? row[batchIdx].trim() : '';
+
+    const product = {
+      id: sku,
+      name,
+      category,
+      price,
+      cost,
+      stock,
+      low,
+      unit,
+      status: 'Active',
+      expiryDate,
+      batchNumber
+    };
+
+    const existing = state.products.find(p => p.id === sku || (p.name.toLowerCase() === name.toLowerCase() && !skuIdx));
+    if (existing) {
+      Object.assign(existing, product);
+      updated++;
+    } else {
+      state.products.unshift(product);
+      added++;
+    }
+    if (!state.productCategories.includes(category)) {
+      state.productCategories.push(category);
+    }
   }
-  saveState();render();toast(`${added} product${added===1?'':'s'} imported`);
+
+  saveState();
+  render();
+  toast(`${added} added, ${updated} updated with verified pricing & stock`);
 }
 
 // Keep table action menus outside the scroll-clipped table.
