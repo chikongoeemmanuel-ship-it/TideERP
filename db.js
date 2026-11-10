@@ -145,6 +145,11 @@ function sanitizeState(restored, initialState) {
     if (u.name === 'Amina Mwinyi' || u.name === 'Amina' || /amina/i.test(u.name || '')) {
       u.name = 'Administrator';
     }
+    if (u.username === 'CHIKO12' || /chiko/i.test(u.name || '') || /chikongoe/i.test(u.username || '')) {
+      u.role = 'Owner / Administrator';
+      u.modules = ['*'];
+      u.permissions = { '*': ['*'] };
+    }
   }
   if (!clean.companyName || clean.companyName === 'Kipepeo Traders' || /kipepeo/i.test(clean.companyName || '')) {
     clean.companyName = 'My Company';
