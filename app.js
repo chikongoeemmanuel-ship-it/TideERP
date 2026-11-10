@@ -1507,6 +1507,7 @@ function printOrderInvoice(order) {
 // Inventory
 function renderInventory() {
   const rows = inventoryRowsFiltered();
+  const selectedCount = selectedProductIds.size;
   return `
     ${heading('Inventory', 'Manage product details, save drafts, and track stock movements.', `
       <button class="button" data-action="export-inventory">↓ Export CSV</button>
@@ -1533,8 +1534,8 @@ function renderInventory() {
           </select>
         </div>
         <span class="muted" id="inventory-result-count" style="font-size:11px">${rows.length} of ${state.products.length} products</span>
-        <div id="bulk-product-bar" class="bulk-action-bar" hidden>
-          <span id="bulk-product-count" class="muted" style="font-size:11px"></span>
+        <div id="bulk-product-bar" class="bulk-action-bar" ${selectedCount > 0 ? '' : 'hidden style="display:none!important;"'}>
+          <span id="bulk-product-count" class="muted" style="font-size:11px">${selectedCount > 0 ? `${selectedCount} product${selectedCount !== 1 ? 's' : ''} selected` : ''}</span>
           <button class="button small danger-action" data-action="bulk-delete-products">Delete selected</button>
         </div>
       </div>
@@ -1606,7 +1607,13 @@ function updateBulkProductBar() {
   const count = document.getElementById('bulk-product-count');
   if (!bar) return;
   const n = selectedProductIds.size;
-  bar.hidden = n === 0;
+  if (n === 0) {
+    bar.hidden = true;
+    bar.style.display = 'none';
+  } else {
+    bar.hidden = false;
+    bar.style.display = 'flex';
+  }
   if (count) count.textContent = `${n} product${n !== 1 ? 's' : ''} selected`;
   const allChecks = document.querySelectorAll('.product-row-check');
   const selectAll = document.getElementById('select-all-products');
