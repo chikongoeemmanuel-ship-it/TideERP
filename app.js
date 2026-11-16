@@ -94,6 +94,7 @@ let tableQuery = '';
 let selectedProductIds = new Set();
 let inventoryExpiryTab = 'attention';
 let salesStatusFilter = '';
+let salesPaymentFilter = '';
 let salesDateFrom = '';
 let salesDateTo = '';
 let purchaseStatusFilter = '';
@@ -1341,29 +1342,73 @@ function salesOrderRows() {
 }
 
 function renderSales() {
-  const rows = salesOrderRows().filter(row => (!salesStatusFilter || row.status === salesStatusFilter) && isWithinDateRange(row.date, salesDateFrom, salesDateTo) && `${row.id} ${row.customer} ${row.status} ${row.source || 'Order'}`.toLowerCase().includes(tableQuery.toLowerCase()));
+  const allRows = salesOrderRows();
+  const rows = allRows.filter(row => {
+    if (salesStatusFilter && row.status !== salesStatusFilter) return false;
+    if (!isWithinDateRange(row.date, salesDateFrom, salesDateTo)) return false;
+    if (salesPaymentFilter) {
+      const ps = orderPaymentStatus(row);
+      if (salesPaymentFilter === 'paid' && ps !== 'Fully paid') return false;
+      if (salesPaymentFilter === 'partial' && ps !== 'Partially paid') return false;
+      if (salesPaymentFilter === 'unpaid' && ps !== 'Due') return false;
+    }
+    if (tableQuery && !`${row.id} ${row.customer} ${row.status} ${row.source || 'Order'}`.toLowerCase().includes(tableQuery.toLowerCase())) return false;
+    return true;
+  });
+
+  const todayStr = today();
+  const dailySalesTotal = rows
+    .filter(r => (r.date || '').slice(0, 10) === todayStr)
+    .reduce((sum, r) => sum + Number(r.total || 0), 0);
+  const dailyExpenseTotal = (state.purchases || [])
+    .filter(p => isWithinDateRange(p.date, salesDateFrom, salesDateTo) && (p.date || '').slice(0, 10) === todayStr)
+    .reduce((sum, p) => sum + Number(p.total || 0), 0);
+
+  const unpaidTotal = rows
+    .filter(r => orderPaymentStatus(r) !== 'Fully paid' && r.status !== 'Draft')
+    .reduce((sum, r) => sum + Math.max(0, Number(r.total || 0) - Number(r.paid || 0)), 0);
+
   return `
     ${heading('Sales & orders', 'Manage customer orders, fulfillments, invoices, and payments.', `
       <button class="button" data-page="pos">▦ Point of sale</button>
       <button class="button primary" data-action="new-order">＋ Sales order</button>
     `)}
-    <section class="summary-strip">
-      <div class="summary-mini"><small>Open orders</small><strong>${state.orders.filter(o => o.status === 'Draft' || o.status === 'Final').length}</strong></div>
-      <div class="summary-mini"><small>Unpaid invoices</small><strong>${money(state.sales.filter(s => s.status === 'Pending').reduce((sum, s) => sum + s.total, 0))}</strong></div>
-      <div class="summary-mini"><small>Sales this month</small><strong>${money(state.sales.reduce((sum, s) => sum + s.total, 0))}</strong></div>
+
+    <section class="filter-bar">
+      <div class="filter-bar-inner">
+        <label class="filter-label">Status
+          <select class="select-control" id="sales-status">
+            <option value="" ${salesStatusFilter === '' ? 'selected' : ''}>All statuses</option>
+            <option value="Draft" ${salesStatusFilter === 'Draft' ? 'selected' : ''}>Draft</option>
+            <option value="Final" ${salesStatusFilter === 'Final' ? 'selected' : ''}>Final</option>
+            <option value="Edited" ${salesStatusFilter === 'Edited' ? 'selected' : ''}>Edited</option>
+            <option value="Completed" ${salesStatusFilter === 'Completed' ? 'selected' : ''}>Completed</option>
+          </select>
+        </label>
+        <label class="filter-label">Payment
+          <select class="select-control" id="sales-payment">
+            <option value="" ${salesPaymentFilter === '' ? 'selected' : ''}>All payments</option>
+            <option value="paid" ${salesPaymentFilter === 'paid' ? 'selected' : ''}>Fully paid</option>
+            <option value="partial" ${salesPaymentFilter === 'partial' ? 'selected' : ''}>Partially paid</option>
+            <option value="unpaid" ${salesPaymentFilter === 'unpaid' ? 'selected' : ''}>Unpaid / Due</option>
+          </select>
+        </label>
+        ${dateRangeFilter('sales', salesDateFrom, salesDateTo)}
+        ${salesStatusFilter || salesPaymentFilter || salesDateFrom || salesDateTo ? `<button class="button small" data-action="clear-sales-filters">✕ Clear filters</button>` : ''}
+      </div>
     </section>
+
+    <section class="summary-strip">
+      <div class="summary-mini"><small>Daily sales</small><strong>${money(dailySalesTotal)}</strong></div>
+      <div class="summary-mini"><small>Daily expenses</small><strong>${money(dailyExpenseTotal)}</strong></div>
+      <div class="summary-mini"><small>Unpaid invoices</small><strong>${money(unpaidTotal)}</strong></div>
+    </section>
+
     <section class="table-panel">
       <div class="toolbar">
         <div class="toolbar-left">
-          <label class="search-box"><input id="table-search" placeholder="Search orders or customers…" value="${esc(tableQuery)}"></label>
-          <select class="select-control" id="sales-status">
-            <option value="" ${salesStatusFilter === '' ? 'selected' : ''}>All statuses</option>
-            <option ${salesStatusFilter === 'Draft' ? 'selected' : ''}>Draft</option>
-            <option ${salesStatusFilter === 'Final' ? 'selected' : ''}>Final</option>
-            <option ${salesStatusFilter === 'Edited' ? 'selected' : ''}>Edited</option>
-            <option ${salesStatusFilter === 'Completed' ? 'selected' : ''}>Completed</option>
-          </select>
-          ${dateRangeFilter('sales', salesDateFrom, salesDateTo)}
+          <label class="search-box"><input id="table-search" placeholder="Search order ID, customer, status…" value="${esc(tableQuery)}"></label>
+          <span class="muted" style="font-size:11px">${rows.length} of ${allRows.length} orders</span>
         </div>
         <div class="toolbar-right">
           <button class="button small" data-action="export-sales">↓ Export CSV</button>
@@ -3172,6 +3217,10 @@ function handleAction(button) {
       render();
       break;
     }
+    case 'clear-sales-filters':
+      salesStatusFilter = ''; salesPaymentFilter = ''; salesDateFrom = ''; salesDateTo = '';
+      render();
+      break;
     case 'new-product': openProductForm(); break;
     case 'edit-product': openProductForm(state.products.find(p => p.id === id)); break;
     case 'new-party': openPartyForm(type || 'Customer'); break;
@@ -3829,6 +3878,7 @@ document.addEventListener('change', event => {
     updateBulkProductBar();
   }
   if (event.target.id === 'sales-status') { salesStatusFilter = event.target.value; render(); }
+  if (event.target.id === 'sales-payment') { salesPaymentFilter = event.target.value; render(); }
   if (event.target.id === 'purchase-status') { purchaseStatusFilter = event.target.value; render(); }
   if(event.target.matches('[data-permission-module]')){
     const group=event.target.closest('fieldset');

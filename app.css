@@ -248,6 +248,10 @@ body{font-weight:700}
 :root[data-theme="dark"] .stock-current-callout strong{color:#82d7f4}
 
 .stock-control-panel{margin-top:15px;padding:20px}
+.filter-bar{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 16px;margin-bottom:14px;box-shadow:var(--shadow)}
+.filter-bar-inner{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+.filter-label{display:grid;gap:4px;font-size:10px;font-weight:700;color:#526a75}
+.filter-label .select-control{margin-top:2px}
 .stock-control-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
 .stock-control-card{display:flex;align-items:center;gap:12px;min-width:0;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--white);color:var(--ink);text-align:left}
 .stock-control-card:hover{border-color:#91cbd3;background:var(--ocean-light)}
