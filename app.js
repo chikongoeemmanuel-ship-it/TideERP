@@ -76,7 +76,7 @@ const branchCollections = [
 
 let state = structuredClone(initialState);
 let activeBranch = state.branches[0];
-let page = 'dashboard';
+let page = 'home';
 const pageHistory = [];
 if (!history.state?.erpPage) {
   history.replaceState({ erpPage: page }, '', `${location.pathname}${location.search}#${page}`);
@@ -297,6 +297,7 @@ function userHasPermission(module,action,user=currentWorkspaceUser()) {
 }
 
 function canViewPage(module, user = currentWorkspaceUser()) {
+  if (module === 'home') return true;
   if (!user || user.role === 'Guest') return false;
   if (isAdministratorUser(user)) return true;
   if (module === 'pos') return userHasPermission('pos', 'open', user) || userHasPermission('pos', 'view', user);
@@ -370,7 +371,7 @@ function canPerformAction(action,element=null) {
 }
 
 const pageLabels = {
-  dashboard: 'Overview', sales: 'Sales', pos: 'Point of sale',
+  home: 'Home', dashboard: 'Overview', sales: 'Sales', pos: 'Point of sale',
   inventory: 'Inventory', purchases: 'Purchases', customers: 'Customers',
   suppliers: 'Suppliers', users: 'Users', branches: 'Branches',
   accounting: 'Accounting', reports: 'Reports', settings: 'Settings'
@@ -461,6 +462,8 @@ async function handleLogin(form) {
   safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
   saveState();
   authErrorMessage = '';
+  page = 'home';
+  history.replaceState({ erpPage: 'home' }, '', '#home');
   document.getElementById('auth-gate').hidden = true;
   document.querySelector('.app-shell').hidden = false;
   render();
@@ -981,6 +984,91 @@ function selectField(name, label, options = [], selected = '') {
 
 function branchSelectField(name,label,selectedId='',branches=state.branches.filter(branch=>branch.status!=='Inactive')) {
   return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}" required>${branches.map(branch=>`<option value="${esc(branch.id)}" ${branch.id===selectedId?'selected':''}>${esc(branch.name)}</option>`).join('')}</select></div>`;
+}
+
+// Home Quick-Actions Hub Page
+function renderHome() {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Dar_es_Salaam', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+  const greeting = hour >= 5 && hour < 12 ? 'GOOD MORNING' : hour >= 12 && hour < 17 ? 'GOOD AFTERNOON' : 'GOOD EVENING';
+  const firstName = (currentWorkspaceUser().name || 'User').trim().split(/\s+/)[0] || 'User';
+  const companyTitle = state.companyName || 'My Business';
+  const branchTitle = activeBranch ? activeBranch.name : 'Main branch';
+
+  const todayStr = today();
+  const salesToday = (state.sales || []).filter(s => (s.date || '').slice(0, 10) === todayStr);
+  const totalToday = salesToday.reduce((sum, s) => sum + Number(s.total || 0), 0);
+  const orderCountToday = salesToday.length;
+  const avgSale = orderCountToday > 0 ? Math.round(totalToday / orderCountToday) : 0;
+
+  return `
+    <div class="hub-container">
+      <header class="hub-header">
+        <span class="hub-kicker">${esc(greeting)}, ${esc(firstName.toUpperCase())}</span>
+        <h1 class="hub-title">${esc(companyTitle)}</h1>
+        <div class="hub-status-row">
+          <span class="hub-status-dot"></span>
+          <span>${esc(branchTitle)} · Active</span>
+          <span class="hub-status-divider">|</span>
+          <button type="button" class="hub-edit-link" data-page="settings">✎ Edit profile</button>
+        </div>
+      </header>
+
+      <section class="hub-banner-card">
+        <div class="hub-banner-col">
+          <span class="hub-banner-subtitle">Today's Sales</span>
+          <strong class="hub-banner-amount">${money(totalToday)}</strong>
+        </div>
+        <div class="hub-banner-col hub-banner-right">
+          <span class="hub-count-badge">${orderCountToday} Customer${orderCountToday === 1 ? '' : 's'}</span>
+          <span class="hub-avg-label">Avg ${money(avgSale)} per sale</span>
+        </div>
+      </section>
+
+      <section class="hub-actions-grid" aria-label="Quick Actions">
+        <div class="hub-action-box" data-page="dashboard" role="button" tabindex="0">
+          <div class="hub-box-icon">◫</div>
+          <strong class="hub-box-title">View Dashboard</strong>
+          <span class="hub-box-desc">View Trends and Performance</span>
+        </div>
+
+        <div class="hub-action-box" data-page="pos" role="button" tabindex="0">
+          <div class="hub-box-icon">🛒</div>
+          <strong class="hub-box-title">Make a Sale</strong>
+          <span class="hub-box-desc">Process sales and Print Receipts</span>
+        </div>
+
+        <div class="hub-action-box" data-page="inventory" role="button" tabindex="0">
+          <div class="hub-box-icon">📦</div>
+          <strong class="hub-box-title">Manage Inventory</strong>
+          <span class="hub-box-desc">Receive, Update and Monitor Stock</span>
+        </div>
+
+        <div class="hub-action-box" data-page="purchases" role="button" tabindex="0">
+          <div class="hub-box-icon">🚚</div>
+          <strong class="hub-box-title">Purchases</strong>
+          <span class="hub-box-desc">Manage supplier orders and restock</span>
+        </div>
+
+        <div class="hub-action-box" data-page="reports" role="button" tabindex="0">
+          <div class="hub-box-icon">📊</div>
+          <strong class="hub-box-title">Reports</strong>
+          <span class="hub-box-desc">Financial statements and insights</span>
+        </div>
+
+        <div class="hub-action-box" data-page="accounting" role="button" tabindex="0">
+          <div class="hub-box-icon">🧾</div>
+          <strong class="hub-box-title">Expense Tracking</strong>
+          <span class="hub-box-desc">Track business expenses and outflows</span>
+        </div>
+
+        <div class="hub-action-box" data-page="customers" role="button" tabindex="0">
+          <div class="hub-box-icon">💳</div>
+          <strong class="hub-box-title">Payment Tracking</strong>
+          <span class="hub-box-desc">Track customer and supplier payments</span>
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 // Dashboard Page
@@ -2508,10 +2596,12 @@ function render() {
     else {content.innerHTML='<section class="panel access-denied-panel"><h2>No sections are enabled for your account</h2><p>Ask an Owner / Administrator to grant access.</p></section>';refreshCompanyLogo();refreshUserProfile();refreshPermissionVisibility();refreshActivityVisibility();refreshNotificationIndicator();updateConnection();syncBackButton();return;}
   }
   const crumb = document.getElementById('crumb-current');
-  if (crumb) crumb.textContent = pageLabels[page] || 'Overview';
+  if (crumb) crumb.textContent = pageLabels[page] || 'Home';
+  document.body.classList.toggle('page-is-home', page === 'home');
 
   try {
     const pageRenderers = {
+      home: renderHome,
       dashboard: renderDashboard,
       sales: renderSales,
       pos: renderPOS,
@@ -4079,6 +4169,8 @@ async function initApp() {
       return;
     }
     saveState();
+    const hash = (location.hash || '').replace(/^#/, '');
+    page = hash && pageLabels[hash] ? hash : 'home';
     document.getElementById('auth-gate').hidden = true;
     document.querySelector('.app-shell').hidden = false;
     render();
