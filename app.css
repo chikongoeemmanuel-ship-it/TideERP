@@ -400,12 +400,12 @@ body{font-weight:700}
 .vat-row{display:flex;justify-content:space-between;font-size:11px;color:#536d7a;padding:4px 0}
 .vat-row.grand{border-top:1px solid var(--line);font-weight:700;font-size:13px;color:var(--ink);padding-top:8px}
 
-/* Apply the greeting-page silver palette consistently across workspace screens */
-.main-area{background:#d4d6d8}.main-area .page-wrap{background:transparent}.main-area .metric-card,.main-area .quick-panel,.main-area .report-card,.main-area .summary-mini,.main-area .panel:not(:has(.chart-area)):not(:has(.donut-wrap)){background:#c6c9cb;border-color:#b6b9bc}.main-area .table-panel,.main-area .panel:has(.chart-area),.main-area .panel:has(.donut-wrap){background:#fff}:root[data-theme=dark] .main-area{background:#3c3f42}:root[data-theme=dark] .main-area .metric-card,:root[data-theme=dark] .main-area .quick-panel,:root[data-theme=dark] .main-area .report-card,:root[data-theme=dark] .main-area .summary-mini,:root[data-theme=dark] .main-area .panel:not(:has(.chart-area)):not(:has(.donut-wrap)){background:#484b4e;border-color:#5b5f63}:root[data-theme=dark] .main-area .table-panel,:root[data-theme=dark] .main-area .panel:has(.chart-area),:root[data-theme=dark] .main-area .panel:has(.donut-wrap){background:#2c2e31}
+/* Canvas & Cards: Crisp White Cards over Smooth Dark Blue-to-White Background Gradient */
+.main-area{background:transparent}.main-area .page-wrap{background:transparent}.main-area .metric-card,.main-area .quick-panel,.main-area .report-card,.main-area .summary-mini,.main-area .panel{background:#ffffff!important;border:1.5px solid #cbd8e6!important;box-shadow:0 4px 18px rgba(10,30,54,0.06)!important}.main-area .table-panel{background:#ffffff!important;border:1.5px solid #cbd8e6!important}
 
-/* Light mode uses a full-app canvas gradient, darkest at the lower edge. */
-:root:not([data-theme="dark"]) body{background:linear-gradient(to top,#17191b 0%,#373a3d 22%,#8b8e91 44%,#e7e9ea 66%,#d4d6d8 100%) fixed}
-:root:not([data-theme="dark"]) .app-shell,:root:not([data-theme="dark"]) .main-area{background:transparent}
+/* Background gradient: Smooth transition from deep dark blue towards crisp white */
+:root:not([data-theme="dark"]) body{background:linear-gradient(to top,#0a1e36 0%,#102a4a 16%,#1b4372 35%,#416d9e 58%,#85a9d4 78%,#d8e7f9 92%,#ffffff 100%) fixed!important}
+:root:not([data-theme="dark"]) .app-shell,:root:not([data-theme="dark"]) .main-area{background:transparent!important}
 
 .sidebar{scrollbar-width:thin;scrollbar-color:#687177 transparent}.sidebar::-webkit-scrollbar{width:3px}.sidebar::-webkit-scrollbar-track{background:transparent}.sidebar::-webkit-scrollbar-thumb{background:#687177;border-radius:4px}.sidebar::-webkit-scrollbar-thumb:hover{background:#899398}
 
