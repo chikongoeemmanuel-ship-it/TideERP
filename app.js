@@ -13,7 +13,7 @@ function safeSessionRemove(key) { try { sessionStorage.removeItem(key); } catch 
 
 const initialState = {
   version: 3,
-  companyName: 'CHIKO ENTERPRISES',
+  companyName: 'My Company',
   companyLogo: '',
   companyAddress: 'Dar es Salaam, Tanzania',
   companyPhone: '',
@@ -37,8 +37,8 @@ const initialState = {
   users: [
     {
       id: 'USR-OWNER',
-      name: 'Emmanuel Chiko',
-      username: 'CHIKO12',
+      name: 'Administrator',
+      username: '',
       email: '',
       phone: '',
       role: 'Owner / Administrator',
@@ -989,11 +989,12 @@ function branchSelectField(name,label,selectedId='',branches=state.branches.filt
 // Home Quick-Actions Hub Page
 function renderHome() {
   const user = currentWorkspaceUser();
-  const userName = (user.name && user.name !== 'Administrator' && user.name !== 'Guest') ? user.name : 'Emmanuel Chiko';
-  const userRole = (user.role === 'Owner / Administrator') ? 'Administrator' : (user.role || 'Administrator');
+  const userName = user.name || 'User';
+  const userRole = user.role === 'Owner / Administrator' ? 'Administrator' : (user.role || 'User');
   const userDisplay = `${userName}-${userRole}`;
-  const companyTitle = (state.companyName && state.companyName !== 'My Company') ? state.companyName : 'CHIKO ENTERPRISES';
-  const branchTitle = activeBranch ? activeBranch.name : 'Main branch';
+  const companyTitle = state.companyName || 'My Business';
+  const activeBranchObj = activeBranch || state.branches.find(b => b.id === state.activeBranchId) || state.branches[0];
+  const branchTitle = activeBranchObj ? activeBranchObj.name : (state.branch || 'Main branch');
 
   const todayStr = today();
   const allOrders = salesOrderRows();
