@@ -995,10 +995,26 @@ function renderHome() {
   const branchTitle = activeBranch ? activeBranch.name : 'Main branch';
 
   const todayStr = today();
-  const salesToday = (state.sales || []).filter(s => (s.date || '').slice(0, 10) === todayStr);
-  const totalToday = salesToday.reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const orderCountToday = salesToday.length;
-  const avgSale = orderCountToday > 0 ? Math.round(totalToday / orderCountToday) : 0;
+  const allOrders = salesOrderRows();
+  const todayOrders = allOrders.filter(r => (r.date || '').slice(0, 10) === todayStr && r.status !== 'Draft' && r.status !== 'Cancelled');
+  const totalRevenueToday = todayOrders.reduce((sum, r) => sum + Number(r.total || 0), 0);
+  const orderCountToday = todayOrders.length;
+  const avgSale = orderCountToday > 0 ? Math.round(totalRevenueToday / orderCountToday) : 0;
+
+  const todayPurchases = (state.purchases || []).filter(p => (p.date || '').slice(0, 10) === todayStr && p.status !== 'Draft' && p.status !== 'Cancelled');
+  const purchaseExpensesToday = todayPurchases.reduce((sum, p) => sum + Number(p.total || 0), 0);
+  const otherExpensesToday = (state.expenses || []).filter(e => (e.date || '').slice(0, 10) === todayStr).reduce((sum, e) => sum + Number(e.amount || e.total || 0), 0);
+  const totalExpensesToday = purchaseExpensesToday + otherExpensesToday;
+  const expenseCountToday = todayPurchases.length + (state.expenses || []).filter(e => (e.date || '').slice(0, 10) === todayStr).length;
+
+  const netToday = totalRevenueToday - totalExpensesToday;
+
+  const unpaidOrders = allOrders.filter(r => r.status !== 'Draft' && r.status !== 'Cancelled' && orderPaymentStatus(r) !== 'Fully paid');
+  const unpaidTotal = unpaidOrders.reduce((sum, r) => sum + Math.max(0, Number(r.total || 0) - Number(r.paid || 0)), 0);
+  const unpaidCount = unpaidOrders.length;
+
+  const todayUnpaidOrders = todayOrders.filter(r => orderPaymentStatus(r) !== 'Fully paid');
+  const todayUnpaidTotal = todayUnpaidOrders.reduce((sum, r) => sum + Math.max(0, Number(r.total || 0) - Number(r.paid || 0)), 0);
 
   return `
     <div class="hub-container">
@@ -1012,17 +1028,6 @@ function renderHome() {
           <button type="button" class="hub-edit-link" data-page="settings">✎ Edit profile</button>
         </div>
       </header>
-
-      <section class="hub-banner-card">
-        <div class="hub-banner-col">
-          <span class="hub-banner-subtitle">Today's Sales</span>
-          <strong class="hub-banner-amount">${money(totalToday)}</strong>
-        </div>
-        <div class="hub-banner-col hub-banner-right">
-          <span class="hub-count-badge">${orderCountToday} Customer${orderCountToday === 1 ? '' : 's'}</span>
-          <span class="hub-avg-label">Avg ${money(avgSale)} per sale</span>
-        </div>
-      </section>
 
       <section class="hub-actions-grid" aria-label="Quick Actions">
         <div class="hub-action-box" data-page="dashboard" role="button" tabindex="0">
@@ -1065,6 +1070,121 @@ function renderHome() {
           <div class="hub-box-icon">💳</div>
           <strong class="hub-box-title">Payment Tracking</strong>
           <span class="hub-box-desc">Track customer and supplier payments</span>
+        </div>
+      </section>
+
+      <!-- Bottom Detailed Financial Section -->
+      <section class="hub-finance-section" aria-label="Daily Financial Summary">
+        <div class="hub-finance-header">
+          <div class="hub-finance-header-text">
+            <h2 class="hub-finance-title">Today's Financial Summary</h2>
+            <p class="hub-finance-subtitle">Comprehensive breakdown of daily revenue, expenses, net balance, and unpaid orders</p>
+          </div>
+          <div class="hub-finance-header-badges">
+            <span class="hub-date-badge">📅 ${dateLabel(todayStr)}</span>
+          </div>
+        </div>
+
+        <div class="hub-finance-cards-grid">
+          <div class="hub-fin-card" data-page="sales" role="button" tabindex="0" title="Click to open Sales & Orders">
+            <div class="hub-fin-card-top">
+              <span class="hub-fin-card-label">Total Revenue</span>
+              <span class="hub-fin-pill pill-revenue">${orderCountToday} sale${orderCountToday === 1 ? '' : 's'}</span>
+            </div>
+            <strong class="hub-fin-card-value font-mono">${money(totalRevenueToday)}</strong>
+            <span class="hub-fin-card-footer">Avg ${money(avgSale)} per sale</span>
+          </div>
+
+          <div class="hub-fin-card" data-page="purchases" role="button" tabindex="0" title="Click to open Purchases & Expenses">
+            <div class="hub-fin-card-top">
+              <span class="hub-fin-card-label">Daily Expenses</span>
+              <span class="hub-fin-pill pill-expense">${expenseCountToday} outflow${expenseCountToday === 1 ? '' : 's'}</span>
+            </div>
+            <strong class="hub-fin-card-value font-mono">${money(totalExpensesToday)}</strong>
+            <span class="hub-fin-card-footer">Purchases & business costs</span>
+          </div>
+
+          <div class="hub-fin-card ${netToday >= 0 ? 'card-profit' : 'card-loss'}" data-page="reports" role="button" tabindex="0" title="Click to open Reports">
+            <div class="hub-fin-card-top">
+              <span class="hub-fin-card-label">Net Daily Result (Revenue − Expenses)</span>
+              <span class="hub-fin-pill ${netToday >= 0 ? 'pill-profit' : 'pill-loss'}">${netToday >= 0 ? 'Net Profit' : 'Deficit'}</span>
+            </div>
+            <strong class="hub-fin-card-value font-mono ${netToday >= 0 ? 'value-profit' : 'value-loss'}">${netToday < 0 ? '− ' : '+ '}${money(Math.abs(netToday))}</strong>
+            <span class="hub-fin-card-footer">Daily revenue minus daily expenses</span>
+          </div>
+
+          <div class="hub-fin-card card-unpaid" data-page="sales" role="button" tabindex="0" title="Click to view Unpaid Orders">
+            <div class="hub-fin-card-top">
+              <span class="hub-fin-card-label">Unpaid Sales Orders</span>
+              <span class="hub-fin-pill pill-unpaid">${unpaidCount} unpaid</span>
+            </div>
+            <strong class="hub-fin-card-value font-mono value-unpaid">${money(unpaidTotal)}</strong>
+            <span class="hub-fin-card-footer">${todayUnpaidOrders.length} from today (${money(todayUnpaidTotal)})</span>
+          </div>
+        </div>
+
+        <div class="hub-table-wrapper">
+          <table class="hub-finance-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Description</th>
+                <th class="text-center">Transactions</th>
+                <th class="text-right">Balance / Amount</th>
+                <th class="text-right">Quick Link</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="hub-table-cat">
+                    <span class="hub-bullet bullet-revenue"></span>
+                    <strong>Total Revenue of the Day</strong>
+                  </div>
+                </td>
+                <td class="text-muted">Total customer sales and POS orders finalized today</td>
+                <td class="text-center"><span class="badge">${orderCountToday} record${orderCountToday === 1 ? '' : 's'}</span></td>
+                <td class="text-right font-mono text-positive">+${money(totalRevenueToday)}</td>
+                <td class="text-right"><button type="button" class="hub-table-btn" data-page="sales">View Sales →</button></td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="hub-table-cat">
+                    <span class="hub-bullet bullet-expense"></span>
+                    <strong>Expenses of the Day</strong>
+                  </div>
+                </td>
+                <td class="text-muted">Supplier purchases and operating costs logged today</td>
+                <td class="text-center"><span class="badge">${expenseCountToday} record${expenseCountToday === 1 ? '' : 's'}</span></td>
+                <td class="text-right font-mono text-expense">−${money(totalExpensesToday)}</td>
+                <td class="text-right"><button type="button" class="hub-table-btn" data-page="purchases">View Purchases →</button></td>
+              </tr>
+              <tr class="hub-table-row-highlight">
+                <td>
+                  <div class="hub-table-cat">
+                    <span class="hub-bullet ${netToday >= 0 ? 'bullet-profit' : 'bullet-loss'}"></span>
+                    <strong>Net Result (Revenue − Expenses)</strong>
+                  </div>
+                </td>
+                <td class="text-muted">Net financial margin after subtracting daily expenses from daily revenue</td>
+                <td class="text-center"><span class="badge ${netToday >= 0 ? 'badge-profit' : 'badge-loss'}">${netToday >= 0 ? 'Positive Margin' : 'Deficit'}</span></td>
+                <td class="text-right font-mono ${netToday >= 0 ? 'text-positive' : 'text-danger'}"><strong>${netToday < 0 ? '− ' : '+ '}${money(Math.abs(netToday))}</strong></td>
+                <td class="text-right"><button type="button" class="hub-table-btn" data-page="reports">View Reports →</button></td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="hub-table-cat">
+                    <span class="hub-bullet bullet-unpaid"></span>
+                    <strong>Unpaid Sales Orders</strong>
+                  </div>
+                </td>
+                <td class="text-muted">Total outstanding customer orders awaiting payment settlement</td>
+                <td class="text-center"><span class="badge badge-warning">${unpaidCount} order${unpaidCount === 1 ? '' : 's'}</span></td>
+                <td class="text-right font-mono text-warning"><strong>${money(unpaidTotal)}</strong></td>
+                <td class="text-right"><button type="button" class="hub-table-btn" data-page="sales">Manage Orders →</button></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
     </div>
