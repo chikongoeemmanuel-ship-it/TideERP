@@ -400,12 +400,29 @@ body{font-weight:700}
 .vat-row{display:flex;justify-content:space-between;font-size:11px;color:#536d7a;padding:4px 0}
 .vat-row.grand{border-top:1px solid var(--line);font-weight:700;font-size:13px;color:var(--ink);padding-top:8px}
 
-/* Canvas & Cards: Crisp White Cards over Smooth Dark Blue-to-White Background Gradient */
-.main-area{background:transparent}.main-area .page-wrap{background:transparent}.main-area .metric-card,.main-area .quick-panel,.main-area .report-card,.main-area .summary-mini,.main-area .panel{background:#ffffff!important;border:1.5px solid #cbd8e6!important;box-shadow:0 4px 18px rgba(10,30,54,0.06)!important}.main-area .table-panel{background:#ffffff!important;border:1.5px solid #cbd8e6!important}
+/* Canvas & Cards: Clean Solid White Background Across the Entire Interface */
+body, .app-shell, .main-area, .page-wrap {
+  background: #ffffff !important;
+}
 
-/* Background gradient: Smooth transition from deep dark blue towards crisp white */
-:root:not([data-theme="dark"]) body{background:linear-gradient(to top,#0a1e36 0%,#102a4a 16%,#1b4372 35%,#416d9e 58%,#85a9d4 78%,#d8e7f9 92%,#ffffff 100%) fixed!important}
-:root:not([data-theme="dark"]) .app-shell,:root:not([data-theme="dark"]) .main-area{background:transparent!important}
+.main-area .metric-card, .main-area .quick-panel, .main-area .report-card, .main-area .summary-mini, .main-area .panel {
+  background: #ffffff !important;
+  border: 1.5px solid #dbe4ee !important;
+  box-shadow: 0 4px 16px rgba(10, 30, 54, 0.04) !important;
+}
+
+.main-area .table-panel {
+  background: #ffffff !important;
+  border: 1.5px solid #dbe4ee !important;
+}
+
+:root:not([data-theme="dark"]) body {
+  background: #ffffff !important;
+}
+
+:root:not([data-theme="dark"]) .app-shell, :root:not([data-theme="dark"]) .main-area {
+  background: #ffffff !important;
+}
 
 .sidebar{scrollbar-width:thin;scrollbar-color:#687177 transparent}.sidebar::-webkit-scrollbar{width:3px}.sidebar::-webkit-scrollbar-track{background:transparent}.sidebar::-webkit-scrollbar-thumb{background:#687177;border-radius:4px}.sidebar::-webkit-scrollbar-thumb:hover{background:#899398}
 
@@ -520,7 +537,7 @@ body{font-weight:700;-webkit-font-smoothing:antialiased}
   --ink: #0a1e36;
   --muted: #435b75;
   --line: #cbd8e6;
-  --canvas: #f4f7fb;
+  --canvas: #ffffff;
   --white: #ffffff;
   --green: #00a651;
   --green-bg: #d1fae5;
@@ -532,14 +549,14 @@ body{font-weight:700;-webkit-font-smoothing:antialiased}
 }
 
 .app-shell {
-  filter: saturate(1.15);
-  background: var(--canvas);
+  filter: none;
+  background: #ffffff !important;
 }
 
 body {
   font-weight: 700 !important;
   color: var(--ink);
-  background: var(--canvas);
+  background: #ffffff !important;
   -webkit-font-smoothing: antialiased;
 }
 
