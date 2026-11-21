@@ -13,7 +13,7 @@ function safeSessionRemove(key) { try { sessionStorage.removeItem(key); } catch 
 
 const initialState = {
   version: 3,
-  companyName: 'My Company',
+  companyName: 'CHIKO ENTERPRISES',
   companyLogo: '',
   companyAddress: 'Dar es Salaam, Tanzania',
   companyPhone: '',
@@ -37,8 +37,8 @@ const initialState = {
   users: [
     {
       id: 'USR-OWNER',
-      name: 'Administrator',
-      username: '',
+      name: 'Emmanuel Chiko',
+      username: 'CHIKO12',
       email: '',
       phone: '',
       role: 'Owner / Administrator',
@@ -988,10 +988,11 @@ function branchSelectField(name,label,selectedId='',branches=state.branches.filt
 
 // Home Quick-Actions Hub Page
 function renderHome() {
-  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Dar_es_Salaam', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
-  const greeting = hour >= 5 && hour < 12 ? 'GOOD MORNING' : hour >= 12 && hour < 17 ? 'GOOD AFTERNOON' : 'GOOD EVENING';
-  const firstName = (currentWorkspaceUser().name || 'User').trim().split(/\s+/)[0] || 'User';
-  const companyTitle = state.companyName || 'My Business';
+  const user = currentWorkspaceUser();
+  const userName = (user.name && user.name !== 'Administrator' && user.name !== 'Guest') ? user.name : 'Emmanuel Chiko';
+  const userRole = (user.role === 'Owner / Administrator') ? 'Administrator' : (user.role || 'Administrator');
+  const userDisplay = `${userName}-${userRole}`;
+  const companyTitle = (state.companyName && state.companyName !== 'My Company') ? state.companyName : 'CHIKO ENTERPRISES';
   const branchTitle = activeBranch ? activeBranch.name : 'Main branch';
 
   const todayStr = today();
@@ -1019,13 +1020,9 @@ function renderHome() {
   return `
     <div class="hub-container">
       <header class="hub-header">
-        <span class="hub-kicker">${esc(greeting)}, ${esc(firstName.toUpperCase())}</span>
         <h1 class="hub-title">${esc(companyTitle)}</h1>
-        <div class="hub-status-row">
-          <span class="hub-status-dot"></span>
-          <span>${esc(branchTitle)} · Active</span>
-          <span class="hub-status-divider">|</span>
-          <button type="button" class="hub-edit-link" data-page="settings">✎ Edit profile</button>
+        <div class="hub-meta-row">
+          <span>${esc(branchTitle)}, ${esc(userDisplay)}</span>
         </div>
       </header>
 

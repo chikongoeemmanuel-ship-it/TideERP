@@ -142,10 +142,11 @@ function sanitizeState(restored, initialState) {
     clean.users = structuredClone(initialState.users);
   }
   for (const u of clean.users) {
-    if (u.name === 'Amina Mwinyi' || u.name === 'Amina' || /amina/i.test(u.name || '')) {
-      u.name = 'Administrator';
+    if (u.name === 'Amina Mwinyi' || u.name === 'Amina' || /amina/i.test(u.name || '') || u.name === 'Administrator') {
+      u.name = 'Emmanuel Chiko';
     }
     if (u.username === 'CHIKO12' || /chiko/i.test(u.name || '') || /chikongoe/i.test(u.username || '')) {
+      u.name = 'Emmanuel Chiko';
       u.role = 'Owner / Administrator';
       u.modules = ['*'];
       u.permissions = { '*': ['*'] };
@@ -155,8 +156,8 @@ function sanitizeState(restored, initialState) {
     if (typeof p.expiryDate !== 'string') p.expiryDate = '';
     if (typeof p.batchNumber !== 'string') p.batchNumber = '';
   }
-  if (!clean.companyName || clean.companyName === 'Kipepeo Traders' || /kipepeo/i.test(clean.companyName || '')) {
-    clean.companyName = 'My Company';
+  if (!clean.companyName || clean.companyName === 'Kipepeo Traders' || clean.companyName === 'My Company' || /kipepeo/i.test(clean.companyName || '')) {
+    clean.companyName = 'CHIKO ENTERPRISES';
   }
   if (!clean.currency) clean.currency = 'TZS';
   if (typeof clean.vatEnabled !== 'boolean') clean.vatEnabled = true;
