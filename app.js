@@ -249,6 +249,9 @@ const userModuleChoices = [
 
 const userRoleDefaults = {
   'Owner / Administrator': userModuleChoices.map(m => m[0]),
+  'Administrator': userModuleChoices.map(m => m[0]),
+  'Admin': userModuleChoices.map(m => m[0]),
+  'Owner': userModuleChoices.map(m => m[0]),
   'Manager': ['dashboard', 'sales', 'pos', 'inventory', 'purchases', 'customers', 'suppliers', 'accounting', 'reports', 'branches'],
   'Salesman': ['dashboard', 'sales', 'pos', 'customers'],
   'Storekeeper': ['dashboard', 'inventory', 'purchases']
@@ -269,10 +272,22 @@ const userActionPermissions = [
   { module: 'branches', actions: [['view', 'View branches'], ['open', 'Open branch workspaces'], ['manage', 'Manage branches']] }
 ];
 
-function isAdministratorUser(user) { return user?.role === 'Owner / Administrator'; }
+function isAdministratorUser(user) {
+  if (!user || user.role === 'Guest') return false;
+  return Boolean(
+    user.role === 'Owner / Administrator' ||
+    user.role === 'Administrator' ||
+    user.role === 'Admin' ||
+    user.role === 'Owner' ||
+    /admin|owner/i.test(user.role || '') ||
+    user.isBootstrap
+  );
+}
 
 function rolePermissionMap(role, modules = userRoleDefaults[role] || []) {
-  if (role === 'Owner / Administrator') return Object.fromEntries(userActionPermissions.map(group => [group.module, group.actions.map(([action]) => action)]));
+  if (role === 'Owner / Administrator' || role === 'Administrator' || role === 'Admin' || role === 'Owner' || /admin|owner/i.test(role || '')) {
+    return Object.fromEntries(userActionPermissions.map(group => [group.module, group.actions.map(([action]) => action)]));
+  }
   return Object.fromEntries(userActionPermissions.map(group => [group.module, modules.includes(group.module) ? group.actions.map(([action]) => action) : []]));
 }
 
@@ -523,14 +538,19 @@ function toast(message) {
 
 function currentWorkspaceUser() {
   if (state.currentUserId) {
-    const user = state.users.find(u => u.id === state.currentUserId && u.status === 'Active');
+    const user = (state.users || []).find(u => u.id === state.currentUserId && u.status !== 'Inactive');
     if (user) return user;
+    const anyUser = (state.users || []).find(u => u.id === state.currentUserId);
+    if (anyUser) return anyUser;
+  }
+  if (state.users && state.users.length) {
+    return state.users.find(u => u.status !== 'Inactive') || state.users[0];
   }
   return { name: 'Guest', role: 'Guest', modules: [], permissions: {} };
 }
 
 function isWorkspaceAdministrator() {
-  return currentWorkspaceUser().role === 'Owner / Administrator';
+  return isAdministratorUser(currentWorkspaceUser());
 }
 
 function userCanManageAllBranches() {
@@ -767,11 +787,16 @@ function refreshPermissionVisibility() {
 }
 
 function navigateBack() {
-  if (!pageHistory.length) return;
-  let previous=pageHistory.pop();
-  while(previous&&!canViewPage(previous)&&pageHistory.length)previous=pageHistory.pop();
-  if(!previous||!canViewPage(previous)){previous=Object.keys(pageLabels).find(candidate=>canViewPage(candidate));}
-  if(!previous)return;
+  if (!pageHistory.length) {
+    if (page !== 'home') setPage('home');
+    return;
+  }
+  let previous = pageHistory.pop();
+  while (previous && !canViewPage(previous) && pageHistory.length) previous = pageHistory.pop();
+  if (!previous || !canViewPage(previous)) {
+    previous = 'home';
+  }
+  if (!previous) return;
   page = previous;
   history.pushState({ erpPage: page }, '', `#${page}`);
   tableQuery = '';
@@ -988,16 +1013,20 @@ function branchSelectField(name,label,selectedId='',branches=state.branches.filt
 
 // Home Quick-Actions Hub Page
 function renderHome() {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Dar_es_Salaam', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+  const greeting = hour >= 5 && hour < 12 ? 'GOOD MORNING' : hour >= 12 && hour < 17 ? 'GOOD AFTERNOON' : 'GOOD EVENING';
   const user = currentWorkspaceUser();
-  const userName = user.name || 'User';
-  const userRole = user.role === 'Owner / Administrator' ? 'Administrator' : (user.role || 'User');
+  const userName = (user.name && user.name !== 'Guest') ? user.name : 'Administrator';
+  const firstName = userName.trim().split(/\s+/)[0] || 'Administrator';
+  const userRole = isAdministratorUser(user) ? 'Administrator' : (user.role || 'User');
   const userDisplay = `${userName}-${userRole}`;
   const companyTitle = state.companyName || 'My Business';
-  const activeBranchObj = activeBranch || state.branches.find(b => b.id === state.activeBranchId) || state.branches[0];
+  const activeBranchObj = activeBranch || (state.branches || []).find(b => b.id === state.activeBranchId) || (state.branches || [])[0];
   const branchTitle = activeBranchObj ? activeBranchObj.name : (state.branch || 'Main branch');
+  const branchStatus = activeBranchObj && activeBranchObj.status === 'Inactive' ? 'Closed' : 'Active';
 
   const todayStr = today();
-  const allOrders = salesOrderRows();
+  const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.sales || []);
   const todayOrders = allOrders.filter(r => (r.date || '').slice(0, 10) === todayStr && r.status !== 'Draft' && r.status !== 'Cancelled');
   const totalRevenueToday = todayOrders.reduce((sum, r) => sum + Number(r.total || 0), 0);
   const orderCountToday = todayOrders.length;
@@ -1011,64 +1040,74 @@ function renderHome() {
 
   const netToday = totalRevenueToday - totalExpensesToday;
 
-  const unpaidOrders = allOrders.filter(r => r.status !== 'Draft' && r.status !== 'Cancelled' && orderPaymentStatus(r) !== 'Fully paid');
+  const unpaidOrders = allOrders.filter(r => r.status !== 'Draft' && r.status !== 'Cancelled' && (typeof orderPaymentStatus === 'function' ? orderPaymentStatus(r) !== 'Fully paid' : Number(r.paid || 0) < Number(r.total || 0)));
   const unpaidTotal = unpaidOrders.reduce((sum, r) => sum + Math.max(0, Number(r.total || 0) - Number(r.paid || 0)), 0);
   const unpaidCount = unpaidOrders.length;
 
-  const todayUnpaidOrders = todayOrders.filter(r => orderPaymentStatus(r) !== 'Fully paid');
+  const todayUnpaidOrders = todayOrders.filter(r => (typeof orderPaymentStatus === 'function' ? orderPaymentStatus(r) !== 'Fully paid' : Number(r.paid || 0) < Number(r.total || 0)));
   const todayUnpaidTotal = todayUnpaidOrders.reduce((sum, r) => sum + Math.max(0, Number(r.total || 0) - Number(r.paid || 0)), 0);
 
   return `
     <div class="hub-container">
       <header class="hub-header">
+        <span class="hub-kicker">${esc(greeting)}, ${esc(firstName.toUpperCase())}</span>
         <h1 class="hub-title">${esc(companyTitle)}</h1>
         <div class="hub-meta-row">
-          <span>${esc(branchTitle)}, ${esc(userDisplay)}</span>
+          <span class="hub-status-dot ${branchStatus === 'Closed' ? 'dot-closed' : ''}"></span>
+          <span>${esc(branchTitle)} · ${esc(userDisplay)}</span>
+          <span class="hub-status-divider">|</span>
+          <button type="button" class="hub-edit-link" data-page="settings" title="Edit company and branch profile">✎ Edit profile</button>
         </div>
       </header>
 
       <section class="hub-actions-grid" aria-label="Quick Actions">
-        <div class="hub-action-box" data-page="dashboard" role="button" tabindex="0">
+        <button type="button" class="hub-action-box" data-page="dashboard">
           <div class="hub-box-icon">◫</div>
           <strong class="hub-box-title">View Dashboard</strong>
           <span class="hub-box-desc">View Trends and Performance</span>
-        </div>
+        </button>
 
-        <div class="hub-action-box" data-page="pos" role="button" tabindex="0">
+        <button type="button" class="hub-action-box" data-page="pos">
           <div class="hub-box-icon">🛒</div>
           <strong class="hub-box-title">Make a Sale</strong>
           <span class="hub-box-desc">Process sales and Print Receipts</span>
-        </div>
+        </button>
 
-        <div class="hub-action-box" data-page="inventory" role="button" tabindex="0">
+        <button type="button" class="hub-action-box" data-page="sales">
+          <div class="hub-box-icon">↗</div>
+          <strong class="hub-box-title">Sales &amp; Orders</strong>
+          <span class="hub-box-desc">Manage customer orders and invoices</span>
+        </button>
+
+        <button type="button" class="hub-action-box" data-page="inventory">
           <div class="hub-box-icon">📦</div>
           <strong class="hub-box-title">Manage Inventory</strong>
           <span class="hub-box-desc">Receive, Update and Monitor Stock</span>
-        </div>
+        </button>
 
-        <div class="hub-action-box" data-page="purchases" role="button" tabindex="0">
+        <button type="button" class="hub-action-box" data-page="purchases">
           <div class="hub-box-icon">🚚</div>
           <strong class="hub-box-title">Purchases</strong>
           <span class="hub-box-desc">Manage supplier orders and restock</span>
-        </div>
+        </button>
 
-        <div class="hub-action-box" data-page="reports" role="button" tabindex="0">
+        <button type="button" class="hub-action-box" data-page="reports">
           <div class="hub-box-icon">📊</div>
           <strong class="hub-box-title">Reports</strong>
           <span class="hub-box-desc">Financial statements and insights</span>
-        </div>
+        </button>
 
-        <div class="hub-action-box" data-page="accounting" role="button" tabindex="0">
+        <button type="button" class="hub-action-box" data-page="accounting">
           <div class="hub-box-icon">🧾</div>
           <strong class="hub-box-title">Expense Tracking</strong>
           <span class="hub-box-desc">Track business expenses and outflows</span>
-        </div>
+        </button>
 
-        <div class="hub-action-box" data-page="customers" role="button" tabindex="0">
+        <button type="button" class="hub-action-box" data-page="customers">
           <div class="hub-box-icon">💳</div>
           <strong class="hub-box-title">Payment Tracking</strong>
           <span class="hub-box-desc">Track customer and supplier payments</span>
-        </div>
+        </button>
       </section>
 
       <!-- Bottom Detailed Financial Section -->
@@ -1084,41 +1123,41 @@ function renderHome() {
         </div>
 
         <div class="hub-finance-cards-grid">
-          <div class="hub-fin-card" data-page="sales" role="button" tabindex="0" title="Click to open Sales & Orders">
+          <button type="button" class="hub-fin-card" data-page="sales" title="Click to open Sales & Orders">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Total Revenue</span>
               <span class="hub-fin-pill pill-revenue">${orderCountToday} sale${orderCountToday === 1 ? '' : 's'}</span>
             </div>
             <strong class="hub-fin-card-value font-mono">${money(totalRevenueToday)}</strong>
             <span class="hub-fin-card-footer">Avg ${money(avgSale)} per sale</span>
-          </div>
+          </button>
 
-          <div class="hub-fin-card" data-page="purchases" role="button" tabindex="0" title="Click to open Purchases & Expenses">
+          <button type="button" class="hub-fin-card" data-page="purchases" title="Click to open Purchases & Expenses">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Daily Expenses</span>
               <span class="hub-fin-pill pill-expense">${expenseCountToday} outflow${expenseCountToday === 1 ? '' : 's'}</span>
             </div>
             <strong class="hub-fin-card-value font-mono">${money(totalExpensesToday)}</strong>
             <span class="hub-fin-card-footer">Purchases & business costs</span>
-          </div>
+          </button>
 
-          <div class="hub-fin-card ${netToday >= 0 ? 'card-profit' : 'card-loss'}" data-page="reports" role="button" tabindex="0" title="Click to open Reports">
+          <button type="button" class="hub-fin-card ${netToday >= 0 ? 'card-profit' : 'card-loss'}" data-page="reports" title="Click to open Reports">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Net Daily Result (Revenue − Expenses)</span>
               <span class="hub-fin-pill ${netToday >= 0 ? 'pill-profit' : 'pill-loss'}">${netToday >= 0 ? 'Net Profit' : 'Deficit'}</span>
             </div>
             <strong class="hub-fin-card-value font-mono ${netToday >= 0 ? 'value-profit' : 'value-loss'}">${netToday < 0 ? '− ' : '+ '}${money(Math.abs(netToday))}</strong>
             <span class="hub-fin-card-footer">Daily revenue minus daily expenses</span>
-          </div>
+          </button>
 
-          <div class="hub-fin-card card-unpaid" data-page="sales" role="button" tabindex="0" title="Click to view Unpaid Orders">
+          <button type="button" class="hub-fin-card card-unpaid" data-page="sales" title="Click to view Unpaid Orders">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Unpaid Sales Orders</span>
               <span class="hub-fin-pill pill-unpaid">${unpaidCount} unpaid</span>
             </div>
             <strong class="hub-fin-card-value font-mono value-unpaid">${money(unpaidTotal)}</strong>
             <span class="hub-fin-card-footer">${todayUnpaidOrders.length} from today (${money(todayUnpaidTotal)})</span>
-          </div>
+          </button>
         </div>
 
         <div class="hub-table-wrapper">
@@ -4028,9 +4067,36 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape') clos
 // Global Event Listeners
 document.addEventListener('click', event => {
   const nav = event.target.closest('[data-page]');
-  if (nav) { setPage(nav.dataset.page); return; }
+  if (nav) {
+    event.preventDefault();
+    setPage(nav.dataset.page);
+    return;
+  }
   const action = event.target.closest('[data-action]');
   if (action) handleAction(action);
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    const nav = event.target.closest('[data-page]');
+    if (nav && nav.tagName !== 'BUTTON' && nav.tagName !== 'A' && nav.tagName !== 'INPUT' && nav.tagName !== 'TEXTAREA') {
+      event.preventDefault();
+      setPage(nav.dataset.page);
+    }
+  }
+});
+
+window.addEventListener('popstate', event => {
+  const targetPage = event.state?.erpPage || (location.hash ? location.hash.replace(/^#/, '') : 'home');
+  if (targetPage && pageLabels[targetPage] && targetPage !== page) {
+    if (canViewPage(targetPage)) {
+      page = targetPage;
+      tableQuery = '';
+      selectedProductIds.clear();
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+      render();
+    }
+  }
 });
 
 document.addEventListener('submit', event => {

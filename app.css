@@ -1104,15 +1104,37 @@ body.page-is-home #sidebar-toggle {
   display: none !important;
 }
 
-.hub-container {
+.hub-container,
+.page-wrap > .hub-container {
   max-width: 1040px;
   margin: 0 auto;
   padding: 10px 20px 60px;
   background: var(--canvas);
+  content-visibility: visible !important;
+  contain: none !important;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 1;
 }
 
 :root[data-theme="dark"] .hub-container {
   background: var(--canvas) !important;
+}
+
+button.hub-action-box,
+button.hub-fin-card {
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  pointer-events: auto !important;
+  touch-action: manipulation;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.hub-status-dot.dot-closed {
+  background: #ef4444;
 }
 
 .hub-header {
