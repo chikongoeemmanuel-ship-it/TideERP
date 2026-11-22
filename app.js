@@ -755,7 +755,11 @@ document.addEventListener('click',event=>{
 
 function syncBackButton() {
   const button = document.getElementById('back-button');
-  if (button) button.disabled = pageHistory.length === 0;
+  if (button) {
+    button.disabled = page === 'home';
+    button.setAttribute('title', page === 'home' ? 'Already at Home Hub' : 'Back to Home Hub');
+    button.setAttribute('aria-label', page === 'home' ? 'Already at Home Hub' : 'Back to Home Hub');
+  }
 }
 
 function setPage(next) {
@@ -787,22 +791,10 @@ function refreshPermissionVisibility() {
 }
 
 function navigateBack() {
-  if (!pageHistory.length) {
-    if (page !== 'home') setPage('home');
-    return;
+  pageHistory.length = 0;
+  if (page !== 'home') {
+    setPage('home');
   }
-  let previous = pageHistory.pop();
-  while (previous && !canViewPage(previous) && pageHistory.length) previous = pageHistory.pop();
-  if (!previous || !canViewPage(previous)) {
-    previous = 'home';
-  }
-  if (!previous) return;
-  page = previous;
-  history.pushState({ erpPage: page }, '', `#${page}`);
-  tableQuery = '';
-  selectedProductIds.clear();
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  render();
 }
 
 // Accounting & Entries
