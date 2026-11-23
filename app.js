@@ -380,6 +380,9 @@ function canPerformAction(action,element=null) {
     case 'adjust-stock':case 'bulk-stock-adjust':return require('inventory','adjust-stock');
     case 'bulk-stocktake':case 'open-stocktake':case 'finalize-stocktake':case 'resume-stocktake':case 'pause-stocktake':case 'discard-stocktake-draft':return require('inventory','stocktake');
     case 'view-stocktake-session':return require('inventory','view');
+    case 'revoke-stocktake-session':case 'edit-stocktake-session':case 'delete-stocktake-session':
+    case 'revoke-stock-movement':case 'edit-stock-movement':case 'delete-stock-movement':
+      return isWorkspaceAdministrator();
     case 'export-stocktakes':case 'export-stock-movements':return require('inventory','export');
     case 'export-product-sales':case 'export-product-purchases':case 'export-payment-report':return require('reports','view');
     case 'view-product-sales-history':case 'view-product-purchase-history':return require('reports','view');
@@ -2716,6 +2719,7 @@ function renderInventoryManagement() {
   const totalStockQty = state.products.reduce((sum, p) => sum + Number(p.stock || 0), 0);
   const totalCostValue = state.products.reduce((sum, p) => sum + Number(p.stock || 0) * Number(p.cost || 0), 0);
   const lowStockCount = state.products.filter(p => p.stock <= p.low && p.status !== 'Draft').length;
+  const isAdmin = isWorkspaceAdministrator();
 
   const filteredMovements = movements.filter(m => {
     if (inventoryMovementTypeFilter && inventoryMovementTypeFilter !== '') {
@@ -2762,17 +2766,22 @@ function renderInventoryManagement() {
               <th>Discrepancy Breakdown</th>
               <th>Net Quantity Delta</th>
               <th>Conducted By</th>
-              <th>Worksheet</th>
+              <th>Status</th>
+              <th>Worksheet &amp; Actions</th>
             </tr>
           </thead>
           <tbody>
             ${stocktakes.length ? stocktakes.map(st => {
               const netSign = st.netQtyDelta > 0 ? `+${st.netQtyDelta}` : `${st.netQtyDelta}`;
               const deltaClass = st.netQtyDelta === 0 ? 'stocktake-diff-pill match' : st.netQtyDelta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+              const isRevoked = st.status === 'Revoked';
               return `
-                <tr>
+                <tr class="${isRevoked ? 'row-revoked' : ''}">
                   <td><strong>${dateLabel(st.dateStr || st.date?.slice(0, 10))}</strong><br><small class="muted">${st.date ? new Date(st.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</small></td>
-                  <td><strong>${esc(st.id)}</strong></td>
+                  <td>
+                    <strong>${esc(st.id)}</strong>
+                    ${st.editedAt ? `<br><small class="muted" title="Edited on ${dateLabel(st.editedAt.slice(0, 10))}">Edited</small>` : ''}
+                  </td>
                   <td>${esc(st.reason || 'Physical count')}</td>
                   <td><strong>${st.countedProducts || st.items?.length || 0}</strong> products</td>
                   <td>
@@ -2782,10 +2791,29 @@ function renderInventoryManagement() {
                   </td>
                   <td><span class="${deltaClass}">${netSign} units</span></td>
                   <td>${esc(st.user || 'Administrator')}</td>
-                  <td><button type="button" class="button small" data-action="view-stocktake-session" data-id="${esc(st.id)}">👁 View worksheet</button></td>
+                  <td>
+                    ${isRevoked 
+                      ? `<span class="stocktake-diff-pill shortage" title="Revoked on ${dateLabel(st.revokedAt?.slice(0, 10))}">Revoked</span>` 
+                      : `<span class="stocktake-diff-pill match">Active</span>`}
+                  </td>
+                  <td>
+                    <div style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap">
+                      <button type="button" class="button small" data-action="view-stocktake-session" data-id="${esc(st.id)}" title="View worksheet">👁 Worksheet</button>
+                      ${isAdmin ? `
+                        <details class="order-actions" style="display:inline-block">
+                          <summary aria-label="Admin actions for ${esc(st.id)}" title="Admin options">⋮</summary>
+                          <div class="order-actions-menu">
+                            ${!isRevoked ? `<button type="button" data-action="edit-stocktake-session" data-id="${esc(st.id)}">✎ Edit session counts</button>` : ''}
+                            ${!isRevoked ? `<button type="button" data-action="revoke-stocktake-session" data-id="${esc(st.id)}" style="color:#ef4444">↺ Revoke &amp; Revert Stock</button>` : ''}
+                            <button type="button" data-action="delete-stocktake-session" data-id="${esc(st.id)}" style="color:#dc2626">🗑 Delete session</button>
+                          </div>
+                        </details>
+                      ` : ''}
+                    </div>
+                  </td>
                 </tr>
               `;
-            }).join('') : emptyRow(8, 'No physical stock takes recorded yet. Click "New stock take" to conduct an audit.')}
+            }).join('') : emptyRow(9, 'No physical stock takes recorded yet. Click "New stock take" to conduct an audit.')}
           </tbody>
         </table>
       </div>
@@ -2816,6 +2844,8 @@ function renderInventoryManagement() {
               <th>Variance</th>
               <th>Reason / Memo</th>
               <th>Auditor</th>
+              <th>Status</th>
+              ${isAdmin ? '<th>Actions</th>' : ''}
             </tr>
           </thead>
           <tbody>
@@ -2823,8 +2853,9 @@ function renderInventoryManagement() {
               const delta = Number(m.delta || (m.after - m.before) || 0);
               const sign = delta > 0 ? `+${delta}` : `${delta}`;
               const deltaClass = delta === 0 ? 'stocktake-diff-pill match' : delta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+              const isRevoked = m.status === 'Revoked';
               return `
-                <tr>
+                <tr class="${isRevoked ? 'row-revoked' : ''}">
                   <td><strong>${dateLabel(m.date)}</strong></td>
                   <td><strong>${esc(m.product || m.productId)}</strong></td>
                   <td><small>${esc(m.id)}</small></td>
@@ -2833,9 +2864,23 @@ function renderInventoryManagement() {
                   <td><span class="${deltaClass}">${sign}</span></td>
                   <td>${esc(m.reason || 'Stock adjustment')}</td>
                   <td>${esc(m.user || '—')}</td>
+                  <td>
+                    ${isRevoked 
+                      ? `<span class="stocktake-diff-pill shortage">Revoked</span>` 
+                      : `<span class="stocktake-diff-pill match">Applied</span>`}
+                  </td>
+                  ${isAdmin ? `
+                    <td>
+                      <div style="display:inline-flex;gap:4px;align-items:center">
+                        ${!isRevoked ? `<button type="button" class="button small" data-action="edit-stock-movement" data-id="${esc(m.id)}" title="Edit adjustment">✎ Edit</button>` : ''}
+                        ${!isRevoked && delta !== 0 ? `<button type="button" class="button small danger-action" data-action="revoke-stock-movement" data-id="${esc(m.id)}" title="Revoke adjustment">↺ Revoke</button>` : ''}
+                        <button type="button" class="button small danger-action" data-action="delete-stock-movement" data-id="${esc(m.id)}" title="Delete adjustment">🗑</button>
+                      </div>
+                    </td>
+                  ` : ''}
                 </tr>
               `;
-            }).join('') : emptyRow(8, 'No stock movements recorded.')}
+            }).join('') : emptyRow(isAdmin ? 10 : 9, 'No stock movements recorded.')}
           </tbody>
         </table>
       </div>
@@ -3496,17 +3541,27 @@ function viewStocktakeSession(sessionId) {
   if (!st) { toast('Stock take worksheet record not found'); return; }
 
   const items = st.items || [];
+  const isRevoked = st.status === 'Revoked';
+  const isAdmin = isWorkspaceAdministrator();
+
   const modalContent = `
     <div style="margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+      ${isRevoked ? `
+        <div style="margin-bottom:12px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:6px;font-size:12px">
+          ⚠️ <strong>REVOKED:</strong> This stock take was revoked by an Administrator${st.revokedAt ? ` on ${dateLabel(st.revokedAt.slice(0, 10))}` : ''}. Its stock adjustments were reversed back to their initial balances.
+        </div>
+      ` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:gap:8px">
         <div>
           <h2 style="margin:0 0 4px;font-size:18px">Stock Take Worksheet · ${esc(st.id)}</h2>
           <p class="muted" style="margin:0;font-size:12px">
             Audited on <strong>${dateLabel(st.dateStr || st.date?.slice(0, 10))}</strong> at ${st.date ? new Date(st.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''} · Auditor: <strong>${esc(st.user || 'Administrator')}</strong>
           </p>
           <p style="margin:4px 0 0;font-size:12px"><strong>Reason:</strong> ${esc(st.reason || 'Physical count')}</p>
+          ${st.editedAt ? `<p style="margin:2px 0 0;font-size:11px;color:var(--muted)">✎ Last corrected on ${dateLabel(st.editedAt.slice(0, 10))} by ${esc(st.editedBy || 'Administrator')}</p>` : ''}
         </div>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
+          ${isRevoked ? `<span class="stocktake-diff-pill shortage">REVOKED</span>` : `<span class="stocktake-diff-pill match">ACTIVE</span>`}
           <span class="stocktake-diff-pill match">${st.matchedCount || 0} Match</span>
           <span class="stocktake-diff-pill shortage">${st.shortageCount || 0} Shortage</span>
           <span class="stocktake-diff-pill surplus">${st.surplusCount || 0} Surplus</span>
@@ -3554,8 +3609,13 @@ function viewStocktakeSession(sessionId) {
       </table>
     </div>
 
-    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:space-between">
-      <button type="button" class="button" onclick="window.print()">🖨 Print Worksheet</button>
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="button" onclick="window.print()">🖨 Print Worksheet</button>
+        ${isAdmin && !isRevoked ? `<button type="button" class="button" data-action="edit-stocktake-session" data-id="${esc(st.id)}">✎ Edit counts</button>` : ''}
+        ${isAdmin && !isRevoked ? `<button type="button" class="button danger-action" data-action="revoke-stocktake-session" data-id="${esc(st.id)}" style="color:#ef4444">↺ Revoke &amp; Revert Stock</button>` : ''}
+        ${isAdmin ? `<button type="button" class="button danger-action" data-action="delete-stocktake-session" data-id="${esc(st.id)}" style="color:#dc2626">🗑 Delete session</button>` : ''}
+      </div>
       <button type="button" class="button primary" onclick="document.getElementById('app-modal')?.close()">Close</button>
     </div>
   `;
@@ -3565,6 +3625,125 @@ function viewStocktakeSession(sessionId) {
   if (modal && form) {
     form.innerHTML = modalContent;
     delete form.dataset.dialogKind;
+    modal.showModal();
+  }
+}
+
+function openEditStocktakeModal(sessionId) {
+  if (!isWorkspaceAdministrator()) {
+    toast('Administrator privileges required');
+    return;
+  }
+  const st = (state.stocktakes || []).find(s => s.id === sessionId);
+  if (!st) { toast('Stock take record not found'); return; }
+  if (st.status === 'Revoked') { toast('Revoked stock takes cannot be edited'); return; }
+
+  const items = st.items || [];
+  const modalContent = `
+    <input type="hidden" name="dialog-kind" value="save-edit-stocktake">
+    <div style="margin-bottom:14px">
+      <h2 style="margin:0 0 4px;font-size:18px">Edit Stock Take Session · ${esc(st.id)}</h2>
+      <p class="panel-subtitle" style="margin:0;font-size:12px">Correct counted physical quantities or reasons. Changing quantities will update the current stock accordingly.</p>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <label class="field-label" style="font-size:12px;font-weight:700">Reason / Reference note:
+        <input id="st-edit-reason" name="st-edit-reason" value="${esc(st.reason || '')}" class="text-control" style="margin-top:4px;width:100%" required>
+      </label>
+    </div>
+
+    <div class="table-scroll" style="max-height:360px">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>SKU</th>
+            <th>Initial Stock</th>
+            <th>Counted Physical Stock</th>
+            <th>Expiry Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(item => `
+            <tr>
+              <td><strong>${esc(item.productName)}</strong></td>
+              <td><small>${esc(item.sku || '—')}</small></td>
+              <td>${item.beforeStock}</td>
+              <td style="width:140px">
+                <input type="number" min="0" step="1" class="text-control st-edit-count" data-product-id="${esc(item.productId)}" value="${item.countedStock}" style="width:100px;font-weight:700;padding:4px 8px" required>
+              </td>
+              <td style="width:160px">
+                <input type="date" class="text-control st-edit-exp" data-product-id="${esc(item.productId)}" value="${esc(item.expiryDate || '')}" style="width:140px;padding:4px 8px">
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+      <button type="button" class="button" onclick="document.getElementById('app-modal')?.close()">Cancel</button>
+      <button type="submit" class="button primary">Save Corrections</button>
+    </div>
+  `;
+
+  const modal = document.getElementById('app-modal');
+  const form = document.getElementById('modal-content');
+  if (modal && form) {
+    form.innerHTML = modalContent;
+    form.dataset.dialogKind = 'save-edit-stocktake';
+    form.dataset.recordId = st.id;
+    modal.showModal();
+  }
+}
+
+function openEditStockMovementModal(movementId) {
+  if (!isWorkspaceAdministrator()) {
+    toast('Administrator privileges required');
+    return;
+  }
+  const m = (state.stockMovements || []).find(item => item.id === movementId);
+  if (!m) { toast('Stock movement record not found'); return; }
+  if (m.status === 'Revoked') { toast('Revoked adjustments cannot be edited'); return; }
+
+  const modalContent = `
+    <input type="hidden" name="dialog-kind" value="save-edit-stock-movement">
+    <div style="margin-bottom:14px">
+      <h2 style="margin:0 0 4px;font-size:18px">Edit Stock Adjustment · ${esc(m.id)}</h2>
+      <p class="panel-subtitle" style="margin:0;font-size:12px">Correct the quantity change or memo. Adjusting the delta will apply the difference to the product's on-hand stock.</p>
+    </div>
+
+    <div class="form-grid">
+      <div class="field full">
+        <label>Product</label>
+        <input class="text-control" value="${esc(m.product || m.productId)} (${esc(m.productId || '')})" readonly disabled>
+      </div>
+      <div class="field">
+        <label>Stock before adjustment</label>
+        <input class="text-control" value="${m.before !== undefined ? m.before : '—'}" readonly disabled>
+      </div>
+      <div class="field">
+        <label for="edit-movement-delta">Quantity delta (+ or −)</label>
+        <input type="number" id="edit-movement-delta" name="edit-movement-delta" value="${m.delta || 0}" class="text-control" required>
+      </div>
+      <div class="field full">
+        <label for="edit-movement-reason">Reason / Memo</label>
+        <input type="text" id="edit-movement-reason" name="edit-movement-reason" value="${esc(m.reason || '')}" class="text-control" required>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+      <button type="button" class="button" onclick="document.getElementById('app-modal')?.close()">Cancel</button>
+      <button type="submit" class="button primary">Save Adjustment</button>
+    </div>
+  `;
+
+  const modal = document.getElementById('app-modal');
+  const form = document.getElementById('modal-content');
+  if (modal && form) {
+    form.innerHTML = modalContent;
+    form.dataset.dialogKind = 'save-edit-stock-movement';
+    form.dataset.recordId = m.id;
     modal.showModal();
   }
 }
@@ -5045,6 +5224,97 @@ async function handleDialogSubmit(form) {
     recordActivity('Stock count / adjustment saved',`${product.name} · ${before} → ${next}`,product.id);
     saveState();document.getElementById('app-modal').close();render();toast('Stock count saved');return;
   }
+  if (kind === 'save-edit-stocktake') {
+    if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); return; }
+    const st = (state.stocktakes || []).find(s => s.id === form.dataset.recordId);
+    if (!st) { toast('Stock take record not found'); return; }
+    const newReason = val('st-edit-reason') || st.reason;
+    const countInputs = document.querySelectorAll('.st-edit-count');
+    let modifiedProducts = 0;
+
+    for (const input of countInputs) {
+      const prodId = input.dataset.productId;
+      const item = (st.items || []).find(i => i.productId === prodId);
+      if (!item) continue;
+
+      const oldCount = Number(item.countedStock);
+      const newCount = Math.max(0, Number(input.value || 0));
+      const expInput = document.querySelector(`.st-edit-exp[data-product-id="${prodId}"]`);
+      const newExpiry = expInput ? expInput.value.trim() : (item.expiryDate || '');
+      const countDiff = newCount - oldCount;
+
+      const p = state.products.find(prod => prod.id === prodId);
+      if (countDiff !== 0) {
+        if (p) {
+          const before = p.stock;
+          p.stock = Math.max(0, p.stock + countDiff);
+          state.stockMovements.unshift({
+            id: idFor('STK', state.stockMovements),
+            productId: p.id,
+            product: p.name,
+            date: today(),
+            before,
+            after: p.stock,
+            delta: countDiff,
+            reason: `Stock take correction (${st.id})`,
+            user: currentWorkspaceUser().name
+          });
+        }
+        modifiedProducts++;
+      }
+
+      item.countedStock = newCount;
+      item.delta = newCount - item.beforeStock;
+      item.costImpact = item.delta * Number(p?.cost || 0);
+      item.expiryDate = newExpiry;
+      if (p && newExpiry !== (p.expiryDate || '')) p.expiryDate = newExpiry;
+    }
+
+    st.matchedCount = st.items.filter(i => i.delta === 0).length;
+    st.shortageCount = st.items.filter(i => i.delta < 0).length;
+    st.surplusCount = st.items.filter(i => i.delta > 0).length;
+    st.netQtyDelta = st.items.reduce((sum, i) => sum + i.delta, 0);
+    st.netValueDelta = st.items.reduce((sum, i) => sum + i.costImpact, 0);
+    st.reason = newReason;
+    st.editedAt = new Date().toISOString();
+    st.editedBy = currentWorkspaceUser().name;
+
+    recordActivity('Stock take edited', `Corrected counts in session ${st.id} (${modifiedProducts} products updated)`, st.id);
+    saveState();
+    document.getElementById('app-modal')?.close();
+    render();
+    toast(`Stock take session ${st.id} updated!`);
+    return;
+  }
+  if (kind === 'save-edit-stock-movement') {
+    if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); return; }
+    const m = (state.stockMovements || []).find(item => item.id === form.dataset.recordId);
+    if (!m) { toast('Stock adjustment not found'); return; }
+
+    const newDelta = Number(val('edit-movement-delta')) || 0;
+    const newReason = val('edit-movement-reason') || m.reason;
+    const diff = newDelta - Number(m.delta || 0);
+
+    if (diff !== 0) {
+      const p = state.products.find(prod => prod.id === m.productId || prod.name === m.product);
+      if (p) {
+        p.stock = Math.max(0, p.stock + diff);
+      }
+    }
+
+    m.delta = newDelta;
+    m.after = (m.before !== undefined ? m.before : 0) + newDelta;
+    m.reason = newReason;
+    m.editedAt = new Date().toISOString();
+    m.editedBy = currentWorkspaceUser().name;
+
+    recordActivity('Stock adjustment edited', `Updated adjustment ${m.id} (${m.product})`, m.id);
+    saveState();
+    document.getElementById('app-modal')?.close();
+    render();
+    toast(`Stock adjustment ${m.id} updated!`);
+    return;
+  }
   if (kind === 'new-purchase' || kind === 'edit-purchase') {
     const editing=kind==='edit-purchase';
     const purchase=editing?state.purchases.find(item=>item.id===form.dataset.recordId):null;
@@ -5653,6 +5923,148 @@ function handleAction(button) {
     }
     case 'view-stocktake-session': {
       viewStocktakeSession(button.dataset.id || id);
+      break;
+    }
+    case 'edit-stocktake-session': {
+      openEditStocktakeModal(button.dataset.id || id);
+      break;
+    }
+    case 'revoke-stocktake-session': {
+      if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); break; }
+      const sessionRef = button.dataset.id || id;
+      const st = (state.stocktakes || []).find(s => s.id === sessionRef);
+      if (!st) { toast('Stock take record not found'); break; }
+      if (st.status === 'Revoked') { toast('This stock take session has already been revoked'); break; }
+      if (!confirm(`Are you sure you want to REVOKE stock take session ${st.id}?\n\nThis will reverse all physical count adjustments back to their initial balances and record compensating adjustment entries.`)) break;
+
+      for (const item of st.items || []) {
+        const delta = Number(item.delta || 0);
+        if (delta !== 0) {
+          const p = state.products.find(prod => prod.id === item.productId);
+          if (p) {
+            const before = p.stock;
+            p.stock = Math.max(0, p.stock - delta);
+            state.stockMovements.unshift({
+              id: idFor('STK', state.stockMovements),
+              productId: p.id,
+              product: p.name,
+              date: today(),
+              before,
+              after: p.stock,
+              delta: -delta,
+              reason: `Revoked stock take session ${st.id}`,
+              user: currentWorkspaceUser().name
+            });
+          }
+        }
+      }
+
+      st.status = 'Revoked';
+      st.revokedAt = new Date().toISOString();
+      st.revokedBy = currentWorkspaceUser().name;
+
+      recordActivity('Stock take revoked', `Revoked all quantity adjustments for session ${st.id}`, st.id);
+      saveState();
+      document.getElementById('app-modal')?.close();
+      render();
+      toast(`Stock take session ${st.id} revoked and stock reversed!`);
+      break;
+    }
+    case 'delete-stocktake-session': {
+      if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); break; }
+      const sessionRef = button.dataset.id || id;
+      const st = (state.stocktakes || []).find(s => s.id === sessionRef);
+      if (!st) { toast('Stock take record not found'); break; }
+      if (!confirm(`Permanently delete stock take audit session ${st.id}?`)) break;
+
+      let revertStock = false;
+      if (st.status !== 'Revoked') {
+        revertStock = confirm(`Revert product stock quantities back to their pre-audit balances?\n\nOK = Revert stock balances\nCancel = Keep stock as is and delete record only`);
+      }
+
+      if (revertStock) {
+        for (const item of st.items || []) {
+          const delta = Number(item.delta || 0);
+          if (delta !== 0) {
+            const p = state.products.find(prod => prod.id === item.productId);
+            if (p) p.stock = Math.max(0, p.stock - delta);
+          }
+        }
+      }
+
+      archiveToTrashBin(state, 'Stock take', st, `Stock take ${st.id} (${st.reason})`, currentWorkspaceUser().name);
+      state.stocktakes = state.stocktakes.filter(s => s.id !== st.id);
+      recordActivity('Stock take deleted', `Deleted session ${st.id}${revertStock ? ' (stock reverted)' : ''}`, st.id);
+      saveState();
+      document.getElementById('app-modal')?.close();
+      render();
+      toast(`Stock take session ${st.id} deleted (archived to Trash)`);
+      break;
+    }
+    case 'edit-stock-movement': {
+      openEditStockMovementModal(button.dataset.id || id);
+      break;
+    }
+    case 'revoke-stock-movement': {
+      if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); break; }
+      const moveId = button.dataset.id || id;
+      const m = (state.stockMovements || []).find(item => item.id === moveId);
+      if (!m) { toast('Stock movement record not found'); break; }
+      if (m.status === 'Revoked') { toast('This adjustment has already been revoked'); break; }
+      const delta = Number(m.delta || 0);
+      if (delta === 0) { toast('This movement has no quantity variance to reverse'); break; }
+      if (!confirm(`Revoke stock adjustment ${m.id} for ${m.product}?\n\nThis will reverse the ${delta > 0 ? '+' : ''}${delta} stock change.`)) break;
+
+      const p = state.products.find(prod => prod.id === m.productId || prod.name === m.product);
+      if (p) {
+        const before = p.stock;
+        p.stock = Math.max(0, p.stock - delta);
+        state.stockMovements.unshift({
+          id: idFor('STK', state.stockMovements),
+          productId: p.id,
+          product: p.name,
+          date: today(),
+          before,
+          after: p.stock,
+          delta: -delta,
+          reason: `Revocation of ${m.id} (${m.reason || 'adjustment'})`,
+          user: currentWorkspaceUser().name
+        });
+      }
+
+      m.status = 'Revoked';
+      m.revokedAt = new Date().toISOString();
+      m.revokedBy = currentWorkspaceUser().name;
+
+      recordActivity('Stock adjustment revoked', `Revoked adjustment ${m.id} for ${m.product}`, m.id);
+      saveState();
+      render();
+      toast(`Adjustment ${m.id} revoked and stock reversed!`);
+      break;
+    }
+    case 'delete-stock-movement': {
+      if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); break; }
+      const moveId = button.dataset.id || id;
+      const m = (state.stockMovements || []).find(item => item.id === moveId);
+      if (!m) { toast('Stock movement record not found'); break; }
+      if (!confirm(`Delete adjustment record ${m.id}?`)) break;
+
+      let revertStock = false;
+      if (m.status !== 'Revoked' && Number(m.delta || 0) !== 0) {
+        revertStock = confirm(`Revert the ${Number(m.delta) > 0 ? '+' : ''}${m.delta} stock quantity change for ${m.product}?\n\nOK = Revert stock\nCancel = Keep stock as is and delete record only`);
+      }
+
+      if (revertStock) {
+        const p = state.products.find(prod => prod.id === m.productId || prod.name === m.product);
+        if (p) p.stock = Math.max(0, p.stock - Number(m.delta || 0));
+      }
+
+      archiveToTrashBin(state, 'Stock movement', m, `Adjustment ${m.id} (${m.product})`, currentWorkspaceUser().name);
+      state.stockMovements = state.stockMovements.filter(item => item.id !== m.id);
+      recordActivity('Stock movement deleted', `Deleted adjustment ${m.id}${revertStock ? ' (stock reverted)' : ''}`, m.id);
+      saveState();
+      render();
+      toast(`Adjustment record ${m.id} deleted (archived to Trash)`);
       break;
     }
     case 'view-product-sales-history': {

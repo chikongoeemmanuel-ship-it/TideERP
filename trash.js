@@ -132,6 +132,24 @@ function restoreFromTrash(state, trashId) {
         break;
       }
 
+      case 'Stock take': {
+        if (!Array.isArray(state.stocktakes)) state.stocktakes = [];
+        if (state.stocktakes.some(s => s.id === data.id)) {
+          return { success: false, message: `Stock take ${data.id} is already in active records` };
+        }
+        state.stocktakes.unshift(data);
+        break;
+      }
+
+      case 'Stock movement': {
+        if (!Array.isArray(state.stockMovements)) state.stockMovements = [];
+        if (state.stockMovements.some(m => m.id === data.id)) {
+          return { success: false, message: `Movement ${data.id} already exists` };
+        }
+        state.stockMovements.unshift(data);
+        break;
+      }
+
       default: {
         return { success: false, message: `Unsupported restore type: ${type}` };
       }
