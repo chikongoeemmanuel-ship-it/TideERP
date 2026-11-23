@@ -1824,6 +1824,7 @@ function renderSales() {
               <th>Order</th>
               <th>Customer</th>
               <th>Total</th>
+              <th>Due amount</th>
               <th>Payment method</th>
               <th>Status</th>
               <th>Payment</th>
@@ -1845,6 +1846,20 @@ function salesRows(rows) {
     const hasDiscrepancies = discrepancies.length > 0;
     const unresolvedCount = discrepancies.filter(d => d.status !== 'Resolved').length;
     const method = orderPaymentMethodLabel(order);
+    const total = Number(order.total || 0);
+    const paid = Number(order.paid || 0);
+    const dueAmount = Math.max(0, total - paid);
+    const paymentStatus = orderPaymentStatus(order);
+
+    let dueDisplay = '<span class="due-amount-cell is-paid">—</span>';
+    if (paymentStatus === 'Partially paid' && dueAmount > 0) {
+      dueDisplay = `<strong class="due-amount-cell is-partial" title="Total ${money(total)} · Paid ${money(paid)}">${money(dueAmount)}</strong>`;
+    } else if (paymentStatus === 'Due' && dueAmount > 0) {
+      dueDisplay = `<strong class="due-amount-cell is-due" title="Total ${money(total)} · Unpaid">${money(dueAmount)}</strong>`;
+    } else if (dueAmount > 0 && !draft) {
+      dueDisplay = `<strong class="due-amount-cell is-due">${money(dueAmount)}</strong>`;
+    }
+
     return `
       <tr>
         <td><strong>${dateLabel(order.date)}</strong></td>
@@ -1855,9 +1870,10 @@ function salesRows(rows) {
         </td>
         <td>${esc(order.customer)}</td>
         <td><strong>${money(order.total)}</strong></td>
+        <td>${dueDisplay}</td>
         <td><span class="status-pill ${methodPillClass(order)}">${esc(method)}</span></td>
         <td><span class="status-pill ${statusClass(order.status)}">${esc(order.status)}</span></td>
-        <td><span class="status-pill ${orderPaymentClass(order)}">${orderPaymentStatus(order)}</span></td>
+        <td><span class="status-pill ${orderPaymentClass(order)}">${paymentStatus}</span></td>
         <td>
           <details class="order-actions sales-order-actions">
             <summary aria-label="Actions for ${esc(order.id)}" title="Order actions">⋮</summary>
@@ -1876,7 +1892,7 @@ function salesRows(rows) {
         </td>
       </tr>
     `;
-  }).join('') || emptyRow(8, 'No matching sales or orders');
+  }).join('') || emptyRow(9, 'No matching sales or orders');
 }
 
 function emptyRow(cols, msg) {
@@ -4038,11 +4054,13 @@ function handleAction(button) {
         `;
       }
 
+      const orderDue = Math.max(0, Number(order.total || 0) - Number(order.paid || 0));
+      const orderPayStatus = orderPaymentStatus(order);
       openModal('Order details',`${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,
         `${issuesBox}
         <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
-          <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)} · ${orderPaymentStatus(order)}</strong> · Method: <span class="status-pill ${methodPillClass(order)}" style="font-size:11px;padding:2px 8px">${esc(orderPaymentMethodLabel(order))}</span></p>
+          <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)}${orderDue > 0 ? ` · <span style="color:${orderPayStatus === 'Partially paid' ? '#d97706' : '#dc2626'}">Due ${money(orderDue)}</span>` : ''} · ${orderPayStatus}</strong> · Method: <span class="status-pill ${methodPillClass(order)}" style="font-size:11px;padding:2px 8px">${esc(orderPaymentMethodLabel(order))}</span></p>
           <button class="button small" data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Highlight / Manage Delivery Mistakes</button>
         </div>`,
         'Close'
@@ -4293,8 +4311,13 @@ function handleAction(button) {
     case 'close-modal': document.getElementById('app-modal')?.close(); break;
     case 'export-sales':
       downloadCSV('tide-sales.csv', [
-        ['Date', 'Order', 'Customer', 'Total', 'Payment method', 'Status', 'Payment'],
-        ...salesOrderRows().map(r => [r.date, r.id, r.customer, r.total, orderPaymentMethodLabel(r), r.status, orderPaymentStatus(r)])
+        ['Date', 'Order', 'Customer', 'Total', 'Due amount', 'Payment method', 'Status', 'Payment'],
+        ...salesOrderRows().map(r => {
+          const due = Math.max(0, Number(r.total || 0) - Number(r.paid || 0));
+          const ps = orderPaymentStatus(r);
+          const exportDue = (ps === 'Due' || ps === 'Partially paid' || (due > 0 && r.status !== 'Draft')) ? due : 0;
+          return [r.date, r.id, r.customer, r.total, exportDue, orderPaymentMethodLabel(r), r.status, ps];
+        })
       ]);
       break;
     case 'export-financial-report': {

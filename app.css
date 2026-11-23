@@ -2100,3 +2100,28 @@ button.hub-fin-card {
   color: #67e8f9 !important;
   border-color: #06b6d4 !important;
 }
+
+/* Due Amount in Sales & Orders Table */
+.due-amount-cell {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.due-amount-cell.is-due {
+  color: #dc2626;
+}
+:root[data-theme="dark"] .due-amount-cell.is-due {
+  color: #f87171;
+}
+.due-amount-cell.is-partial {
+  color: #d97706;
+}
+:root[data-theme="dark"] .due-amount-cell.is-partial {
+  color: #fbbf24;
+}
+.due-amount-cell.is-paid {
+  color: #94a3b8;
+  font-weight: 500;
+}
+:root[data-theme="dark"] .due-amount-cell.is-paid {
+  color: #64748b;
+}
