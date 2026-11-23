@@ -378,7 +378,7 @@ function canPerformAction(action,element=null) {
     case 'edit-user-permissions':return isWorkspaceAdministrator()&&require('users','manage-permissions');
     case 'toggle-user':return require('users','activate');
     case 'delete-user':return isWorkspaceAdministrator()&&require('users','delete');
-    case 'new-branch':return false;
+    case 'new-branch':return isWorkspaceAdministrator()||require('branches','manage');
     case 'open-branch':return userCanManageAllBranches()&&require('branches','open');
     case 'select-transaction-product':case 'remove-transaction-product':return element?.dataset?.kind==='purchase'?require('purchases','create'):require('sales','create');
     default:return true;
@@ -1017,6 +1017,27 @@ function renderHome() {
   const branchTitle = activeBranchObj ? activeBranchObj.name : (state.branch || 'Main branch');
   const branchStatus = activeBranchObj && activeBranchObj.status === 'Inactive' ? 'Closed' : 'Active';
 
+  const allHubActions = [
+    { page: 'dashboard', icon: '◫', title: 'View Dashboard', desc: 'View Trends and Performance' },
+    { page: 'pos', icon: '🛒', title: 'Make a Sale', desc: 'Process sales and Print Receipts' },
+    { page: 'sales', icon: '↗', title: 'Sales & Orders', desc: 'Manage customer orders and invoices' },
+    { page: 'inventory', icon: '📦', title: 'Manage Inventory', desc: 'Receive, Update and Monitor Stock' },
+    { page: 'purchases', icon: '🚚', title: 'Purchases', desc: 'Manage supplier orders and restock' },
+    { page: 'reports', icon: '📊', title: 'Reports', desc: 'Financial statements and insights' },
+    { page: 'accounting', icon: '🧾', title: 'Expense Tracking', desc: 'Track business expenses and outflows' },
+    { page: 'customers', icon: '💳', title: 'Payment Tracking', desc: 'Track customer and supplier payments' },
+    { page: 'branches', icon: '🏢', title: 'Branch Management', desc: 'Manage branches and locations' }
+  ];
+
+  // Only display actions authorized to the specific user
+  const visibleActions = allHubActions.filter(action => canViewPage(action.page, user));
+
+  const canViewSales = canViewPage('sales', user);
+  const canViewPurchases = canViewPage('purchases', user);
+  const canViewAccounting = canViewPage('accounting', user);
+  const canViewReports = canViewPage('reports', user);
+  const canViewFinances = canViewSales || canViewPurchases || canViewAccounting || canViewReports || isAdministratorUser(user);
+
   const todayStr = today();
   const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.sales || []);
   const todayOrders = allOrders.filter(r => (r.date || '').slice(0, 10) === todayStr && r.status !== 'Draft' && r.status !== 'Cancelled');
@@ -1047,62 +1068,29 @@ function renderHome() {
         <div class="hub-meta-row">
           <span class="hub-status-dot ${branchStatus === 'Closed' ? 'dot-closed' : ''}"></span>
           <span>${esc(branchTitle)} · ${esc(userDisplay)}</span>
-          <span class="hub-status-divider">|</span>
-          <button type="button" class="hub-edit-link" data-page="settings" title="Edit company and branch profile">✎ Edit profile</button>
+          ${canViewPage('settings', user) ? `
+            <span class="hub-status-divider">|</span>
+            <button type="button" class="hub-edit-link" data-page="settings" title="Edit company and branch profile">✎ Edit profile</button>
+          ` : ''}
         </div>
       </header>
 
       <section class="hub-actions-grid" aria-label="Quick Actions">
-        <button type="button" class="hub-action-box" data-page="dashboard">
-          <div class="hub-box-icon">◫</div>
-          <strong class="hub-box-title">View Dashboard</strong>
-          <span class="hub-box-desc">View Trends and Performance</span>
-        </button>
-
-        <button type="button" class="hub-action-box" data-page="pos">
-          <div class="hub-box-icon">🛒</div>
-          <strong class="hub-box-title">Make a Sale</strong>
-          <span class="hub-box-desc">Process sales and Print Receipts</span>
-        </button>
-
-        <button type="button" class="hub-action-box" data-page="sales">
-          <div class="hub-box-icon">↗</div>
-          <strong class="hub-box-title">Sales &amp; Orders</strong>
-          <span class="hub-box-desc">Manage customer orders and invoices</span>
-        </button>
-
-        <button type="button" class="hub-action-box" data-page="inventory">
-          <div class="hub-box-icon">📦</div>
-          <strong class="hub-box-title">Manage Inventory</strong>
-          <span class="hub-box-desc">Receive, Update and Monitor Stock</span>
-        </button>
-
-        <button type="button" class="hub-action-box" data-page="purchases">
-          <div class="hub-box-icon">🚚</div>
-          <strong class="hub-box-title">Purchases</strong>
-          <span class="hub-box-desc">Manage supplier orders and restock</span>
-        </button>
-
-        <button type="button" class="hub-action-box" data-page="reports">
-          <div class="hub-box-icon">📊</div>
-          <strong class="hub-box-title">Reports</strong>
-          <span class="hub-box-desc">Financial statements and insights</span>
-        </button>
-
-        <button type="button" class="hub-action-box" data-page="accounting">
-          <div class="hub-box-icon">🧾</div>
-          <strong class="hub-box-title">Expense Tracking</strong>
-          <span class="hub-box-desc">Track business expenses and outflows</span>
-        </button>
-
-        <button type="button" class="hub-action-box" data-page="customers">
-          <div class="hub-box-icon">💳</div>
-          <strong class="hub-box-title">Payment Tracking</strong>
-          <span class="hub-box-desc">Track customer and supplier payments</span>
-        </button>
+        ${visibleActions.length ? visibleActions.map(action => `
+          <button type="button" class="hub-action-box" data-page="${esc(action.page)}">
+            <div class="hub-box-icon">${action.icon}</div>
+            <strong class="hub-box-title">${esc(action.title)}</strong>
+            <span class="hub-box-desc">${esc(action.desc)}</span>
+          </button>
+        `).join('') : `
+          <div class="hub-empty-actions inline-note">
+            No quick actions are authorized for your account. Contact an administrator to assign module access.
+          </div>
+        `}
       </section>
 
-      <!-- Bottom Detailed Financial Section -->
+      <!-- Bottom Detailed Financial Section (Only visible if user has financial viewing permissions) -->
+      ${canViewFinances ? `
       <section class="hub-finance-section" aria-label="Daily Financial Summary">
         <div class="hub-finance-header">
           <div class="hub-finance-header-text">
@@ -1115,6 +1103,7 @@ function renderHome() {
         </div>
 
         <div class="hub-finance-cards-grid">
+          ${canViewSales ? `
           <button type="button" class="hub-fin-card" data-page="sales" title="Click to open Sales & Orders">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Total Revenue</span>
@@ -1123,8 +1112,10 @@ function renderHome() {
             <strong class="hub-fin-card-value font-mono">${money(totalRevenueToday)}</strong>
             <span class="hub-fin-card-footer">Avg ${money(avgSale)} per sale</span>
           </button>
+          ` : ''}
 
-          <button type="button" class="hub-fin-card" data-page="purchases" title="Click to open Purchases & Expenses">
+          ${(canViewPurchases || canViewAccounting) ? `
+          <button type="button" class="hub-fin-card" data-page="${canViewPurchases ? 'purchases' : 'accounting'}" title="Click to open Purchases & Expenses">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Daily Expenses</span>
               <span class="hub-fin-pill pill-expense">${expenseCountToday} outflow${expenseCountToday === 1 ? '' : 's'}</span>
@@ -1132,7 +1123,9 @@ function renderHome() {
             <strong class="hub-fin-card-value font-mono">${money(totalExpensesToday)}</strong>
             <span class="hub-fin-card-footer">Purchases & business costs</span>
           </button>
+          ` : ''}
 
+          ${canViewReports ? `
           <button type="button" class="hub-fin-card ${netToday >= 0 ? 'card-profit' : 'card-loss'}" data-page="reports" title="Click to open Reports">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Net Daily Result (Revenue − Expenses)</span>
@@ -1141,7 +1134,9 @@ function renderHome() {
             <strong class="hub-fin-card-value font-mono ${netToday >= 0 ? 'value-profit' : 'value-loss'}">${netToday < 0 ? '− ' : '+ '}${money(Math.abs(netToday))}</strong>
             <span class="hub-fin-card-footer">Daily revenue minus daily expenses</span>
           </button>
+          ` : ''}
 
+          ${canViewSales ? `
           <button type="button" class="hub-fin-card card-unpaid" data-page="sales" title="Click to view Unpaid Orders">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Unpaid Sales Orders</span>
@@ -1150,6 +1145,7 @@ function renderHome() {
             <strong class="hub-fin-card-value font-mono value-unpaid">${money(unpaidTotal)}</strong>
             <span class="hub-fin-card-footer">${todayUnpaidOrders.length} from today (${money(todayUnpaidTotal)})</span>
           </button>
+          ` : ''}
         </div>
 
         <div class="hub-table-wrapper">
@@ -1164,6 +1160,7 @@ function renderHome() {
               </tr>
             </thead>
             <tbody>
+              ${canViewSales ? `
               <tr>
                 <td>
                   <div class="hub-table-cat">
@@ -1176,6 +1173,8 @@ function renderHome() {
                 <td class="text-right font-mono text-positive">+${money(totalRevenueToday)}</td>
                 <td class="text-right"><button type="button" class="hub-table-btn" data-page="sales">View Sales →</button></td>
               </tr>
+              ` : ''}
+              ${(canViewPurchases || canViewAccounting) ? `
               <tr>
                 <td>
                   <div class="hub-table-cat">
@@ -1186,8 +1185,10 @@ function renderHome() {
                 <td class="text-muted">Supplier purchases and operating costs logged today</td>
                 <td class="text-center"><span class="badge">${expenseCountToday} record${expenseCountToday === 1 ? '' : 's'}</span></td>
                 <td class="text-right font-mono text-expense">−${money(totalExpensesToday)}</td>
-                <td class="text-right"><button type="button" class="hub-table-btn" data-page="purchases">View Purchases →</button></td>
+                <td class="text-right"><button type="button" class="hub-table-btn" data-page="${canViewPurchases ? 'purchases' : 'accounting'}">View Purchases →</button></td>
               </tr>
+              ` : ''}
+              ${canViewReports ? `
               <tr class="hub-table-row-highlight">
                 <td>
                   <div class="hub-table-cat">
@@ -1200,6 +1201,8 @@ function renderHome() {
                 <td class="text-right font-mono ${netToday >= 0 ? 'text-positive' : 'text-danger'}"><strong>${netToday < 0 ? '− ' : '+ '}${money(Math.abs(netToday))}</strong></td>
                 <td class="text-right"><button type="button" class="hub-table-btn" data-page="reports">View Reports →</button></td>
               </tr>
+              ` : ''}
+              ${canViewSales ? `
               <tr>
                 <td>
                   <div class="hub-table-cat">
@@ -1212,10 +1215,12 @@ function renderHome() {
                 <td class="text-right font-mono text-warning"><strong>${money(unpaidTotal)}</strong></td>
                 <td class="text-right"><button type="button" class="hub-table-btn" data-page="sales">Manage Orders →</button></td>
               </tr>
+              ` : ''}
             </tbody>
           </table>
         </div>
       </section>
+      ` : ''}
     </div>
   `;
 }
