@@ -1587,8 +1587,8 @@ function completePOS() {
   if (!posCart.length) return;
   const method = document.getElementById('pos-method')?.value || posMethod;
   const customer = document.getElementById('pos-customer')?.value || posCustomer;
-  if (method === 'Credit' && (!customer || customer === 'Walk-in customer')) {
-    toast('Credit sales require a registered customer account');
+  if (method.toLowerCase().includes('credit') && (!customer || customer === 'Walk-in customer')) {
+    toast('Credit sales for due payment require a registered customer account');
     return;
   }
   const total = posCart.reduce((sum, line) => sum + line.qty * line.price, 0);
@@ -1677,13 +1677,52 @@ function resumePOSDraft(id) {
 }
 
 // Sales Orders & Invoice Printing
+const salesPaymentMethods = [
+  'Cash',
+  'Credit (Due payment)',
+  'Mobile payment (M-Pesa)',
+  'Mobile payment (Tigo Pesa)',
+  'Mobile payment (Airtel Money)',
+  'Bank transfer',
+  'Card'
+];
+
+function orderPaymentMethodLabel(order) {
+  let m = order.paymentMethod || order.posMethod || '';
+  if (!m && Number(order.paid || 0) === 0 && order.status !== 'Draft') {
+    return 'Credit (Due payment)';
+  }
+  if (!m) m = 'Cash';
+  const lower = String(m).toLowerCase();
+  if (lower.includes('credit') || lower.includes('due') || lower.includes('on account')) {
+    return 'Credit (Due payment)';
+  }
+  if (lower.includes('m-pesa') || lower.includes('mpesa')) return 'Mobile (M-Pesa)';
+  if (lower.includes('tigo')) return 'Mobile (Tigo Pesa)';
+  if (lower.includes('airtel')) return 'Mobile (Airtel)';
+  if (lower.includes('mobile')) return 'Mobile payment';
+  if (lower.includes('bank') || lower.includes('transfer')) return 'Bank transfer';
+  if (lower.includes('card')) return 'Card';
+  if (lower.includes('cash')) return 'Cash';
+  return m;
+}
+
+function methodPillClass(order) {
+  const m = orderPaymentMethodLabel(order).toLowerCase();
+  if (m.includes('credit') || m.includes('due')) return 'status-method-credit';
+  if (m.includes('mobile') || m.includes('m-pesa') || m.includes('tigo') || m.includes('airtel')) return 'status-method-mobile';
+  if (m.includes('bank') || m.includes('transfer')) return 'status-method-bank';
+  if (m.includes('card')) return 'status-method-card';
+  return 'status-method-cash';
+}
+
 function salesOrderRows() {
   const linked = new Set(state.orders.map(o => o.invoiceId).filter(Boolean));
   const legacyPOS = state.sales.filter(s => s.channel === 'POS' && !linked.has(s.id) && !state.orders.some(o => o.id === s.id)).map(s => ({
     id: s.id, source: 'POS', customer: s.customer, date: s.date, due: s.date,
     total: s.total, items: s.items || [], status: 'Final',
     finalAt: s.date ? new Date(`${s.date}T12:00:00`).toISOString() : new Date().toISOString(),
-    paid: s.status === 'Paid' ? s.total : 0, posMethod: s.method, invoiceId: s.id,
+    paid: s.status === 'Paid' ? s.total : 0, posMethod: s.method, paymentMethod: s.method, invoiceId: s.id,
     discrepancies: s.discrepancies || []
   }));
   return [...state.orders, ...legacyPOS];
@@ -1705,7 +1744,7 @@ function renderSales() {
       if (salesDeliveryFilter === 'issues' && !hasIssues) return false;
       if (salesDeliveryFilter === 'clean' && hasIssues) return false;
     }
-    if (tableQuery && !`${row.id} ${row.customer} ${row.status} ${row.source || 'Order'}`.toLowerCase().includes(tableQuery.toLowerCase())) return false;
+    if (tableQuery && !`${row.id} ${row.customer} ${row.status} ${row.paymentMethod || row.posMethod || ''} ${orderPaymentMethodLabel(row)} ${row.source || 'Order'}`.toLowerCase().includes(tableQuery.toLowerCase())) return false;
     return true;
   });
 
@@ -1770,7 +1809,7 @@ function renderSales() {
     <section class="table-panel">
       <div class="toolbar">
         <div class="toolbar-left">
-          <label class="search-box"><input id="table-search" placeholder="Search order ID, customer, status…" value="${esc(tableQuery)}"></label>
+          <label class="search-box"><input id="table-search" placeholder="Search order ID, customer, status, payment method…" value="${esc(tableQuery)}"></label>
           <span class="muted" style="font-size:11px">${rows.length} of ${allRows.length} orders</span>
         </div>
         <div class="toolbar-right">
@@ -1780,7 +1819,16 @@ function renderSales() {
       <div class="table-scroll">
         <table class="data-table">
           <thead>
-            <tr><th>Order</th><th>Customer</th><th>Order date</th><th>Due date</th><th>Total</th><th>Status</th><th>Payment</th><th>Actions</th></tr>
+            <tr>
+              <th>Order date</th>
+              <th>Order</th>
+              <th>Customer</th>
+              <th>Total</th>
+              <th>Payment method</th>
+              <th>Status</th>
+              <th>Payment</th>
+              <th>Actions</th>
+            </tr>
           </thead>
           <tbody id="sales-table-body">${salesRows(rows)}</tbody>
         </table>
@@ -1796,17 +1844,18 @@ function salesRows(rows) {
     const discrepancies = order.discrepancies || [];
     const hasDiscrepancies = discrepancies.length > 0;
     const unresolvedCount = discrepancies.filter(d => d.status !== 'Resolved').length;
+    const method = orderPaymentMethodLabel(order);
     return `
       <tr>
+        <td><strong>${dateLabel(order.date)}</strong></td>
         <td>
           <strong>${esc(order.id)}</strong>
           <small class="row-source">${pos ? 'POS sale' : 'Sales order'}</small>
           ${hasDiscrepancies ? `<div style="margin-top:4px"><span class="status-pill status-issue" title="${discrepancies.length} delivery mistake(s) reported">${unresolvedCount > 0 ? '⚠️' : '✓'} ${discrepancies.length} Delivery Mistake${discrepancies.length > 1 ? 's' : ''}${unresolvedCount > 0 ? ` (${unresolvedCount} open)` : ''}</span></div>` : ''}
         </td>
         <td>${esc(order.customer)}</td>
-        <td>${dateLabel(order.date)}</td>
-        <td>${dateLabel(order.due || order.date)}</td>
         <td><strong>${money(order.total)}</strong></td>
+        <td><span class="status-pill ${methodPillClass(order)}">${esc(method)}</span></td>
         <td><span class="status-pill ${statusClass(order.status)}">${esc(order.status)}</span></td>
         <td><span class="status-pill ${orderPaymentClass(order)}">${orderPaymentStatus(order)}</span></td>
         <td>
@@ -3029,15 +3078,17 @@ function openOrderForm(existing = null) {
   const products = activeProducts();
   if (!products.length && !existing) { toast('Add an active product to Inventory before creating a sales order'); return; }
   const names = [...new Set([...state.customers.filter(c => c.status !== 'Inactive').map(c => c.name), ...(existing?.customer ? [existing.customer] : [])])];
-  const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${inputField('order-due','Due date','', 'date',false,existing?.due || today())}</div><div class="transaction-lines" id="order-product-lines"></div>${transactionProductPicker('order')}${transactionPaymentSummary('order')}`;
-  openDialog(existing ? 'edit-order' : 'new-order',existing ? `${existing.source === 'POS' ? 'Edit POS sale' : 'Edit sales order'}` : 'Create sales order',existing ? `Update ${esc(existing.id)}. Finalized sales update inventory and the customer account.` : 'Choose the customer and date, then search to add as many products as needed. The order will be saved as a draft.',content,existing ? 'Save changes' : 'Save draft');
+  const initialMethod = existing?.paymentMethod || existing?.posMethod || 'Cash';
+  const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${selectField('order-method','Payment method',salesPaymentMethods,initialMethod)}</div><div class="transaction-lines" id="order-product-lines"></div>${transactionProductPicker('order')}${transactionPaymentSummary('order')}`;
+  openDialog(existing ? 'edit-order' : 'new-order',existing ? `${existing.source === 'POS' ? 'Edit POS sale' : 'Edit sales order'}` : 'Create sales order',existing ? `Update ${esc(existing.id)}. Finalized sales update inventory and the customer account.` : 'Choose the customer, order date, and payment method, then search to add products. The order will be saved as a draft.',content,existing ? 'Save changes' : 'Save draft');
   const form = document.getElementById('modal-content');
   if (existing) {
     form.dataset.recordId = existing.id;
     document.getElementById('order-discount').value = existing.discount || 0;
     document.getElementById('order-additional').value = existing.additionalCharges || 0;
     document.getElementById('order-paid').value = existing.paid || 0;
-    document.getElementById('order-method').value = existing.paymentMethod || existing.posMethod || 'Cash';
+    const methodEl = document.getElementById('order-method');
+    if (methodEl) methodEl.value = initialMethod;
     seedTransactionLineValues('order', existing.items || [], 'unitPrice');
   }
 }
@@ -3065,8 +3116,8 @@ function transactionProductPicker(kind) {
 }
 
 function transactionPaymentSummary(kind) {
-  const methods = kind === 'order' ? ['Cash','M-Pesa','Bank transfer','Card','Credit'] : ['Cash','M-Pesa','Bank transfer','Card'];
-  return `<section class="transaction-summary" data-transaction-summary="${kind}"><h3>Payment summary</h3><div class="transaction-summary-row"><span>Products subtotal</span><strong data-summary-subtotal>${money(0)}</strong></div><div class="form-grid transaction-adjustments">${inputField(`${kind}-discount`,'Discount (fixed amount)','0','number',false,0)}${inputField(`${kind}-additional`,'Additional charges (shipping, etc.)','0','number',false,0)}${inputField(`${kind}-paid`,'Amount paid','0','number',false,0)}${selectField(`${kind}-method`,'Payment method',methods,'Cash')}<div class="field"><label>Payment status</label><div class="transaction-status" data-summary-status>Due</div></div></div><div class="transaction-summary-row"><span>Discount</span><strong data-summary-discount>${money(0)}</strong></div><div class="transaction-summary-row"><span>Additional charges</span><strong data-summary-additional>${money(0)}</strong></div><div class="transaction-summary-row transaction-total"><span>Total to pay</span><strong data-summary-total>${money(0)}</strong></div><div class="transaction-summary-row"><span>Amount paid</span><strong data-summary-paid>${money(0)}</strong></div><div class="transaction-summary-row"><span>Balance due</span><strong data-summary-balance>${money(0)}</strong></div></section>`;
+  const purchaseMethodField = kind === 'purchase' ? selectField('purchase-method','Payment method',['Cash','M-Pesa','Bank transfer','Card'],'Cash') : '';
+  return `<section class="transaction-summary" data-transaction-summary="${kind}"><h3>Payment summary</h3><div class="transaction-summary-row"><span>Products subtotal</span><strong data-summary-subtotal>${money(0)}</strong></div><div class="form-grid transaction-adjustments">${inputField(`${kind}-discount`,'Discount (fixed amount)','0','number',false,0)}${inputField(`${kind}-additional`,'Additional charges (shipping, etc.)','0','number',false,0)}${inputField(`${kind}-paid`,'Amount paid','0','number',false,0)}${purchaseMethodField}<div class="field"><label>Payment status</label><div class="transaction-status" data-summary-status>Due</div></div></div><div class="transaction-summary-row"><span>Discount</span><strong data-summary-discount>${money(0)}</strong></div><div class="transaction-summary-row"><span>Additional charges</span><strong data-summary-additional>${money(0)}</strong></div><div class="transaction-summary-row transaction-total"><span>Total to pay</span><strong data-summary-total>${money(0)}</strong></div><div class="transaction-summary-row"><span>Amount paid</span><strong data-summary-paid>${money(0)}</strong></div><div class="transaction-summary-row"><span>Balance due</span><strong data-summary-balance>${money(0)}</strong></div></section>`;
 }
 
 function transactionLineTotals(kind) {
@@ -3498,6 +3549,10 @@ async function handleDialogSubmit(form) {
     if (totals.discount > totals.subtotal) { toast('Discount cannot be greater than the products subtotal'); return; }
     if (totals.paid > totals.total) { toast('Amount paid cannot be greater than the order total'); return; }
     const customer = val('order-customer'), date = val('order-date') || today(), method = val('order-method') || 'Cash';
+    if (method.toLowerCase().includes('credit') && (!customer || customer === 'Walk-in customer')) {
+      toast('Credit sales for due payment require a registered customer account');
+      return;
+    }
     const creditCustomer=state.customers.find(item=>item.name===customer),creditLimit=Number(creditCustomer?.creditLimit)||0;
     if(creditLimit>0){const previousDue=editing&&order.customer===customer?Math.max(0,(Number(order.total)||0)-(Number(order.paid)||0)):0;const newDue=Math.max(0,totals.total-totals.paid),projectedBalance=(Number(creditCustomer.balance)||0)-previousDue+newDue;if(newDue>previousDue&&projectedBalance>creditLimit){toast(`Credit limit exceeded for ${customer} · available ${money(Math.max(0,creditLimit-(Number(creditCustomer.balance)||0)+previousDue))}`);return;}}
     const wasInvoicedOrder = editing && ['Final', 'Edited', 'Completed'].includes(order.status);
@@ -3519,7 +3574,7 @@ async function handleDialogSubmit(form) {
       }
     }
     const updated = order || { id: idFor('ORD', state.orders), source: 'Order', status: 'Draft' };
-    Object.assign(updated, { customer, date, due: val('order-due') || date, subtotal: totals.subtotal, discount: totals.discount, additionalCharges: totals.additional, total: totals.total, paid: totals.paid, paymentMethod: method, items });
+    Object.assign(updated, { customer, date, due: date, subtotal: totals.subtotal, discount: totals.discount, additionalCharges: totals.additional, total: totals.total, paid: totals.paid, paymentMethod: method, items });
     if (wasInvoicedOrder) updated.status = 'Edited';
     if (updated.source === 'POS') updated.posMethod = method;
     if (finalized) {
@@ -3987,7 +4042,7 @@ function handleAction(button) {
         `${issuesBox}
         <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
-          <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)} · ${orderPaymentStatus(order)}</strong></p>
+          <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)} · ${orderPaymentStatus(order)}</strong> · Method: <span class="status-pill ${methodPillClass(order)}" style="font-size:11px;padding:2px 8px">${esc(orderPaymentMethodLabel(order))}</span></p>
           <button class="button small" data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Highlight / Manage Delivery Mistakes</button>
         </div>`,
         'Close'
@@ -4237,7 +4292,10 @@ function handleAction(button) {
     }
     case 'close-modal': document.getElementById('app-modal')?.close(); break;
     case 'export-sales':
-      downloadCSV('tide-sales.csv', [['Reference', 'Customer', 'Date', 'Method', 'Amount', 'Status'], ...state.sales.map(s => [s.id, s.customer, s.date, s.method, s.total, s.status])]);
+      downloadCSV('tide-sales.csv', [
+        ['Date', 'Order', 'Customer', 'Total', 'Payment method', 'Status', 'Payment'],
+        ...salesOrderRows().map(r => [r.date, r.id, r.customer, r.total, orderPaymentMethodLabel(r), r.status, orderPaymentStatus(r)])
+      ]);
       break;
     case 'export-financial-report': {
       const report=reportPeriodData();
@@ -4643,6 +4701,16 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'pos-customer') posCustomer = event.target.value;
   if (event.target.id === 'pos-method') posMethod = event.target.value;
+  if (event.target.id === 'order-method') {
+    const chosenMethod = event.target.value || '';
+    if (chosenMethod.toLowerCase().includes('credit')) {
+      const paidInput = document.getElementById('order-paid');
+      if (paidInput) {
+        paidInput.value = '0';
+        transactionLineTotals('order');
+      }
+    }
+  }
   if (event.target.id === 'dashboard-range') {
     dashboardRange = event.target.value;
     render();

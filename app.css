@@ -2039,3 +2039,64 @@ button.hub-fin-card {
   background: #143522;
   border-color: #22c55e;
 }
+
+/* Payment Method Pills in Sales & Orders Table */
+.status-pill.status-method-cash {
+  background: #f0fdf4 !important;
+  color: #15803d !important;
+  border: 1px solid #86efac !important;
+  font-weight: 700;
+}
+:root[data-theme="dark"] .status-pill.status-method-cash {
+  background: #143522 !important;
+  color: #86efac !important;
+  border-color: #22c55e !important;
+}
+
+.status-pill.status-method-credit {
+  background: #fffbeb !important;
+  color: #b45309 !important;
+  border: 1px solid #fde68a !important;
+  font-weight: 700;
+}
+:root[data-theme="dark"] .status-pill.status-method-credit {
+  background: #382410 !important;
+  color: #fcd34d !important;
+  border-color: #d97706 !important;
+}
+
+.status-pill.status-method-mobile {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border: 1px solid #bfdbfe !important;
+  font-weight: 700;
+}
+:root[data-theme="dark"] .status-pill.status-method-mobile {
+  background: #172554 !important;
+  color: #93c5fd !important;
+  border-color: #3b82f6 !important;
+}
+
+.status-pill.status-method-bank {
+  background: #f5f3ff !important;
+  color: #6d28d9 !important;
+  border: 1px solid #ddd6fe !important;
+  font-weight: 700;
+}
+:root[data-theme="dark"] .status-pill.status-method-bank {
+  background: #2e1065 !important;
+  color: #c4b5fd !important;
+  border-color: #7c3aed !important;
+}
+
+.status-pill.status-method-card {
+  background: #ecfeff !important;
+  color: #0e7490 !important;
+  border: 1px solid #a5f3fc !important;
+  font-weight: 700;
+}
+:root[data-theme="dark"] .status-pill.status-method-card {
+  background: #164e63 !important;
+  color: #67e8f9 !important;
+  border-color: #06b6d4 !important;
+}
