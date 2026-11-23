@@ -95,6 +95,7 @@ let selectedProductIds = new Set();
 let inventoryExpiryTab = 'attention';
 let salesStatusFilter = '';
 let salesPaymentFilter = '';
+let salesDeliveryFilter = '';
 let salesDateFrom = '';
 let salesDateTo = '';
 let purchaseStatusFilter = '';
@@ -332,6 +333,8 @@ function canPerformAction(action,element=null) {
     case 'print-order-invoice':return require('sales','print');
     case 'add-order-payment':return require('sales','payments');
     case 'manage-order-returns':return require('sales','returns');
+    case 'manage-delivery-issues':return require('sales','view')||require('sales','edit');
+    case 'toggle-discrepancy-status':case 'delete-discrepancy':return require('sales','edit');
     case 'delete-order':return require('sales','delete');
     case 'view-customer-orders':return require('customers','order-history');
     case 'edit-party':return require(type==='Supplier'?'suppliers':'customers','edit');
@@ -1578,7 +1581,8 @@ function salesOrderRows() {
     id: s.id, source: 'POS', customer: s.customer, date: s.date, due: s.date,
     total: s.total, items: s.items || [], status: 'Final',
     finalAt: s.date ? new Date(`${s.date}T12:00:00`).toISOString() : new Date().toISOString(),
-    paid: s.status === 'Paid' ? s.total : 0, posMethod: s.method, invoiceId: s.id
+    paid: s.status === 'Paid' ? s.total : 0, posMethod: s.method, invoiceId: s.id,
+    discrepancies: s.discrepancies || []
   }));
   return [...state.orders, ...legacyPOS];
 }
@@ -1593,6 +1597,11 @@ function renderSales() {
       if (salesPaymentFilter === 'paid' && ps !== 'Fully paid') return false;
       if (salesPaymentFilter === 'partial' && ps !== 'Partially paid') return false;
       if (salesPaymentFilter === 'unpaid' && ps !== 'Due') return false;
+    }
+    if (salesDeliveryFilter) {
+      const hasIssues = Array.isArray(row.discrepancies) && row.discrepancies.length > 0;
+      if (salesDeliveryFilter === 'issues' && !hasIssues) return false;
+      if (salesDeliveryFilter === 'clean' && hasIssues) return false;
     }
     if (tableQuery && !`${row.id} ${row.customer} ${row.status} ${row.source || 'Order'}`.toLowerCase().includes(tableQuery.toLowerCase())) return false;
     return true;
@@ -1609,6 +1618,8 @@ function renderSales() {
   const unpaidTotal = rows
     .filter(r => orderPaymentStatus(r) !== 'Fully paid' && r.status !== 'Draft')
     .reduce((sum, r) => sum + Math.max(0, Number(r.total || 0) - Number(r.paid || 0)), 0);
+
+  const deliveryMistakesCount = rows.filter(r => Array.isArray(r.discrepancies) && r.discrepancies.length > 0).length;
 
   return `
     ${heading('Sales & orders', 'Manage customer orders, fulfillments, invoices, and payments.', `
@@ -1635,8 +1646,15 @@ function renderSales() {
             <option value="unpaid" ${salesPaymentFilter === 'unpaid' ? 'selected' : ''}>Unpaid / Due</option>
           </select>
         </label>
+        <label class="filter-label">Delivery
+          <select class="select-control" id="sales-delivery">
+            <option value="" ${salesDeliveryFilter === '' ? 'selected' : ''}>All deliveries</option>
+            <option value="issues" ${salesDeliveryFilter === 'issues' ? 'selected' : ''}>With delivery mistakes</option>
+            <option value="clean" ${salesDeliveryFilter === 'clean' ? 'selected' : ''}>No mistakes reported</option>
+          </select>
+        </label>
         ${dateRangeFilter('sales', salesDateFrom, salesDateTo)}
-        ${salesStatusFilter || salesPaymentFilter || salesDateFrom || salesDateTo ? `<button class="button small" data-action="clear-sales-filters">✕ Clear filters</button>` : ''}
+        ${salesStatusFilter || salesPaymentFilter || salesDeliveryFilter || salesDateFrom || salesDateTo ? `<button class="button small" data-action="clear-sales-filters">✕ Clear filters</button>` : ''}
       </div>
     </section>
 
@@ -1644,6 +1662,7 @@ function renderSales() {
       <div class="summary-mini"><small>Daily sales</small><strong>${money(dailySalesTotal)}</strong></div>
       <div class="summary-mini"><small>Daily expenses</small><strong>${money(dailyExpenseTotal)}</strong></div>
       <div class="summary-mini"><small>Unpaid invoices</small><strong>${money(unpaidTotal)}</strong></div>
+      <div class="summary-mini ${deliveryMistakesCount > 0 ? 'summary-warning' : ''}"><small>Delivery mistakes</small><strong>${deliveryMistakesCount} order${deliveryMistakesCount === 1 ? '' : 's'}</strong></div>
     </section>
 
     <section class="table-panel">
@@ -1672,9 +1691,16 @@ function salesRows(rows) {
   return rows.map(order => {
     const pos = order.source === 'POS';
     const draft = order.status === 'Draft';
+    const discrepancies = order.discrepancies || [];
+    const hasDiscrepancies = discrepancies.length > 0;
+    const unresolvedCount = discrepancies.filter(d => d.status !== 'Resolved').length;
     return `
       <tr>
-        <td><strong>${esc(order.id)}</strong><small class="row-source">${pos ? 'POS sale' : 'Sales order'}</small></td>
+        <td>
+          <strong>${esc(order.id)}</strong>
+          <small class="row-source">${pos ? 'POS sale' : 'Sales order'}</small>
+          ${hasDiscrepancies ? `<div style="margin-top:4px"><span class="status-pill status-issue" title="${discrepancies.length} delivery mistake(s) reported">${unresolvedCount > 0 ? '⚠️' : '✓'} ${discrepancies.length} Delivery Mistake${discrepancies.length > 1 ? 's' : ''}${unresolvedCount > 0 ? ` (${unresolvedCount} open)` : ''}</span></div>` : ''}
+        </td>
         <td>${esc(order.customer)}</td>
         <td>${dateLabel(order.date)}</td>
         <td>${dateLabel(order.due || order.date)}</td>
@@ -1688,6 +1714,7 @@ function salesRows(rows) {
               ${draft && pos ? `<button data-action="resume-pos" data-id="${esc(order.id)}">Resume POS sale</button>` : ''}
               <button data-action="edit-order" data-id="${esc(order.id)}">Edit ${pos ? 'sale' : 'order'}</button>
               <button data-action="view-order" data-id="${esc(order.id)}">View ${pos ? 'sale' : 'order'}</button>
+              <button data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Delivery mistakes ${hasDiscrepancies ? `(${discrepancies.length})` : ''}</button>
               <button data-action="print-order-invoice" data-id="${esc(order.id)}" ${draft && pos ? 'disabled title="Complete the POS sale first"' : ''}>Print invoice</button>
               <button data-action="add-order-payment" data-id="${esc(order.id)}" ${draft ? 'disabled title="Save the order first"' : ''}>Add payment</button>
               <button data-action="manage-order-returns" data-id="${esc(order.id)}" ${draft ? 'disabled title="Save the order first"' : ''}>Manage returns</button>
@@ -1863,6 +1890,37 @@ function printOrderInvoice(order) {
         <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      ${(order.discrepancies && order.discrepancies.length > 0) ? `
+        <div style="margin-top:20px;padding:12px 14px;border:1.5px solid #dc2626;border-radius:6px;background:#fff5f5">
+          <div style="font-size:11.5px;font-weight:800;color:#991b1b;margin-bottom:6px;display:flex;align-items:center;gap:6px">
+            <span>⚠️ DELIVERY VERIFICATION & DISCREPANCY RECORD</span>
+          </div>
+          <table style="margin-top:6px;font-size:11px">
+            <thead>
+              <tr style="background:#fee2e2;color:#991b1b">
+                <th style="padding:5px 6px">Mistake Type</th>
+                <th style="padding:5px 6px">Item</th>
+                <th style="padding:5px 6px">Ordered</th>
+                <th style="padding:5px 6px">Delivered</th>
+                <th style="padding:5px 6px">Shortage / Diff</th>
+                <th style="padding:5px 6px">Status & Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${order.discrepancies.map(d => `
+                <tr>
+                  <td style="padding:5px 6px;font-weight:bold;color:#b91c1c">${esc(d.typeLabel || d.type)}</td>
+                  <td style="padding:5px 6px">${esc(d.productName || 'Item')}${d.substitutedProduct ? `<br><small style="color:#b91c1c">Sent instead: ${esc(d.substitutedProduct)}</small>` : ''}</td>
+                  <td style="padding:5px 6px">${d.orderedQty ?? '-'}</td>
+                  <td style="padding:5px 6px">${d.deliveredQty ?? '-'}</td>
+                  <td style="padding:5px 6px;font-weight:bold;color:#b91c1c">${d.shortageQty ?? (d.orderedQty != null && d.deliveredQty != null ? (d.orderedQty - d.deliveredQty) : '-')}</td>
+                  <td style="padding:5px 6px"><strong>${esc(d.status || 'Pending')}</strong>${d.note ? ` · ${esc(d.note)}` : ''}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
       <div class="summary-grid">
         <section class="summary-column">
           <h2>Outstanding balances</h2>
@@ -3010,6 +3068,148 @@ function openOrderReturn(id) {
   document.getElementById('modal-content').dataset.recordId=id;
 }
 
+function openOrderDiscrepancies(id) {
+  let order = state.orders.find(o => o.id === id);
+  if (!order) {
+    const sale = state.sales.find(s => s.id === id || s.orderId === id);
+    if (sale) {
+      order = state.orders.find(o => o.id === sale.orderId || o.invoiceId === sale.id) || sale;
+    }
+  }
+  if (!order) return;
+
+  const discrepancies = order.discrepancies || [];
+  const items = order.items || [];
+
+  const productOptions = [
+    `<option value="">-- Select affected product from order --</option>`,
+    ...items.map(l => {
+      const p = state.products.find(x => x.id === l.productId);
+      const name = p?.name || l.product || l.productName || l.productId;
+      return `<option value="${esc(l.productId)}" data-name="${esc(name)}" data-qty="${l.qty}">${esc(name)} (Ordered: ${l.qty})</option>`;
+    }),
+    `<option value="__general__" data-name="General Delivery Issue" data-qty="1">General Delivery / Entire Order</option>`
+  ].join('');
+
+  let existingList = '';
+  if (discrepancies.length > 0) {
+    existingList = `
+      <div style="margin-bottom:18px">
+        <div style="font-size:13px;font-weight:800;color:#0a1e36;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+          <span>⚠️ Logged Delivery Mistakes (${discrepancies.length})</span>
+          <span style="font-size:11px;font-weight:600;color:#64748b">${discrepancies.filter(d => d.status !== 'Resolved').length} open action(s)</span>
+        </div>
+        <div style="display:grid;gap:8px">
+          ${discrepancies.map(d => `
+            <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:10px 12px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+              <div style="flex:1;min-width:210px">
+                <div style="font-weight:700;color:#9a3412;margin-bottom:3px">
+                  ${esc(d.typeLabel || d.type)}: ${esc(d.productName || 'Order item')}
+                </div>
+                <div style="color:#64748b;font-size:11px">
+                  ${d.orderedQty != null && d.deliveredQty != null ? `Ordered: <strong>${d.orderedQty}</strong> | Delivered: <strong>${d.deliveredQty}</strong> | Discrepancy: <strong style="color:#b91c1c">${d.shortageQty ?? (d.orderedQty - d.deliveredQty)}</strong>` : ''}
+                  ${d.substitutedProduct ? ` · Sent instead: <strong>${esc(d.substitutedProduct)}</strong>` : ''}
+                  ${d.note ? `<br>Note: ${esc(d.note)}` : ''}
+                  <div style="font-size:10px;color:#94a3b8;margin-top:2px">Reported by ${esc(d.reportedBy || 'Staff')} on ${dateLabel(d.reportedAt || today())}</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <span class="status-pill ${d.status === 'Resolved' ? 'status-paid' : 'status-issue'}" style="font-size:10px">${esc(d.status || 'Action Required')}</span>
+                <button type="button" class="button small" data-action="toggle-discrepancy-status" data-id="${esc(order.id)}" data-disc-id="${esc(d.id)}" style="font-size:10.5px;padding:3px 7px" title="Toggle status">
+                  ${d.status === 'Resolved' ? 'Reopen' : '✓ Mark resolved'}
+                </button>
+                <button type="button" class="button small danger-action" data-action="delete-discrepancy" data-id="${esc(order.id)}" data-disc-id="${esc(d.id)}" style="font-size:10.5px;padding:3px 7px" title="Delete record">✕</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">
+    `;
+  }
+
+  const formFields = `
+    ${existingList}
+    <div style="font-size:13px;font-weight:800;color:#0a1e36;margin-bottom:10px">
+      ＋ Record New Delivery Mistake / Discrepancy
+    </div>
+    <div class="field">
+      <label for="disc-product">Product from this order</label>
+      <select id="disc-product" name="disc-product" class="select-control" required style="width:100%">
+        ${productOptions}
+      </select>
+    </div>
+    <div class="field">
+      <label for="disc-type">What mistake happened?</label>
+      <select id="disc-type" name="disc-type" class="select-control" required style="width:100%">
+        <option value="missing">1. Forgotten / Missing from Delivery (Product left behind)</option>
+        <option value="wrong-qty">2. Wrong Quantity Delivered (Mismatch between ordered & delivered)</option>
+        <option value="wrong-product">3. Wrong Product Sent Instead (Item substitution / incorrect SKU)</option>
+        <option value="damaged">4. Damaged or Defective on Delivery</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="field">
+        <label for="disc-ordered-qty">Ordered quantity</label>
+        <input type="number" id="disc-ordered-qty" name="disc-ordered-qty" class="input-control" min="0" value="1" required>
+      </div>
+      <div class="field">
+        <label for="disc-delivered-qty">Actual delivered quantity</label>
+        <input type="number" id="disc-delivered-qty" name="disc-delivered-qty" class="input-control" min="0" value="0" required>
+      </div>
+    </div>
+    <div class="field" id="disc-sub-field">
+      <label for="disc-substituted">Wrong product sent instead (optional)</label>
+      <input type="text" id="disc-substituted" name="disc-substituted" class="input-control" placeholder="e.g. Sent 2L Cooking Oil instead of 1L Olive Oil">
+    </div>
+    <div class="field">
+      <label for="disc-status">Resolution / Action required</label>
+      <select id="disc-status" name="disc-status" class="select-control" style="width:100%">
+        <option value="Action Required">Action Required (Pending investigation / driver return)</option>
+        <option value="Replacement Scheduled">Replacement Scheduled (Deliver missing / correct item)</option>
+        <option value="Credit / Refund Due">Credit / Refund Due to Customer</option>
+        <option value="Resolved">Resolved (Customer received or accepted adjustment)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="disc-note">Driver / Delivery note</label>
+      <input type="text" id="disc-note" name="disc-note" class="input-control" placeholder="e.g. Customer noted box was missing at drop-off; driver acknowledged">
+    </div>
+  `;
+
+  openDialog('save-order-discrepancy', 'Delivery Mistakes & Discrepancies', `Order ${esc(order.id)} · ${esc(order.customer)}`, formFields, 'Save mistake record');
+  document.getElementById('modal-content').dataset.recordId = order.id;
+
+  setTimeout(() => {
+    const prodSelect = document.getElementById('disc-product');
+    const orderedQtyInput = document.getElementById('disc-ordered-qty');
+    const deliveredQtyInput = document.getElementById('disc-delivered-qty');
+    const typeSelect = document.getElementById('disc-type');
+
+    if (prodSelect && orderedQtyInput) {
+      prodSelect.addEventListener('change', () => {
+        const opt = prodSelect.selectedOptions[0];
+        if (opt && opt.dataset.qty) {
+          orderedQtyInput.value = opt.dataset.qty;
+          if (typeSelect && typeSelect.value === 'missing') {
+            deliveredQtyInput.value = '0';
+          } else {
+            deliveredQtyInput.value = opt.dataset.qty;
+          }
+        }
+      });
+    }
+
+    if (typeSelect && deliveredQtyInput) {
+      typeSelect.addEventListener('change', () => {
+        if (typeSelect.value === 'missing') {
+          deliveredQtyInput.value = '0';
+        }
+      });
+    }
+  }, 20);
+}
+
 function openPurchaseReturn(id) {
   const purchase=state.purchases.find(p=>p.id===id);if(!purchase)return;
   const lines=(purchase.lines||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return p?`${p.id} · ${p.name}`:l.productId;});
@@ -3031,6 +3231,78 @@ async function handleDialogSubmit(form) {
   const data = new FormData(form);
   const kind = form.dataset.dialogKind;
   const val = key => String(data.get(key) || '').trim();
+
+  if (kind === 'save-order-discrepancy') {
+    const orderId = form.dataset.recordId;
+    let order = state.orders.find(o => o.id === orderId);
+    let sale = state.sales.find(s => s.id === orderId || s.orderId === orderId);
+    if (!order && sale) {
+      order = state.orders.find(o => o.id === sale.orderId || o.invoiceId === sale.id) || sale;
+    }
+    if (!order) return;
+
+    const prodId = val('disc-product');
+    const type = val('disc-type');
+    const orderedQty = Math.max(0, Number(val('disc-ordered-qty')) || 0);
+    const deliveredQty = Math.max(0, Number(val('disc-delivered-qty')) || 0);
+    const shortageQty = Math.max(0, orderedQty - deliveredQty);
+    const substitutedProduct = val('disc-substituted');
+    const status = val('disc-status') || 'Action Required';
+    const note = val('disc-note');
+
+    let prodName = 'Order item';
+    if (prodId === '__general__') {
+      prodName = 'General Delivery Issue';
+    } else {
+      const item = (order.items || []).find(l => l.productId === prodId);
+      const prod = state.products.find(p => p.id === prodId);
+      prodName = prod?.name || item?.product || item?.productName || prodId || 'Product';
+    }
+
+    const typeLabels = {
+      'missing': 'Forgotten / Missing Item',
+      'wrong-qty': 'Wrong Quantity Delivered',
+      'wrong-product': 'Wrong Product Sent',
+      'damaged': 'Damaged on Delivery'
+    };
+
+    if (!Array.isArray(order.discrepancies)) order.discrepancies = [];
+
+    const newDisc = {
+      id: idFor('DISC', order.discrepancies),
+      type,
+      typeLabel: typeLabels[type] || 'Delivery Discrepancy',
+      productId: prodId,
+      productName: prodName,
+      orderedQty,
+      deliveredQty,
+      shortageQty,
+      substitutedProduct,
+      status,
+      note,
+      reportedAt: today(),
+      reportedBy: currentWorkspaceUser().name || 'Staff'
+    };
+
+    order.discrepancies.unshift(newDisc);
+
+    // Sync to linked invoice if exists
+    if (sale && sale !== order) {
+      sale.discrepancies = order.discrepancies;
+    }
+    if (order.invoiceId) {
+      const inv = state.sales.find(s => s.id === order.invoiceId);
+      if (inv) inv.discrepancies = order.discrepancies;
+    }
+
+    recordActivity('Delivery mistake recorded', `${newDisc.typeLabel} on order ${order.id} (${prodName})`, order.id);
+    saveState();
+    document.getElementById('app-modal').close();
+    render();
+    toast(`Delivery mistake logged for order ${order.id}`);
+    return;
+  }
+
   if (kind === 'new-product' || kind === 'edit-product') {
     const id = kind === 'edit-product' ? form.dataset.recordId : (val('product-sku') || idFor('SKU', state.products));
     const product = {
@@ -3462,7 +3734,7 @@ function handleAction(button) {
       break;
     }
     case 'clear-sales-filters':
-      salesStatusFilter = ''; salesPaymentFilter = ''; salesDateFrom = ''; salesDateTo = '';
+      salesStatusFilter = ''; salesPaymentFilter = ''; salesDeliveryFilter = ''; salesDateFrom = ''; salesDateTo = '';
       render();
       break;
     case 'new-product': openProductForm(); break;
@@ -3563,8 +3835,106 @@ function handleAction(button) {
     }
     case 'view-order': {
       const order=salesOrderRows().find(o=>o.id===id);if(!order)break;
-      const lines=(order.items||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return `<tr><td>${esc(p?.name||l.product||l.productName||l.productId)}</td><td>${l.qty}</td><td>${money(l.unitPrice??p?.price??0)}</td><td>${money(l.qty*(l.unitPrice??p?.price??0))}</td></tr>`}).join('');
-      openModal('Order details',`${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div><p><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)} · ${orderPaymentStatus(order)}</strong></p>`,'Close');break;
+      const discrepancies = order.discrepancies || [];
+      const lines=(order.items||[]).map(l=>{
+        const p=state.products.find(x=>x.id===l.productId);
+        const prodName = p?.name||l.product||l.productName||l.productId;
+        const lineIssues = discrepancies.filter(d => d.productId === l.productId || d.productName === prodName);
+        const issueBadges = lineIssues.map(d => `<div class="line-issue-tag">⚠️ ${esc(d.typeLabel || d.type)}: ${esc(d.note || d.status)}</div>`).join('');
+        return `<tr>
+          <td>
+            <strong>${esc(prodName)}</strong>
+            ${issueBadges}
+          </td>
+          <td>${l.qty}</td>
+          <td>${money(l.unitPrice??p?.price??0)}</td>
+          <td>${money(l.qty*(l.unitPrice??p?.price??0))}</td>
+        </tr>`;
+      }).join('');
+
+      let issuesBox = '';
+      if (discrepancies.length > 0) {
+        const issueItems = discrepancies.map(d => `
+          <div style="padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.08);display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+            <div>
+              <strong>${esc(d.typeLabel || d.type)}</strong>: ${esc(d.productName || 'Order item')}
+              <div style="font-size:11.5px;color:#64748b;margin-top:2px">
+                ${d.orderedQty != null && d.deliveredQty != null ? `Ordered: <strong>${d.orderedQty}</strong> · Delivered: <strong>${d.deliveredQty}</strong> · Discrepancy: <strong style="color:#b91c1c">${d.shortageQty ?? (d.orderedQty - d.deliveredQty)}</strong>` : ''}
+                ${d.substitutedProduct ? ` · Sent instead: <em>${esc(d.substitutedProduct)}</em>` : ''}
+                ${d.note ? ` · Note: "${esc(d.note)}"` : ''}
+              </div>
+            </div>
+            <span class="status-pill ${d.status === 'Resolved' ? 'status-paid' : 'status-issue'}" style="white-space:nowrap;font-size:11px">${esc(d.status || 'Action Required')}</span>
+          </div>
+        `).join('');
+        issuesBox = `
+          <div class="order-issues-box">
+            <div class="order-issues-head">
+              <span>⚠️ Reported Delivery Mistakes (${discrepancies.length})</span>
+              <button class="button small" data-action="manage-delivery-issues" data-id="${esc(order.id)}" style="font-size:11px;padding:3px 8px">Manage mistakes</button>
+            </div>
+            ${issueItems}
+          </div>
+        `;
+      }
+
+      openModal('Order details',`${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,
+        `${issuesBox}
+        <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
+          <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)} · ${orderPaymentStatus(order)}</strong></p>
+          <button class="button small" data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Highlight / Manage Delivery Mistakes</button>
+        </div>`,
+        'Close'
+      );
+      break;
+    }
+    case 'manage-delivery-issues': {
+      openOrderDiscrepancies(id);
+      break;
+    }
+    case 'toggle-discrepancy-status': {
+      const orderId = button.dataset.id;
+      const discId = button.dataset.discId;
+      let order = state.orders.find(o => o.id === orderId);
+      if (!order) {
+        const sale = state.sales.find(s => s.id === orderId || s.orderId === orderId);
+        if (sale) order = state.orders.find(o => o.id === sale.orderId || o.invoiceId === sale.id) || sale;
+      }
+      if (!order || !Array.isArray(order.discrepancies)) break;
+      const disc = order.discrepancies.find(d => d.id === discId);
+      if (!disc) break;
+      disc.status = (disc.status === 'Resolved') ? 'Action Required' : 'Resolved';
+
+      if (order.invoiceId) {
+        const inv = state.sales.find(s => s.id === order.invoiceId);
+        if (inv) inv.discrepancies = order.discrepancies;
+      }
+      recordActivity('Delivery mistake status updated', `${disc.typeLabel} on ${order.id} marked ${disc.status}`, order.id);
+      saveState();
+      openOrderDiscrepancies(order.id);
+      toast(`Status updated to "${disc.status}"`);
+      break;
+    }
+    case 'delete-discrepancy': {
+      const orderId = button.dataset.id;
+      const discId = button.dataset.discId;
+      let order = state.orders.find(o => o.id === orderId);
+      if (!order) {
+        const sale = state.sales.find(s => s.id === orderId || s.orderId === orderId);
+        if (sale) order = state.orders.find(o => o.id === sale.orderId || o.invoiceId === sale.id) || sale;
+      }
+      if (!order || !Array.isArray(order.discrepancies)) break;
+      order.discrepancies = order.discrepancies.filter(d => d.id !== discId);
+      if (order.invoiceId) {
+        const inv = state.sales.find(s => s.id === order.invoiceId);
+        if (inv) inv.discrepancies = order.discrepancies;
+      }
+      recordActivity('Delivery mistake removed', `Discrepancy ${discId} removed from ${order.id}`, order.id);
+      saveState();
+      openOrderDiscrepancies(order.id);
+      toast('Delivery mistake record removed');
+      break;
     }
     case 'add-order-payment': openOrderPayment(id);break;
     case 'manage-order-returns': openOrderReturn(id);break;
@@ -4150,6 +4520,7 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'sales-status') { salesStatusFilter = event.target.value; render(); }
   if (event.target.id === 'sales-payment') { salesPaymentFilter = event.target.value; render(); }
+  if (event.target.id === 'sales-delivery') { salesDeliveryFilter = event.target.value; render(); }
   if (event.target.id === 'purchase-status') { purchaseStatusFilter = event.target.value; render(); }
   if(event.target.matches('[data-permission-module]')){
     const group=event.target.closest('fieldset');

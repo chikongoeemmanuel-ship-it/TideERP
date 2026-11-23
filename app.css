@@ -1890,3 +1890,72 @@ button.hub-fin-card {
   color: #fca5a5 !important;
   border-color: #7f2b2b !important;
 }
+
+/* Delivery Mistakes & Discrepancies */
+.status-pill.status-issue {
+  background: #fef2f2 !important;
+  color: #b91c1c !important;
+  border: 1.5px solid #fca5a5 !important;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+:root[data-theme="dark"] .status-pill.status-issue {
+  background: #451a1a !important;
+  color: #fca5a5 !important;
+  border-color: #991b1b !important;
+}
+
+.order-issues-box {
+  background: #fff7ed;
+  border: 1.5px solid #fdba74;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 14px 0;
+  color: #9a3412;
+}
+
+:root[data-theme="dark"] .order-issues-box {
+  background: #2d180b;
+  border-color: #7c2d12;
+  color: #fed7aa;
+}
+
+.order-issues-head {
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.line-issue-tag {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #b91c1c;
+  background: #fee2e2;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-top: 4px;
+  border: 1px solid #fca5a5;
+}
+
+:root[data-theme="dark"] .line-issue-tag {
+  background: #451a1a;
+  color: #fca5a5;
+  border-color: #7f2b2b;
+}
+
+.summary-warning {
+  border-color: #f97316 !important;
+  background: #fff7ed !important;
+}
+
+:root[data-theme="dark"] .summary-warning {
+  background: #2b1709 !important;
+  border-color: #c2410c !important;
+}
