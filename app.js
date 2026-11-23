@@ -2800,12 +2800,13 @@ function renderInventoryManagement() {
                     <div style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap">
                       <button type="button" class="button small" data-action="view-stocktake-session" data-id="${esc(st.id)}" title="View worksheet">👁 Worksheet</button>
                       ${isAdmin ? `
-                        <details class="order-actions" style="display:inline-block">
+                        <details class="order-actions stocktake-actions" style="display:inline-block">
                           <summary aria-label="Admin actions for ${esc(st.id)}" title="Admin options">⋮</summary>
                           <div class="order-actions-menu">
                             ${!isRevoked ? `<button type="button" data-action="edit-stocktake-session" data-id="${esc(st.id)}">✎ Edit session counts</button>` : ''}
-                            ${!isRevoked ? `<button type="button" data-action="revoke-stocktake-session" data-id="${esc(st.id)}" style="color:#ef4444">↺ Revoke &amp; Revert Stock</button>` : ''}
-                            <button type="button" data-action="delete-stocktake-session" data-id="${esc(st.id)}" style="color:#dc2626">🗑 Delete session</button>
+                            ${!isRevoked ? `<button type="button" data-action="revoke-stocktake-session" data-id="${esc(st.id)}" class="danger-action" style="color:#ef4444">↺ Revoke &amp; Revert Stock</button>` : ''}
+                            <span class="menu-divider"></span>
+                            <button type="button" data-action="delete-stocktake-session" data-id="${esc(st.id)}" class="danger-action" style="color:#dc2626">🗑 Delete session</button>
                           </div>
                         </details>
                       ` : ''}
@@ -2871,11 +2872,15 @@ function renderInventoryManagement() {
                   </td>
                   ${isAdmin ? `
                     <td>
-                      <div style="display:inline-flex;gap:4px;align-items:center">
-                        ${!isRevoked ? `<button type="button" class="button small" data-action="edit-stock-movement" data-id="${esc(m.id)}" title="Edit adjustment">✎ Edit</button>` : ''}
-                        ${!isRevoked && delta !== 0 ? `<button type="button" class="button small danger-action" data-action="revoke-stock-movement" data-id="${esc(m.id)}" title="Revoke adjustment">↺ Revoke</button>` : ''}
-                        <button type="button" class="button small danger-action" data-action="delete-stock-movement" data-id="${esc(m.id)}" title="Delete adjustment">🗑</button>
-                      </div>
+                      <details class="order-actions movement-actions" style="display:inline-block">
+                        <summary aria-label="Actions for movement ${esc(m.id)}" title="Movement options">⋮</summary>
+                        <div class="order-actions-menu">
+                          ${!isRevoked ? `<button type="button" data-action="edit-stock-movement" data-id="${esc(m.id)}">✎ Edit adjustment</button>` : ''}
+                          ${!isRevoked && delta !== 0 ? `<button type="button" data-action="revoke-stock-movement" data-id="${esc(m.id)}" class="danger-action" style="color:#ef4444">↺ Revoke &amp; Revert Stock</button>` : ''}
+                          <span class="menu-divider"></span>
+                          <button type="button" data-action="delete-stock-movement" data-id="${esc(m.id)}" class="danger-action" style="color:#dc2626">🗑 Delete movement</button>
+                        </div>
+                      </details>
                     </td>
                   ` : ''}
                 </tr>
@@ -6557,7 +6562,11 @@ function positionOrderActionsPortal() {
   const anchor = orderActionsAnchor.querySelector('summary');
   if (!anchor) { closeOrderActionsPortal(); return; }
   const rect = anchor.getBoundingClientRect();
-  const width = orderActionsAnchor.classList.contains('purchase-actions') ? 220 : orderActionsAnchor.classList.contains('party-actions') ? 210 : orderActionsAnchor.classList.contains('user-actions') ? 210 : 190;
+  if (rect.bottom < -50 || rect.top > window.innerHeight + 50) { closeOrderActionsPortal(); return; }
+  orderActionsPortal.style.width = 'max-content';
+  orderActionsPortal.style.minWidth = '210px';
+  orderActionsPortal.style.maxWidth = 'min(320px, calc(100vw - 20px))';
+  const width = Math.min(orderActionsPortal.offsetWidth || 220, window.innerWidth - 16);
   const height = Math.min(orderActionsPortal.scrollHeight, window.innerHeight - 16);
   let left = rect.right - width;
   if (left < 8) left = rect.left;
@@ -6565,7 +6574,14 @@ function positionOrderActionsPortal() {
   let top = rect.bottom + 4;
   if (top + height > window.innerHeight - 8 && rect.top - height - 4 >= 8) top = rect.top - height - 4;
   top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
-  Object.assign(orderActionsPortal.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, maxHeight: `${window.innerHeight - 16}px` });
+  Object.assign(orderActionsPortal.style, {
+    position: 'fixed',
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    maxHeight: `${window.innerHeight - 16}px`,
+    zIndex: '10000'
+  });
 }
 function openOrderActionsPortal(details) {
   closeOrderActionsPortal();
@@ -6580,9 +6596,10 @@ function openOrderActionsPortal(details) {
   positionOrderActionsPortal();
 }
 document.addEventListener('click', event => {
-  const summary = event.target.closest('.sales-order-actions > summary, .purchase-actions > summary, .party-actions > summary, .user-actions > summary');
+  const summary = event.target.closest('.order-actions > summary');
   if (summary) {
     event.preventDefault();
+    event.stopPropagation();
     const details = summary.closest('details');
     if (orderActionsAnchor === details) closeOrderActionsPortal(); else openOrderActionsPortal(details);
     return;
@@ -6590,7 +6607,7 @@ document.addEventListener('click', event => {
   if (orderActionsPortal && !event.target.closest('.order-actions-portal')) closeOrderActionsPortal();
 }, true);
 document.addEventListener('click', event => {
-  if (event.target.closest('.order-actions-portal [data-action]')) closeOrderActionsPortal();
+  if (event.target.closest('.order-actions-portal [data-action]')) setTimeout(closeOrderActionsPortal, 25);
 }, true);
 window.addEventListener('scroll', positionOrderActionsPortal, true);
 window.addEventListener('resize', positionOrderActionsPortal);
