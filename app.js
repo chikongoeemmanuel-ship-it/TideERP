@@ -66,13 +66,35 @@ const initialState = {
   },
   trashBin: [],
   activityLog: [],
-  stocktakeDraft: null
+  stocktakeDraft: null,
+  stocktakes: [
+    {
+      id: 'STK-REC-101',
+      date: '2026-11-21T10:30:00.000Z',
+      dateStr: '2026-11-21',
+      reason: 'Bi-weekly physical stock take audit',
+      user: 'Administrator',
+      totalProducts: 4,
+      countedProducts: 4,
+      matchedCount: 3,
+      shortageCount: 1,
+      surplusCount: 0,
+      netQtyDelta: -2,
+      netValueDelta: -7000,
+      items: [
+        { productId: 'PRD-1001', productName: 'Azam Wheat Flour 1kg', sku: 'PRD-1001', beforeStock: 45, countedStock: 45, delta: 0, expiryDate: '2027-04-15' },
+        { productId: 'PRD-1002', productName: 'Kilombero Pure Rice 5kg', sku: 'PRD-1002', beforeStock: 30, countedStock: 28, delta: -2, expiryDate: '2027-08-20' },
+        { productId: 'PRD-1003', productName: 'Korie Cooking Oil 1L', sku: 'PRD-1003', beforeStock: 50, countedStock: 50, delta: 0, expiryDate: '2027-11-10' },
+        { productId: 'PRD-1004', productName: 'White Star Sugar 1kg', sku: 'PRD-1004', beforeStock: 60, countedStock: 60, delta: 0, expiryDate: '2027-05-30' }
+      ]
+    }
+  ]
 };
 
 const branchCollections = [
   'products', 'customers', 'suppliers', 'orders', 'sales',
   'returns', 'purchaseReturns', 'purchases', 'entries', 'queue',
-  'stockMovements', 'trashBin', 'stocktakeDraft'
+  'stockMovements', 'trashBin', 'stocktakeDraft', 'stocktakes'
 ];
 
 let state = structuredClone(initialState);
@@ -91,6 +113,11 @@ let posCategory = '';
 let deferredInstall = null;
 let dashboardRange = 'This month';
 let reportPeriod = 'monthly';
+let reportActiveTab = 'overview';
+let reportSearchQuery = '';
+let reportPaymentDirectionFilter = '';
+let reportPaymentMethodFilter = '';
+let inventoryMovementTypeFilter = '';
 let tableQuery = '';
 let selectedProductIds = new Set();
 let inventoryExpiryTab = 'attention';
@@ -318,6 +345,7 @@ function canViewPage(module, user = currentWorkspaceUser()) {
   if (!user || user.role === 'Guest') return false;
   if (isAdministratorUser(user)) return true;
   if (module === 'pos') return userHasPermission('pos', 'open', user) || userHasPermission('pos', 'view', user);
+  if (module === 'products' || module === 'inventory') return userHasPermission('inventory', 'view', user);
   return userHasPermission(module, 'view', user);
 }
 
@@ -350,14 +378,18 @@ function canPerformAction(action,element=null) {
     case 'delete-product':return require('inventory','delete-products');
     case 'bulk-delete-products':return require('inventory','delete-products');
     case 'adjust-stock':case 'bulk-stock-adjust':return require('inventory','adjust-stock');
-    case 'bulk-stocktake':return require('inventory','stocktake');
+    case 'bulk-stocktake':case 'open-stocktake':case 'finalize-stocktake':case 'resume-stocktake':case 'pause-stocktake':case 'discard-stocktake-draft':return require('inventory','stocktake');
+    case 'view-stocktake-session':return require('inventory','view');
+    case 'export-stocktakes':case 'export-stock-movements':return require('inventory','export');
+    case 'export-product-sales':case 'export-product-purchases':case 'export-payment-report':return require('reports','view');
+    case 'view-product-sales-history':case 'view-product-purchase-history':return require('reports','view');
     case 'product-stock-history':return require('inventory','stock-history');
     case 'import-products':return require('inventory','bulk-import');
     case 'download-product-template':return require('inventory','export');
     case 'export-expiry-report':return require('inventory','export');
     case 'write-off-expired':return require('inventory','adjust-stock');
     case 'clearance-discount':case 'edit-expiry':return require('inventory','edit-products');
-    case 'jump-to-expiry':case 'filter-expiry-tab':return true;
+    case 'jump-to-expiry':case 'filter-expiry-tab':case 'set-report-tab':return true;
     case 'new-purchase':return require('purchases','create');
     case 'edit-purchase':return require('purchases','edit');
     case 'receive-purchase':return require('purchases','receive');
@@ -391,7 +423,7 @@ function canPerformAction(action,element=null) {
 
 const pageLabels = {
   home: 'Home', dashboard: 'Overview', sales: 'Sales', pos: 'Point of sale',
-  inventory: 'Inventory', purchases: 'Purchases', customers: 'Customers',
+  products: 'Product Management', inventory: 'Inventory Management', purchases: 'Purchases', customers: 'Customers',
   suppliers: 'Suppliers', users: 'Users', branches: 'Branches',
   accounting: 'Accounting', reports: 'Reports', settings: 'Settings'
 };
@@ -660,6 +692,10 @@ function refreshCompanyLogo() {
 function refreshBranchNav() {
   const nav = document.querySelector('.nav-item[data-page="branches"]');
   if (nav) nav.hidden = !canViewPage('branches');
+  const prodNav = document.querySelector('.nav-item[data-page="products"]');
+  if (prodNav) prodNav.hidden = !canViewPage('products');
+  const invNav = document.querySelector('.nav-item[data-page="inventory"]');
+  if (invNav) invNav.hidden = !canViewPage('inventory');
 }
 
 function refreshBranchSwitcher() {
@@ -1127,9 +1163,10 @@ function renderHome() {
     { page: 'dashboard', icon: '◫', title: 'View Dashboard', desc: 'View Trends and Performance' },
     { page: 'pos', icon: '🛒', title: 'Make a Sale', desc: 'Process sales and Print Receipts' },
     { page: 'sales', icon: '↗', title: 'Sales & Orders', desc: 'Manage customer orders and invoices' },
-    { page: 'inventory', icon: '📦', title: 'Manage Inventory', desc: 'Receive, Update and Monitor Stock' },
+    { page: 'products', icon: '📦', title: 'Product Management', desc: 'Catalog, pricing, SKU, barcodes, and expiry' },
+    { page: 'inventory', icon: '▤', title: 'Inventory Management', desc: 'Physical counts, stock takes, and audit history' },
     { page: 'purchases', icon: '🚚', title: 'Purchases', desc: 'Manage supplier orders and restock' },
-    { page: 'reports', icon: '📊', title: 'Reports', desc: 'Financial statements and insights' },
+    { page: 'reports', icon: '📊', title: 'Reports', desc: 'Product reports, payments, and financial insights' },
     { page: 'accounting', icon: '🧾', title: 'Expense Tracking', desc: 'Track business expenses and outflows' },
     { page: 'customers', icon: '💳', title: 'Payment Tracking', desc: 'Track customer and supplier payments' },
     { page: 'branches', icon: '🏢', title: 'Branch Management', desc: 'Manage branches and locations' }
@@ -2593,8 +2630,8 @@ function handleStocktakeSearch(term) {
   }).join('');
 }
 
-// Inventory
-function renderInventory() {
+// Product Management
+function renderProductManagement() {
   const rows = inventoryRowsFiltered();
   const selectedCount = selectedProductIds.size;
   const today = new Date();
@@ -2619,15 +2656,13 @@ function renderInventory() {
   const expiryAlertsCount = expiredProducts.length + expiring30Products.length;
 
   return `
-    ${heading('Inventory', 'Manage product details, save drafts, track expiration, and control stock movements.', `
+    ${heading('Product Management', 'Manage product catalog, pricing, cost, barcodes, batch expiration, and CSV bulk tools.', `
       <button class="button" data-action="export-inventory">↓ Export CSV</button>
       <button class="button" data-action="import-products">↑ Upload CSV</button>
       <button class="button" data-action="download-product-template">↓ CSV template</button>
-      <button class="button ${state.stocktakeDraft?.items?.length ? 'primary' : ''}" data-action="open-stocktake">${state.stocktakeDraft?.items?.length ? '▶ Resume stock take' : '▤ Stock take'}</button>
       <button class="button primary" data-action="new-product">＋ Add product</button>
     `)}
     <input id="product-csv-file" type="file" accept=".csv,text/csv" hidden>
-    ${renderStocktakeBanner()}
     <section class="summary-strip">
       <div class="summary-mini"><small>Total Products</small><strong>${state.products.length}</strong></div>
       <div class="summary-mini"><small>Stock Value (at cost)</small><strong>${money(state.products.reduce((sum, p) => sum + p.stock * p.cost, 0))}</strong></div>
@@ -2671,15 +2706,145 @@ function renderInventory() {
     </section>
 
     ${renderExpiryManagementSection()}
+  `;
+}
 
-    <section class="panel stock-control-panel">
-      <div class="panel-header"><div><h2 class="panel-title">Stock control</h2><p class="panel-subtitle">Count physical quantities or perform bulk adjustments.</p></div></div>
-      <div class="stock-control-actions">
-        <button class="stock-control-card" data-action="open-stocktake"><span class="quick-icon">▤</span><span><strong>Stock take</strong><small>${state.stocktakeDraft?.items?.length ? `Resume count (${state.stocktakeDraft.items.length} products in progress)` : 'Enter physical counts, verify expiry dates, and directly replace stock'}</small></span><b>›</b></button>
-        <button class="stock-control-card" data-action="bulk-stock-adjust"><span class="quick-icon">±</span><span><strong>Bulk adjustment</strong><small>Set updated stock quantities for multiple products</small></span><b>›</b></button>
+// Inventory Management
+function renderInventoryManagement() {
+  const stocktakes = Array.isArray(state.stocktakes) ? state.stocktakes : [];
+  const movements = Array.isArray(state.stockMovements) ? state.stockMovements : [];
+  const totalStockQty = state.products.reduce((sum, p) => sum + Number(p.stock || 0), 0);
+  const totalCostValue = state.products.reduce((sum, p) => sum + Number(p.stock || 0) * Number(p.cost || 0), 0);
+  const lowStockCount = state.products.filter(p => p.stock <= p.low && p.status !== 'Draft').length;
+
+  const filteredMovements = movements.filter(m => {
+    if (inventoryMovementTypeFilter && inventoryMovementTypeFilter !== '') {
+      if (inventoryMovementTypeFilter === 'stocktake' && !m.id?.startsWith('STK') && !m.reason?.toLowerCase().includes('stock take')) return false;
+      if (inventoryMovementTypeFilter === 'adjustment' && (m.id?.startsWith('STK') || m.reason?.toLowerCase().includes('stock take'))) return false;
+    }
+    if (tableQuery && !`${m.id} ${m.product} ${m.reason} ${m.user || ''}`.toLowerCase().includes(tableQuery.toLowerCase())) return false;
+    return true;
+  });
+
+  return `
+    ${heading('Inventory Management', 'Dedicated physical stock taking, stock count history, variance adjustments, and stock movement ledger.', `
+      <button class="button ${state.stocktakeDraft?.items?.length ? 'primary' : ''}" data-action="open-stocktake">${state.stocktakeDraft?.items?.length ? '▶ Resume stock take' : '▤ New stock take'}</button>
+      <button class="button" data-action="bulk-stock-adjust">± Adjust stock</button>
+      <button class="button" data-action="export-stocktakes">↓ Export stock takes</button>
+      <button class="button" data-action="export-stock-movements">↓ Export stock ledger</button>
+    `)}
+
+    ${renderStocktakeBanner()}
+
+    <section class="summary-strip">
+      <div class="summary-mini"><small>Total On-Hand Quantity</small><strong>${totalStockQty.toLocaleString()} units</strong></div>
+      <div class="summary-mini"><small>Stock Valuation (at cost)</small><strong>${money(totalCostValue)}</strong></div>
+      <div class="summary-mini"><small>Low stock items</small><strong style="color:${lowStockCount > 0 ? '#d97706' : 'var(--ink)'}">${lowStockCount}</strong></div>
+      <div class="summary-mini"><small>Stock Takes Recorded</small><strong>${stocktakes.length} sessions</strong></div>
+    </section>
+
+    <!-- Stock Take Sessions & Historical Audit Ledger -->
+    <section class="table-panel">
+      <div class="table-heading" style="padding:16px 20px 8px">
+        <div>
+          <h2 style="font-size:15px;margin:0 0 4px">Physical Stock Take History &amp; Audits</h2>
+          <p class="panel-subtitle" style="margin:0">Auditable permanent records of all past physical count sessions and reconciliation worksheets.</p>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Session Ref</th>
+              <th>Reason / Reference</th>
+              <th>Counted</th>
+              <th>Discrepancy Breakdown</th>
+              <th>Net Quantity Delta</th>
+              <th>Conducted By</th>
+              <th>Worksheet</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${stocktakes.length ? stocktakes.map(st => {
+              const netSign = st.netQtyDelta > 0 ? `+${st.netQtyDelta}` : `${st.netQtyDelta}`;
+              const deltaClass = st.netQtyDelta === 0 ? 'stocktake-diff-pill match' : st.netQtyDelta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+              return `
+                <tr>
+                  <td><strong>${dateLabel(st.dateStr || st.date?.slice(0, 10))}</strong><br><small class="muted">${st.date ? new Date(st.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</small></td>
+                  <td><strong>${esc(st.id)}</strong></td>
+                  <td>${esc(st.reason || 'Physical count')}</td>
+                  <td><strong>${st.countedProducts || st.items?.length || 0}</strong> products</td>
+                  <td>
+                    <span class="stocktake-diff-pill match" title="Perfect match">${st.matchedCount || 0} Match</span>
+                    ${st.shortageCount ? `<span class="stocktake-diff-pill shortage" title="Missing stock">${st.shortageCount} Short</span>` : ''}
+                    ${st.surplusCount ? `<span class="stocktake-diff-pill surplus" title="Excess stock">${st.surplusCount} Surplus</span>` : ''}
+                  </td>
+                  <td><span class="${deltaClass}">${netSign} units</span></td>
+                  <td>${esc(st.user || 'Administrator')}</td>
+                  <td><button type="button" class="button small" data-action="view-stocktake-session" data-id="${esc(st.id)}">👁 View worksheet</button></td>
+                </tr>
+              `;
+            }).join('') : emptyRow(8, 'No physical stock takes recorded yet. Click "New stock take" to conduct an audit.')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Stock Movements & Adjustments Ledger -->
+    <section class="table-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label class="search-box"><input id="table-search" placeholder="Search product, movement ref, reason…" value="${esc(tableQuery)}"></label>
+          <select class="select-control" id="inventory-movement-filter">
+            <option value="" ${!inventoryMovementTypeFilter ? 'selected' : ''}>All movement types</option>
+            <option value="stocktake" ${inventoryMovementTypeFilter === 'stocktake' ? 'selected' : ''}>Stock takes only</option>
+            <option value="adjustment" ${inventoryMovementTypeFilter === 'adjustment' ? 'selected' : ''}>Manual adjustments only</option>
+          </select>
+        </div>
+        <span class="muted" style="font-size:11px">${filteredMovements.length} of ${movements.length} movements</span>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Product</th>
+              <th>Movement ID</th>
+              <th>Before</th>
+              <th>After</th>
+              <th>Variance</th>
+              <th>Reason / Memo</th>
+              <th>Auditor</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredMovements.length ? filteredMovements.map(m => {
+              const delta = Number(m.delta || (m.after - m.before) || 0);
+              const sign = delta > 0 ? `+${delta}` : `${delta}`;
+              const deltaClass = delta === 0 ? 'stocktake-diff-pill match' : delta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+              return `
+                <tr>
+                  <td><strong>${dateLabel(m.date)}</strong></td>
+                  <td><strong>${esc(m.product || m.productId)}</strong></td>
+                  <td><small>${esc(m.id)}</small></td>
+                  <td>${m.before !== undefined ? m.before : '—'}</td>
+                  <td><strong>${m.after !== undefined ? m.after : '—'}</strong></td>
+                  <td><span class="${deltaClass}">${sign}</span></td>
+                  <td>${esc(m.reason || 'Stock adjustment')}</td>
+                  <td>${esc(m.user || '—')}</td>
+                </tr>
+              `;
+            }).join('') : emptyRow(8, 'No stock movements recorded.')}
+          </tbody>
+        </table>
       </div>
     </section>
   `;
+}
+
+function renderInventory() {
+  return renderInventoryManagement();
 }
 
 function inventoryRowsFiltered() {
@@ -3326,16 +3491,673 @@ function reportPieCard(title,subtitle,entries,centerLabel) {
   return `<article class="report-pie-card"><div><h3>${esc(title)}</h3><p>${esc(subtitle)}</p></div><div class="report-pie-layout"><div class="report-pie" style="background:conic-gradient(${stops||'#e7edf0 0 100%'})"><div><strong>${esc(compactTotal)}</strong><small>${esc(centerLabel)}</small></div></div><div class="report-pie-legend">${legend}</div></div></article>`;
 }
 
-function renderReports() {
-  const data=reportPeriodData();
-  const paymentGroups=new Map();
-  data.sales.forEach(sale=>{const method=sale.method||'Other';paymentGroups.set(method,(paymentGroups.get(method)||0)+(Number(sale.total)||0))});
-  const revenueMix=[['Sales revenue',data.salesTotal],['Purchase orders',data.purchaseTotal]];
-  const receivable=accountOutstandingTotal('Customer');
-  const payable=accountOutstandingTotal('Supplier');
-  const periodLabel=reportPeriod==='weekly'?'Weekly':reportPeriod==='annual'?'Annual':'Monthly';
+function viewStocktakeSession(sessionId) {
+  const st = (state.stocktakes || []).find(s => s.id === sessionId);
+  if (!st) { toast('Stock take worksheet record not found'); return; }
+
+  const items = st.items || [];
+  const modalContent = `
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+        <div>
+          <h2 style="margin:0 0 4px;font-size:18px">Stock Take Worksheet · ${esc(st.id)}</h2>
+          <p class="muted" style="margin:0;font-size:12px">
+            Audited on <strong>${dateLabel(st.dateStr || st.date?.slice(0, 10))}</strong> at ${st.date ? new Date(st.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''} · Auditor: <strong>${esc(st.user || 'Administrator')}</strong>
+          </p>
+          <p style="margin:4px 0 0;font-size:12px"><strong>Reason:</strong> ${esc(st.reason || 'Physical count')}</p>
+        </div>
+        <div style="display:flex;gap:6px">
+          <span class="stocktake-diff-pill match">${st.matchedCount || 0} Match</span>
+          <span class="stocktake-diff-pill shortage">${st.shortageCount || 0} Shortage</span>
+          <span class="stocktake-diff-pill surplus">${st.surplusCount || 0} Surplus</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="summary-strip" style="margin-bottom:16px">
+      <div class="summary-mini"><small>Products Audited</small><strong>${items.length}</strong></div>
+      <div class="summary-mini"><small>Net Quantity Delta</small><strong>${st.netQtyDelta > 0 ? `+${st.netQtyDelta}` : st.netQtyDelta} units</strong></div>
+      <div class="summary-mini"><small>Net Cost Impact</small><strong>${money(st.netValueDelta || 0)}</strong></div>
+    </div>
+
+    <div class="table-scroll" style="max-height:360px">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>SKU</th>
+            <th>Before Stock</th>
+            <th>Counted Stock</th>
+            <th>Variance</th>
+            <th>Cost Impact</th>
+            <th>Expiry Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(item => {
+            const delta = Number(item.delta || 0);
+            const sign = delta > 0 ? `+${delta}` : `${delta}`;
+            const deltaClass = delta === 0 ? 'stocktake-diff-pill match' : delta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+            return `
+              <tr>
+                <td><strong>${esc(item.productName)}</strong></td>
+                <td><small>${esc(item.sku || '—')}</small></td>
+                <td>${item.beforeStock}</td>
+                <td><strong>${item.countedStock}</strong></td>
+                <td><span class="${deltaClass}">${sign}</span></td>
+                <td>${item.costImpact ? money(item.costImpact) : '—'}</td>
+                <td>${item.expiryDate ? `<small>${esc(item.expiryDate)}</small>` : '<span class="muted">—</span>'}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:space-between">
+      <button type="button" class="button" onclick="window.print()">🖨 Print Worksheet</button>
+      <button type="button" class="button primary" onclick="document.getElementById('app-modal')?.close()">Close</button>
+    </div>
+  `;
+
+  const modal = document.getElementById('app-modal');
+  const form = document.getElementById('modal-content');
+  if (modal && form) {
+    form.innerHTML = modalContent;
+    delete form.dataset.dialogKind;
+    modal.showModal();
+  }
+}
+
+function viewProductSalesHistory(productId) {
+  const product = state.products.find(p => p.id === productId);
+  if (!product) { toast('Product not found'); return; }
+
+  const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.orders || []);
+  const validOrders = allOrders.filter(o => o.status !== 'Draft' && o.status !== 'Cancelled');
+  
+  const lines = [];
+  for (const order of validOrders) {
+    const match = (order.items || []).find(line => line.productId === product.id || line.product === product.name);
+    if (match) {
+      lines.push({
+        orderId: order.id,
+        date: order.date,
+        customer: order.customer,
+        qty: Number(match.qty || 0),
+        unitPrice: Number(match.unitPrice || product.price || 0),
+        total: Number(match.qty || 0) * Number(match.unitPrice || product.price || 0),
+        source: order.source || 'Order',
+        paymentStatus: typeof orderPaymentStatus === 'function' ? orderPaymentStatus(order) : 'Paid',
+        orderStatus: order.status
+      });
+    }
+  }
+
+  const totalUnits = lines.reduce((sum, l) => sum + l.qty, 0);
+  const totalRev = lines.reduce((sum, l) => sum + l.total, 0);
+
+  const modalContent = `
+    <div style="margin-bottom:16px">
+      <h2 style="margin:0 0 4px;font-size:18px">Sales History: ${esc(product.name)}</h2>
+      <p class="muted" style="margin:0;font-size:12px">
+        SKU: <strong>${esc(product.sku || product.id)}</strong> · Category: <strong>${esc(product.category || 'General')}</strong> · Current In-Stock: <strong>${product.stock} units</strong>
+      </p>
+    </div>
+
+    <div class="summary-strip" style="margin-bottom:16px">
+      <div class="summary-mini"><small>Total Units Sold</small><strong>${totalUnits.toLocaleString()} units</strong></div>
+      <div class="summary-mini"><small>Total Revenue</small><strong>${money(totalRev)}</strong></div>
+      <div class="summary-mini"><small>Orders Count</small><strong>${lines.length} orders</strong></div>
+    </div>
+
+    <div class="table-scroll" style="max-height:360px">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Order Ref</th>
+            <th>Customer</th>
+            <th>Quantity</th>
+            <th>Unit Price</th>
+            <th>Line Total</th>
+            <th>Payment Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lines.length ? lines.map(line => `
+            <tr>
+              <td><strong>${dateLabel(line.date)}</strong></td>
+              <td><strong>${esc(line.orderId)}</strong><br><small class="muted">${esc(line.source)}</small></td>
+              <td>${esc(line.customer)}</td>
+              <td><strong>${line.qty}</strong></td>
+              <td>${money(line.unitPrice)}</td>
+              <td><strong>${money(line.total)}</strong></td>
+              <td><span class="status-pill status-ready">${esc(line.paymentStatus)}</span></td>
+            </tr>
+          `).join('') : emptyRow(7, 'No sales orders found for this product.')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end">
+      <button type="button" class="button primary" onclick="document.getElementById('app-modal')?.close()">Close</button>
+    </div>
+  `;
+
+  const modal = document.getElementById('app-modal');
+  const form = document.getElementById('modal-content');
+  if (modal && form) {
+    form.innerHTML = modalContent;
+    delete form.dataset.dialogKind;
+    modal.showModal();
+  }
+}
+
+function viewProductPurchaseHistory(productId) {
+  const product = state.products.find(p => p.id === productId);
+  if (!product) { toast('Product not found'); return; }
+
+  const purchases = (state.purchases || []).filter(p => p.status !== 'Draft' && p.status !== 'Cancelled');
+  const lines = [];
+
+  for (const po of purchases) {
+    const match = (po.lines || po.items || []).find(l => l.productId === product.id || l.product === product.name);
+    if (match) {
+      lines.push({
+        poId: po.id,
+        date: po.date,
+        supplier: po.supplier,
+        qty: Number(match.qty || 0),
+        unitCost: Number(match.unitCost || product.cost || 0),
+        total: Number(match.qty || 0) * Number(match.unitCost || product.cost || 0),
+        status: po.status
+      });
+    }
+  }
+
+  const totalUnits = lines.reduce((sum, l) => sum + l.qty, 0);
+  const totalSpend = lines.reduce((sum, l) => sum + l.total, 0);
+
+  const modalContent = `
+    <div style="margin-bottom:16px">
+      <h2 style="margin:0 0 4px;font-size:18px">Purchase Restock History: ${esc(product.name)}</h2>
+      <p class="muted" style="margin:0;font-size:12px">
+        SKU: <strong>${esc(product.sku || product.id)}</strong> · Current In-Stock: <strong>${product.stock} units</strong>
+      </p>
+    </div>
+
+    <div class="summary-strip" style="margin-bottom:16px">
+      <div class="summary-mini"><small>Total Units Restocked</small><strong>${totalUnits.toLocaleString()} units</strong></div>
+      <div class="summary-mini"><small>Total Spend</small><strong>${money(totalSpend)}</strong></div>
+      <div class="summary-mini"><small>Restock Orders</small><strong>${lines.length}</strong></div>
+    </div>
+
+    <div class="table-scroll" style="max-height:360px">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>PO Number</th>
+            <th>Supplier</th>
+            <th>Quantity Ordered</th>
+            <th>Unit Cost</th>
+            <th>Total Cost</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lines.length ? lines.map(line => `
+            <tr>
+              <td><strong>${dateLabel(line.date)}</strong></td>
+              <td><strong>${esc(line.poId)}</strong></td>
+              <td><strong>${esc(line.supplier)}</strong></td>
+              <td><strong>${line.qty}</strong></td>
+              <td>${money(line.unitCost)}</td>
+              <td><strong>${money(line.total)}</strong></td>
+              <td><span class="status-pill status-ready">${esc(line.status)}</span></td>
+            </tr>
+          `).join('') : emptyRow(7, 'No purchase orders found for this product.')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:flex-end">
+      <button type="button" class="button primary" onclick="document.getElementById('app-modal')?.close()">Close</button>
+    </div>
+  `;
+
+  const modal = document.getElementById('app-modal');
+  const form = document.getElementById('modal-content');
+  if (modal && form) {
+    form.innerHTML = modalContent;
+    delete form.dataset.dialogKind;
+    modal.showModal();
+  }
+}
+
+function extractPaymentMethodFromMemo(memo = '') {
+  const m = String(memo).toLowerCase();
+  if (m.includes('m-pesa') || m.includes('mpesa')) return 'Mobile (M-Pesa)';
+  if (m.includes('tigo')) return 'Mobile (Tigo Pesa)';
+  if (m.includes('airtel')) return 'Mobile (Airtel)';
+  if (m.includes('mobile')) return 'Mobile money';
+  if (m.includes('bank') || m.includes('transfer')) return 'Bank transfer';
+  if (m.includes('cheque') || m.includes('check')) return 'Cheque';
+  if (m.includes('card')) return 'Card';
+  if (m.includes('cash')) return 'Cash';
+  return 'Cash';
+}
+
+function collectAllPaymentRecords() {
+  const records = [];
+  const entries = Array.isArray(state.entries) ? state.entries : [];
+  
+  // From ledger entries
+  for (const e of entries) {
+    if (e.sourceType === 'order-payment' || (e.partyType === 'Customer' && e.type === 'Credit' && Number(e.amount) > 0)) {
+      records.push({
+        id: e.id,
+        date: e.date,
+        direction: 'INFLOW',
+        partyType: 'Customer',
+        party: e.party,
+        amount: Number(e.amount) || 0,
+        method: extractPaymentMethodFromMemo(e.memo) || 'Cash',
+        sourceType: e.sourceType || 'Customer payment',
+        sourceId: e.sourceId || e.id,
+        memo: e.memo || 'Customer payment received'
+      });
+    } else if (e.sourceType === 'purchase-payment' || (e.partyType === 'Supplier' && e.type === 'Debit' && Number(e.amount) > 0)) {
+      records.push({
+        id: e.id,
+        date: e.date,
+        direction: 'OUTFLOW',
+        partyType: 'Supplier',
+        party: e.party,
+        amount: Number(e.amount) || 0,
+        method: extractPaymentMethodFromMemo(e.memo) || 'Cash',
+        sourceType: e.sourceType || 'Supplier payment',
+        sourceId: e.sourceId || e.id,
+        memo: e.memo || 'Payment made to supplier'
+      });
+    }
+  }
+
+  // Also include direct POS cash/mobile sales if not in entries
+  const existingSourceIds = new Set(records.map(r => r.sourceId));
+  const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.orders || []);
+  for (const o of allOrders) {
+    if (o.status !== 'Draft' && o.status !== 'Cancelled' && Number(o.paid || 0) > 0 && !existingSourceIds.has(o.id) && !existingSourceIds.has(o.invoiceId)) {
+      records.push({
+        id: `PAY-${o.id}`,
+        date: (o.date || '').slice(0, 10),
+        direction: 'INFLOW',
+        partyType: 'Customer',
+        party: o.customer || 'Walk-in customer',
+        amount: Number(o.paid || o.total || 0),
+        method: orderPaymentMethodLabel(o) || 'Cash',
+        sourceType: o.source === 'POS' ? 'POS sale' : 'Sales order',
+        sourceId: o.id,
+        memo: `Direct payment collected for ${o.id}`
+      });
+    }
+  }
+
+  return records.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+
+function renderProductSalesReport() {
+  const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.orders || []);
+  const validOrders = allOrders.filter(o => o.status !== 'Draft' && o.status !== 'Cancelled');
+  
+  const productStats = state.products.map(product => {
+    let unitsSold = 0;
+    let revenue = 0;
+    let orderCount = 0;
+    for (const order of validOrders) {
+      const items = order.items || [];
+      const matchLines = items.filter(line => line.productId === product.id || line.product === product.name);
+      if (matchLines.length > 0) {
+        orderCount++;
+        for (const line of matchLines) {
+          const qty = Number(line.qty || 0);
+          const price = Number(line.unitPrice || product.price || 0);
+          unitsSold += qty;
+          revenue += qty * price;
+        }
+      }
+    }
+    const cogs = unitsSold * Number(product.cost || 0);
+    const grossProfit = revenue - cogs;
+    const margin = revenue > 0 ? ((grossProfit / revenue) * 100).toFixed(1) : '0.0';
+    const avgPrice = unitsSold > 0 ? Math.round(revenue / unitsSold) : product.price;
+
+    return {
+      product,
+      unitsSold,
+      revenue,
+      cogs,
+      grossProfit,
+      margin,
+      avgPrice,
+      orderCount
+    };
+  });
+
+  const query = reportSearchQuery.toLowerCase();
+  const filtered = productStats.filter(stat => {
+    if (query && !`${stat.product.id} ${stat.product.name} ${stat.product.category || ''} ${stat.product.sku || ''}`.toLowerCase().includes(query)) return false;
+    return true;
+  });
+
+  const totalUnits = productStats.reduce((sum, s) => sum + s.unitsSold, 0);
+  const totalRevenue = productStats.reduce((sum, s) => sum + s.revenue, 0);
+  const totalProfit = productStats.reduce((sum, s) => sum + s.grossProfit, 0);
+  const activeSellers = productStats.filter(s => s.unitsSold > 0).length;
+
   return `
-    ${heading('Financial Reports','Visual financial summaries with weekly, monthly, and annual reporting periods.',`<button class="button" data-action="export-financial-report">↓ Export ${periodLabel.toLowerCase()} report</button>`)}
+    <section class="summary-strip">
+      <div class="summary-mini"><small>Total Units Sold</small><strong>${totalUnits.toLocaleString()} units</strong></div>
+      <div class="summary-mini"><small>Total Product Revenue</small><strong>${money(totalRevenue)}</strong></div>
+      <div class="summary-mini"><small>Total Gross Profit</small><strong style="color:#16a34a">${money(totalProfit)}</strong></div>
+      <div class="summary-mini"><small>Products with Sales</small><strong>${activeSellers} of ${state.products.length}</strong></div>
+    </section>
+
+    <section class="table-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label class="search-box"><input id="report-search" placeholder="Search product name, SKU, category…" value="${esc(reportSearchQuery)}"></label>
+        </div>
+        <span class="muted" style="font-size:11px">${filtered.length} of ${productStats.length} products</span>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Category</th>
+              <th>In Stock</th>
+              <th>Units Sold</th>
+              <th>Avg Sell Price</th>
+              <th>Total Revenue</th>
+              <th>COGS</th>
+              <th>Gross Profit</th>
+              <th>Margin</th>
+              <th>Drilldown</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.length ? filtered.map(stat => `
+              <tr>
+                <td><strong>${esc(stat.product.name)}</strong><br><small class="muted">SKU: ${esc(stat.product.sku || stat.product.id)}</small></td>
+                <td><small>${esc(stat.product.category || 'General')}</small></td>
+                <td><strong>${stat.product.stock}</strong></td>
+                <td><strong style="color:${stat.unitsSold > 0 ? '#16a34a' : 'inherit'}">${stat.unitsSold.toLocaleString()}</strong></td>
+                <td>${money(stat.avgPrice)}</td>
+                <td><strong>${money(stat.revenue)}</strong></td>
+                <td>${money(stat.cogs)}</td>
+                <td><strong style="color:${stat.grossProfit >= 0 ? '#16a34a' : '#ef233c'}">${money(stat.grossProfit)}</strong></td>
+                <td><span class="stocktake-diff-pill ${Number(stat.margin) >= 20 ? 'match' : Number(stat.margin) > 0 ? 'surplus' : 'shortage'}">${stat.margin}%</span></td>
+                <td>
+                  <button type="button" class="button small" data-action="view-product-sales-history" data-id="${esc(stat.product.id)}">
+                    📋 Orders (${stat.orderCount})
+                  </button>
+                </td>
+              </tr>
+            `).join('') : emptyRow(10, 'No products found matching search.')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderProductPurchasesReport() {
+  const purchases = (state.purchases || []).filter(p => p.status !== 'Draft' && p.status !== 'Cancelled');
+
+  const productStats = state.products.map(product => {
+    let unitsPurchased = 0;
+    let spend = 0;
+    let poCount = 0;
+    const suppliers = new Set();
+
+    for (const po of purchases) {
+      const lines = po.lines || po.items || [];
+      const matchLines = lines.filter(line => line.productId === product.id || line.product === product.name);
+      if (matchLines.length > 0) {
+        poCount++;
+        if (po.supplier) suppliers.add(po.supplier);
+        for (const line of matchLines) {
+          const qty = Number(line.qty || 0);
+          const cost = Number(line.unitCost || product.cost || 0);
+          unitsPurchased += qty;
+          spend += qty * cost;
+        }
+      }
+    }
+    const avgCost = unitsPurchased > 0 ? Math.round(spend / unitsPurchased) : product.cost;
+
+    return {
+      product,
+      unitsPurchased,
+      spend,
+      poCount,
+      suppliers: [...suppliers],
+      avgCost
+    };
+  });
+
+  const query = reportSearchQuery.toLowerCase();
+  const filtered = productStats.filter(stat => {
+    if (query && !`${stat.product.id} ${stat.product.name} ${stat.suppliers.join(' ')} ${stat.product.category || ''}`.toLowerCase().includes(query)) return false;
+    return true;
+  });
+
+  const totalRestocked = productStats.reduce((sum, s) => sum + s.unitsPurchased, 0);
+  const totalSpend = productStats.reduce((sum, s) => sum + s.spend, 0);
+  const activeRestocked = productStats.filter(s => s.unitsPurchased > 0).length;
+
+  return `
+    <section class="summary-strip">
+      <div class="summary-mini"><small>Total Units Restocked</small><strong>${totalRestocked.toLocaleString()} units</strong></div>
+      <div class="summary-mini"><small>Total Restock Spend</small><strong>${money(totalSpend)}</strong></div>
+      <div class="summary-mini"><small>Products Restocked</small><strong>${activeRestocked} of ${state.products.length}</strong></div>
+      <div class="summary-mini"><small>Total Purchase Orders</small><strong>${purchases.length}</strong></div>
+    </section>
+
+    <section class="table-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label class="search-box"><input id="report-search" placeholder="Search product name, SKU, supplier…" value="${esc(reportSearchQuery)}"></label>
+        </div>
+        <span class="muted" style="font-size:11px">${filtered.length} of ${productStats.length} products</span>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Current Stock</th>
+              <th>Units Purchased</th>
+              <th>Avg Purchase Cost</th>
+              <th>Total Spend</th>
+              <th>Suppliers</th>
+              <th>Drilldown</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.length ? filtered.map(stat => `
+              <tr>
+                <td><strong>${esc(stat.product.name)}</strong><br><small class="muted">SKU: ${esc(stat.product.sku || stat.product.id)}</small></td>
+                <td><strong>${stat.product.stock}</strong></td>
+                <td><strong style="color:${stat.unitsPurchased > 0 ? '#0077f6' : 'inherit'}">${stat.unitsPurchased.toLocaleString()}</strong></td>
+                <td>${money(stat.avgCost)}</td>
+                <td><strong>${money(stat.spend)}</strong></td>
+                <td>${stat.suppliers.length ? stat.suppliers.map(s => `<span class="status-pill status-ready" style="font-size:10px">${esc(s)}</span>`).join(' ') : '<span class="muted">—</span>'}</td>
+                <td>
+                  <button type="button" class="button small" data-action="view-product-purchase-history" data-id="${esc(stat.product.id)}">
+                    📦 Orders (${stat.poCount})
+                  </button>
+                </td>
+              </tr>
+            `).join('') : emptyRow(7, 'No products found matching search.')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderPaymentReport() {
+  const records = collectAllPaymentRecords();
+  const query = reportSearchQuery.toLowerCase();
+
+  const filtered = records.filter(r => {
+    if (reportPaymentDirectionFilter === 'inflow' && r.direction !== 'INFLOW') return false;
+    if (reportPaymentDirectionFilter === 'outflow' && r.direction !== 'OUTFLOW') return false;
+    if (reportPaymentMethodFilter && !r.method.toLowerCase().includes(reportPaymentMethodFilter.toLowerCase())) return false;
+    if (query && !`${r.party} ${r.sourceId} ${r.memo} ${r.method}`.toLowerCase().includes(query)) return false;
+    return true;
+  });
+
+  const totalInflows = records.filter(r => r.direction === 'INFLOW').reduce((sum, r) => sum + r.amount, 0);
+  const totalOutflows = records.filter(r => r.direction === 'OUTFLOW').reduce((sum, r) => sum + r.amount, 0);
+  const netCash = totalInflows - totalOutflows;
+
+  return `
+    <section class="summary-strip">
+      <div class="summary-mini"><small>Total Inflows (Received from Customers)</small><strong style="color:#16a34a">${money(totalInflows)}</strong></div>
+      <div class="summary-mini"><small>Total Outflows (Paid to Suppliers)</small><strong style="color:#ef233c">${money(totalOutflows)}</strong></div>
+      <div class="summary-mini"><small>Net Cash Movement</small><strong style="color:${netCash >= 0 ? '#16a34a' : '#ef233c'}">${netCash < 0 ? '− ' : ''}${money(Math.abs(netCash))}</strong></div>
+      <div class="summary-mini"><small>Total Transactions</small><strong>${records.length}</strong></div>
+    </section>
+
+    <section class="table-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label class="search-box"><input id="report-search" placeholder="Search customer, supplier, reference, memo…" value="${esc(reportSearchQuery)}"></label>
+          <select class="select-control" id="report-payment-direction">
+            <option value="" ${!reportPaymentDirectionFilter ? 'selected' : ''}>All Payments (In &amp; Out)</option>
+            <option value="inflow" ${reportPaymentDirectionFilter === 'inflow' ? 'selected' : ''}>↓ Received from Customers</option>
+            <option value="outflow" ${reportPaymentDirectionFilter === 'outflow' ? 'selected' : ''}>↑ Paid to Suppliers</option>
+          </select>
+          <select class="select-control" id="report-payment-method">
+            <option value="" ${!reportPaymentMethodFilter ? 'selected' : ''}>All Methods</option>
+            <option value="cash" ${reportPaymentMethodFilter === 'cash' ? 'selected' : ''}>Cash</option>
+            <option value="mobile" ${reportPaymentMethodFilter === 'mobile' ? 'selected' : ''}>Mobile Money</option>
+            <option value="bank" ${reportPaymentMethodFilter === 'bank' ? 'selected' : ''}>Bank Transfer</option>
+            <option value="card" ${reportPaymentMethodFilter === 'card' ? 'selected' : ''}>Card</option>
+          </select>
+        </div>
+        <span class="muted" style="font-size:11px">${filtered.length} of ${records.length} payments</span>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Direction</th>
+              <th>Party ("Made to" / "Received from")</th>
+              <th>Amount</th>
+              <th>Payment Method</th>
+              <th>Reference / Source</th>
+              <th>Memo / Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.length ? filtered.map(r => {
+              const isInflow = r.direction === 'INFLOW';
+              return `
+                <tr>
+                  <td><strong>${dateLabel(r.date)}</strong></td>
+                  <td>
+                    <span class="stocktake-diff-pill ${isInflow ? 'match' : 'shortage'}">
+                      ${isInflow ? '↓ Received' : '↑ Paid out'}
+                    </span>
+                  </td>
+                  <td>
+                    <strong>${esc(r.party)}</strong>
+                    <br><small class="muted">${isInflow ? 'Customer (Received from)' : 'Supplier (Paid to)'}</small>
+                  </td>
+                  <td>
+                    <strong style="color:${isInflow ? '#16a34a' : '#ef233c'}">
+                      ${isInflow ? '+' : '−'} ${money(r.amount)}
+                    </strong>
+                  </td>
+                  <td><span class="status-pill status-ready">${esc(r.method)}</span></td>
+                  <td><strong>${esc(r.sourceId)}</strong><br><small class="muted">${esc(r.sourceType)}</small></td>
+                  <td><small>${esc(r.memo)}</small></td>
+                </tr>
+              `;
+            }).join('') : emptyRow(7, 'No payment records found matching criteria.')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderReports() {
+  const tabs = [
+    { id: 'overview', icon: '📊', label: 'Financial Overview' },
+    { id: 'product-sales', icon: '📦', label: 'Product Sales Report' },
+    { id: 'product-purchases', icon: '🚚', label: 'Product Purchases Report' },
+    { id: 'payments', icon: '💳', label: 'Payment Reports' }
+  ];
+
+  const navHtml = `
+    <div class="report-nav-tabs">
+      ${tabs.map(t => `
+        <button type="button" class="report-nav-tab ${reportActiveTab === t.id ? 'active' : ''}" data-action="set-report-tab" data-tab="${t.id}">
+          <span>${t.icon}</span> ${t.label}
+        </button>
+      `).join('')}
+    </div>
+  `;
+
+  if (reportActiveTab === 'product-sales') {
+    return `
+      ${heading('Reports', 'Detailed sales, purchases, and payments reporting.', `
+        <button class="button" data-action="export-product-sales">↓ Export Sales CSV</button>
+      `)}
+      ${navHtml}
+      ${renderProductSalesReport()}
+    `;
+  }
+
+  if (reportActiveTab === 'product-purchases') {
+    return `
+      ${heading('Reports', 'Detailed sales, purchases, and payments reporting.', `
+        <button class="button" data-action="export-product-purchases">↓ Export Purchases CSV</button>
+      `)}
+      ${navHtml}
+      ${renderProductPurchasesReport()}
+    `;
+  }
+
+  if (reportActiveTab === 'payments') {
+    return `
+      ${heading('Reports', 'Detailed sales, purchases, and payments reporting.', `
+        <button class="button" data-action="export-payment-report">↓ Export Payments CSV</button>
+      `)}
+      ${navHtml}
+      ${renderPaymentReport()}
+    `;
+  }
+
+  // Default: Overview
+  const data = reportPeriodData();
+  const paymentGroups = new Map();
+  data.sales.forEach(sale => { const method = sale.method || 'Other'; paymentGroups.set(method, (paymentGroups.get(method) || 0) + (Number(sale.total) || 0)); });
+  const revenueMix = [['Sales revenue', data.salesTotal], ['Purchase orders', data.purchaseTotal]];
+  const receivable = accountOutstandingTotal('Customer');
+  const payable = accountOutstandingTotal('Supplier');
+  const periodLabel = reportPeriod === 'weekly' ? 'Weekly' : reportPeriod === 'annual' ? 'Annual' : 'Monthly';
+
+  return `
+    ${heading('Financial Reports', 'Visual financial summaries with weekly, monthly, and annual reporting periods.', `<button class="button" data-action="export-financial-report">↓ Export ${periodLabel.toLowerCase()} report</button>`)}
+    ${navHtml}
     <div class="report-period-toolbar"><div><span class="report-period-label">Report period</span><div class="report-period-tabs">${[['weekly','Weekly'],['monthly','Monthly'],['annual','Annual']].map(([key,label])=>`<button type="button" class="report-period-tab ${reportPeriod===key?'active':''}" data-action="set-report-period" data-period="${key}">${label}</button>`).join('')}</div></div><p>${esc(data.label)} · ${dateLabel(data.start)} – ${dateLabel(data.end)}</p></div>
     <section class="metric-grid report-metrics">${metric('Sales revenue',money(data.salesTotal),'↗',`${periodLabel} · ${data.sales.length} transactions`)}${metric('Purchases',money(data.purchaseTotal),'▤',`${periodLabel} · ${data.purchases.length} orders`)}${metric('Net cash movement',`${data.netCollected<0?'− ':''}${money(data.netCollected)}`,'⇄',`Collected less paid · ${periodLabel}`,data.netCollected<0?'down':'up')}${metric('Open receivables',money(receivable),'◷','All customer accounts')}</section>
     <section class="panel financial-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Sales and purchases</h2><p class="panel-subtitle">${esc(periodLabel)} comparison by ${reportPeriod==='weekly'?'day':reportPeriod==='annual'?'month':'week'}.</p></div><div class="report-chart-legend"><span><i style="background:#087f9d"></i>Sales</span><span><i style="background:#ff8c42"></i>Purchases</span></div></div>${renderFinancialBarChart(data)}</section>
@@ -3462,7 +4284,8 @@ function render() {
       dashboard: renderDashboard,
       sales: renderSales,
       pos: renderPOS,
-      inventory: renderInventory,
+      products: renderProductManagement,
+      inventory: renderInventoryManagement,
       purchases: renderPurchases,
       customers: () => renderParties('customers'),
       suppliers: () => renderParties('suppliers'),
@@ -4171,6 +4994,41 @@ async function handleDialogSubmit(form) {
       }
     }
 
+    if (!Array.isArray(state.stocktakes)) state.stocktakes = [];
+    const sessionId = idFor('STK-REC', state.stocktakes);
+    const sessionItems = updates.map(u => ({
+      productId: u.product.id,
+      productName: u.product.name,
+      sku: u.product.sku || u.product.id,
+      beforeStock: u.before,
+      countedStock: u.newStock,
+      delta: u.newStock - u.before,
+      costImpact: (u.newStock - u.before) * Number(u.product.cost || 0),
+      expiryDate: u.newExpiry
+    }));
+    const totalCounted = sessionItems.length;
+    const matched = sessionItems.filter(i => i.delta === 0).length;
+    const shortages = sessionItems.filter(i => i.delta < 0).length;
+    const surpluses = sessionItems.filter(i => i.delta > 0).length;
+    const netQtyDelta = sessionItems.reduce((sum, i) => sum + i.delta, 0);
+    const netValueDelta = sessionItems.reduce((sum, i) => sum + i.costImpact, 0);
+
+    state.stocktakes.unshift({
+      id: sessionId,
+      date: new Date().toISOString(),
+      dateStr: now,
+      reason,
+      user: currentWorkspaceUser().name || 'Administrator',
+      totalProducts: totalCounted,
+      countedProducts: totalCounted,
+      matchedCount: matched,
+      shortageCount: shortages,
+      surplusCount: surpluses,
+      netQtyDelta,
+      netValueDelta,
+      items: sessionItems
+    });
+
     state.stocktakeDraft = null;
     recordActivity('Stock take finalized', `${appliedChanges} product quantities directly updated · ${reason}`, 'STOCKTAKE');
     saveState();
@@ -4788,6 +5646,23 @@ function handleAction(button) {
       stocktakeAddSingleProduct(button.dataset.id || button.closest('[data-id]')?.dataset.id);
       break;
     }
+    case 'set-report-tab': {
+      reportActiveTab = button.dataset.tab || 'overview';
+      render();
+      break;
+    }
+    case 'view-stocktake-session': {
+      viewStocktakeSession(button.dataset.id || id);
+      break;
+    }
+    case 'view-product-sales-history': {
+      viewProductSalesHistory(button.dataset.id || id);
+      break;
+    }
+    case 'view-product-purchase-history': {
+      viewProductPurchaseHistory(button.dataset.id || id);
+      break;
+    }
     case 'import-products': document.getElementById('product-csv-file')?.click(); break;
     case 'restore-trash': {
       const archived = state.trashBin.find(item => item.id === id);
@@ -4917,6 +5792,115 @@ function handleAction(button) {
         ...sortProducts(state.products).map(p => [p.id, p.name, p.category, p.price, p.cost, p.stock, p.low, p.unit, p.expiryDate || '', p.batchNumber || '', p.status || 'Active'])
       ]);
       break;
+    case 'export-stocktakes': {
+      const stocktakes = Array.isArray(state.stocktakes) ? state.stocktakes : [];
+      downloadCSV(`tide-stocktakes-${today()}.csv`, [
+        ['Session ID', 'Date', 'Auditor', 'Reason', 'Products Counted', 'Matches', 'Shortages', 'Surpluses', 'Net Quantity Delta', 'Net Cost Impact TZS'],
+        ...stocktakes.map(s => [
+          s.id,
+          s.dateStr || s.date?.slice(0, 10),
+          s.user || 'Administrator',
+          s.reason || '',
+          s.countedProducts || s.items?.length || 0,
+          s.matchedCount || 0,
+          s.shortageCount || 0,
+          s.surplusCount || 0,
+          s.netQtyDelta || 0,
+          s.netValueDelta || 0
+        ])
+      ]);
+      toast('Stock take audit sessions exported to CSV');
+      break;
+    }
+    case 'export-stock-movements': {
+      const movements = Array.isArray(state.stockMovements) ? state.stockMovements : [];
+      downloadCSV(`tide-stock-movements-${today()}.csv`, [
+        ['Date', 'Product', 'Product ID', 'Movement ID', 'Before Stock', 'After Stock', 'Quantity Delta', 'Reason', 'Auditor'],
+        ...movements.map(m => [
+          m.date,
+          m.product || '',
+          m.productId || '',
+          m.id || '',
+          m.before !== undefined ? m.before : '',
+          m.after !== undefined ? m.after : '',
+          m.delta !== undefined ? m.delta : '',
+          m.reason || '',
+          m.user || ''
+        ])
+      ]);
+      toast('Stock movements ledger exported to CSV');
+      break;
+    }
+    case 'export-product-sales': {
+      const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.orders || []);
+      const validOrders = allOrders.filter(o => o.status !== 'Draft' && o.status !== 'Cancelled');
+      const rows = state.products.map(p => {
+        let sold = 0, rev = 0;
+        for (const o of validOrders) {
+          for (const line of o.items || []) {
+            if (line.productId === p.id || line.product === p.name) {
+              const q = Number(line.qty || 0);
+              sold += q;
+              rev += q * Number(line.unitPrice || p.price || 0);
+            }
+          }
+        }
+        const cogs = sold * Number(p.cost || 0);
+        const profit = rev - cogs;
+        const margin = rev > 0 ? ((profit / rev) * 100).toFixed(1) : '0.0';
+        const avg = sold > 0 ? Math.round(rev / sold) : p.price;
+        return [p.id, p.name, p.sku || p.id, p.category || '', p.stock, sold, avg, rev, cogs, profit, `${margin}%`];
+      });
+      downloadCSV(`tide-product-sales-report-${today()}.csv`, [
+        ['Product ID', 'Product Name', 'SKU', 'Category', 'Current Stock', 'Units Sold', 'Avg Selling Price TZS', 'Total Revenue TZS', 'COGS TZS', 'Gross Profit TZS', 'Margin %'],
+        ...rows
+      ]);
+      toast('Product sales report exported to CSV');
+      break;
+    }
+    case 'export-product-purchases': {
+      const purchases = (state.purchases || []).filter(p => p.status !== 'Draft' && p.status !== 'Cancelled');
+      const rows = state.products.map(p => {
+        let bought = 0, spend = 0;
+        const sups = new Set();
+        for (const po of purchases) {
+          for (const line of po.lines || po.items || []) {
+            if (line.productId === p.id || line.product === p.name) {
+              const q = Number(line.qty || 0);
+              spend += q * Number(line.unitCost || p.cost || 0);
+              bought += q;
+              if (po.supplier) sups.add(po.supplier);
+            }
+          }
+        }
+        const avg = bought > 0 ? Math.round(spend / bought) : p.cost;
+        return [p.id, p.name, p.sku || p.id, p.category || '', p.stock, bought, avg, spend, [...sups].join('; ')];
+      });
+      downloadCSV(`tide-product-purchases-report-${today()}.csv`, [
+        ['Product ID', 'Product Name', 'SKU', 'Category', 'Current Stock', 'Units Restocked', 'Avg Purchase Cost TZS', 'Total Spend TZS', 'Suppliers'],
+        ...rows
+      ]);
+      toast('Product purchases report exported to CSV');
+      break;
+    }
+    case 'export-payment-report': {
+      const records = collectAllPaymentRecords();
+      downloadCSV(`tide-payment-report-${today()}.csv`, [
+        ['Date', 'Direction', 'Party Type', 'Party ("Made to" / "Received from")', 'Amount TZS', 'Payment Method', 'Reference ID', 'Memo / Notes'],
+        ...records.map(r => [
+          r.date,
+          r.direction === 'INFLOW' ? 'Inflow (Received)' : 'Outflow (Paid out)',
+          r.partyType,
+          r.party,
+          r.amount,
+          r.method,
+          r.sourceId,
+          r.memo
+        ])
+      ]);
+      toast('Payment report exported to CSV');
+      break;
+    }
     case 'export-expiry-report': {
       const expiringList = state.products.filter(p => p.expiryDate).sort((a, b) => String(a.expiryDate).localeCompare(String(b.expiryDate)));
       downloadCSV('tide-product-expiry-report.csv', [
@@ -5269,6 +6253,15 @@ document.addEventListener('input', event => {
     tableQuery = event.target.value;
     render();
   }
+  if (event.target.id === 'report-search') {
+    reportSearchQuery = event.target.value;
+    render();
+    const input = document.getElementById('report-search');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
   if (event.target.id === 'pos-search') {
     const term = event.target.value.toLowerCase();
     document.getElementById('pos-products').innerHTML = productCards(
@@ -5320,6 +6313,9 @@ document.addEventListener('change', event => {
   if (event.target.id === 'sales-payment') { salesPaymentFilter = event.target.value; render(); }
   if (event.target.id === 'sales-delivery') { salesDeliveryFilter = event.target.value; render(); }
   if (event.target.id === 'purchase-status') { purchaseStatusFilter = event.target.value; render(); }
+  if (event.target.id === 'report-payment-direction') { reportPaymentDirectionFilter = event.target.value; render(); }
+  if (event.target.id === 'report-payment-method') { reportPaymentMethodFilter = event.target.value; render(); }
+  if (event.target.id === 'inventory-movement-filter') { inventoryMovementTypeFilter = event.target.value; render(); }
   if(event.target.matches('[data-permission-module]')){
     const group=event.target.closest('fieldset');
     group?.querySelectorAll('input[name="user-permission"]').forEach(input=>{input.checked=event.target.checked;});

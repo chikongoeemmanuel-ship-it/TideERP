@@ -2354,3 +2354,88 @@ button.hub-fin-card {
   color: #ef4444;
   background: #fee2e2;
 }
+
+/* Report Sub-navigation Tabs */
+.report-nav-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1.5px solid var(--line);
+  padding-bottom: 12px;
+  overflow-x: auto;
+}
+.report-nav-tab {
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--white);
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+.report-nav-tab:hover {
+  background: var(--canvas);
+  border-color: #94a3b8;
+}
+.report-nav-tab.active {
+  background: var(--ocean) !important;
+  border-color: var(--ocean) !important;
+  color: #fff !important;
+  box-shadow: 0 2px 6px rgba(0, 119, 246, 0.25);
+}
+:root[data-theme="dark"] .report-nav-tab {
+  background: #252c31;
+  border-color: #3a4d58;
+  color: #e8f2f6;
+}
+:root[data-theme="dark"] .report-nav-tab.active {
+  background: var(--ocean) !important;
+  border-color: var(--ocean) !important;
+  color: #fff !important;
+}
+
+/* Stocktake Sessions & History Table */
+.stocktake-diff-pill {
+  font-weight: 700;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: inline-block;
+  white-space: nowrap;
+}
+.stocktake-diff-pill.match {
+  background: #f0fdf4;
+  color: #16a34a;
+  border: 1px solid #bbf7d0;
+}
+:root[data-theme="dark"] .stocktake-diff-pill.match {
+  background: #143522;
+  color: #4ade80;
+  border-color: #22c55e;
+}
+.stocktake-diff-pill.shortage {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+:root[data-theme="dark"] .stocktake-diff-pill.shortage {
+  background: #3b1414;
+  color: #f87171;
+  border-color: #ef4444;
+}
+.stocktake-diff-pill.surplus {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
+}
+:root[data-theme="dark"] .stocktake-diff-pill.surplus {
+  background: #172554;
+  color: #60a5fa;
+  border-color: #3b82f6;
+}
