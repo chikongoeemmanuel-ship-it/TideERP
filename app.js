@@ -557,7 +557,14 @@ function isWorkspaceAdministrator() {
 }
 
 function userCanManageAllBranches() {
-  return isWorkspaceAdministrator();
+  return isWorkspaceAdministrator() || userHasPermission('branches', 'open') || userHasPermission('branches', 'manage');
+}
+
+function canSwitchBranches() {
+  if (isWorkspaceAdministrator()) return true;
+  if (userCanManageAllBranches()) return true;
+  if (canViewPage('branches')) return true;
+  return accessibleBranches().length > 1;
 }
 
 function accessibleBranches() {
@@ -654,6 +661,18 @@ function refreshBranchNav() {
   if (nav) nav.hidden = !canViewPage('branches');
 }
 
+function refreshBranchSwitcher() {
+  const button = document.getElementById('branch-switch-button');
+  if (!button) return;
+  const canSwitch = canSwitchBranches();
+  button.hidden = !canSwitch;
+  if (canSwitch) {
+    const name = activeBranch?.name || state.branch || 'Main branch';
+    button.title = `Active: ${name} (Click to switch branch)`;
+    button.setAttribute('aria-label', `Switch branch, active: ${name}`);
+  }
+}
+
 function canViewActivity() {
   return userHasPermission('dashboard','business-performance')||userHasPermission('dashboard','stock-alerts');
 }
@@ -706,6 +725,7 @@ function openNotificationsPanel() {
   const button=document.getElementById('notifications-button');
   if(!button)return;
   document.querySelector('.notifications-popover')?.remove();
+  document.querySelector('.branch-popover')?.remove();
   const items=notificationItems();
   const panel=document.createElement('section');panel.className='notifications-popover';panel.setAttribute('aria-label','Notifications');
   panel.innerHTML=`<div class="topbar-popover-head"><div><strong>Notifications</strong><small>${items.length?`${items.length} item${items.length===1?'':'s'} need attention`:'You’re all caught up'}</small></div><button type="button" class="topbar-popover-close" aria-label="Close notifications">×</button></div>${items.length?`<div class="notification-list">${items.map((item,index)=>`<button type="button" class="notification-row notification-${item.tone}" data-notification-page="${esc(item.page)}"><span class="notification-row-icon">${item.icon}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.detail)}</small></span><span class="notification-arrow">›</span></button>`).join('')}</div>`:'<div class="notification-empty"><span>✓</span><p>No current alerts.</p></div>'}`;
@@ -714,6 +734,82 @@ function openNotificationsPanel() {
   Object.assign(panel.style,{top:`${Math.min(rect.bottom+8,window.innerHeight-80)}px`,right:`${Math.max(8,window.innerWidth-rect.right)}px`});
   panel.querySelector('.topbar-popover-close').addEventListener('click',()=>panel.remove());
   panel.querySelectorAll('[data-notification-page]').forEach(item=>item.addEventListener('click',()=>{const target=item.dataset.notificationPage;panel.remove();setPage(target);}));
+}
+
+function openBranchSwitcherPanel() {
+  const button = document.getElementById('branch-switch-button');
+  if (!button) return;
+  document.querySelector('.branch-popover')?.remove();
+  document.querySelector('.notifications-popover')?.remove();
+
+  const branches = accessibleBranches();
+  const canManage = isWorkspaceAdministrator() || userHasPermission('branches', 'manage');
+
+  const panel = document.createElement('section');
+  panel.className = 'branch-popover';
+  panel.setAttribute('aria-label', 'Switch Branch');
+
+  panel.innerHTML = `
+    <div class="topbar-popover-head">
+      <div>
+        <strong>Switch Branch</strong>
+        <small>Active: ${esc(activeBranch?.name || state.branch || 'Main branch')}</small>
+      </div>
+      <button type="button" class="topbar-popover-close" aria-label="Close branch switcher">×</button>
+    </div>
+    <div style="margin-top:10px">
+      ${branches.length ? branches.map(b => {
+        const isActive = b.id === (activeBranch?.id || state.activeBranchId);
+        return `
+          <button type="button" class="branch-option-row ${isActive ? 'active' : ''}" data-switch-branch-id="${esc(b.id)}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:18px">🏢</span>
+              <div style="display:grid;gap:2px">
+                <strong style="font-size:12px;color:var(--ink)">${esc(b.name)}</strong>
+                <small style="font-size:10px;color:var(--muted)">${esc(b.id)} · ${isActive ? 'Current workspace' : 'Click to switch'}</small>
+              </div>
+            </div>
+            ${isActive ? '<span class="status-pill status-paid" style="font-size:10px;padding:2px 7px">✓ Active</span>' : '<span class="button small" style="font-size:10px;padding:2px 6px;pointer-events:none">Switch</span>'}
+          </button>
+        `;
+      }).join('') : '<div class="notification-empty"><p>No accessible branches found.</p></div>'}
+    </div>
+    ${canManage ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <button type="button" class="text-link" data-branch-nav="branches" style="font-size:11px;font-weight:700">🏢 Manage branches ›</button>
+        <button type="button" class="button small primary" data-branch-dialog="new-branch" style="font-size:10px;padding:4px 8px">＋ Add branch</button>
+      </div>
+    ` : ''}
+  `;
+
+  document.body.append(panel);
+  const rect = button.getBoundingClientRect();
+  Object.assign(panel.style, {
+    top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
+    right: `${Math.max(8, window.innerWidth - rect.right)}px`
+  });
+
+  panel.querySelector('.topbar-popover-close').addEventListener('click', () => panel.remove());
+
+  panel.querySelectorAll('[data-switch-branch-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.switchBranchId;
+      panel.remove();
+      if (targetId !== activeBranch?.id) {
+        switchBranch(targetId);
+      }
+    });
+  });
+
+  panel.querySelector('[data-branch-nav]')?.addEventListener('click', () => {
+    panel.remove();
+    setPage('branches');
+  });
+
+  panel.querySelector('[data-branch-dialog="new-branch"]')?.addEventListener('click', () => {
+    panel.remove();
+    openDialog('new-branch', 'Add branch', 'Create an independent workspace for another location.', inputField('branch-name', 'Branch name', 'e.g. Arusha branch', 'text', true));
+  });
 }
 
 function recentActivityItems(limit = 100) {
@@ -751,9 +847,15 @@ document.getElementById('notifications-button')?.addEventListener('click',event=
   if(document.querySelector('.notifications-popover'))document.querySelector('.notifications-popover').remove();
   else openNotificationsPanel();
 });
+document.getElementById('branch-switch-button')?.addEventListener('click', event => {
+  event.stopPropagation();
+  if (document.querySelector('.branch-popover')) document.querySelector('.branch-popover').remove();
+  else openBranchSwitcherPanel();
+});
 document.getElementById('activity-button')?.addEventListener('click',openActivityHistory);
 document.addEventListener('click',event=>{
   if(!event.target.closest('.notifications-popover')&&!event.target.closest('#notifications-button'))document.querySelector('.notifications-popover')?.remove();
+  if(!event.target.closest('.branch-popover')&&!event.target.closest('#branch-switch-button'))document.querySelector('.branch-popover')?.remove();
 });
 
 function syncBackButton() {
@@ -2805,7 +2907,7 @@ function render() {
   if (!isWorkspaceAdministrator() && !canViewPage(page)) {
     const fallback=Object.keys(pageLabels).find(candidate=>canViewPage(candidate));
     if(fallback){page=fallback;history.replaceState({erpPage:page},'',`#${page}`);}
-    else {content.innerHTML='<section class="panel access-denied-panel"><h2>No sections are enabled for your account</h2><p>Ask an Owner / Administrator to grant access.</p></section>';refreshCompanyLogo();refreshUserProfile();refreshPermissionVisibility();refreshActivityVisibility();refreshNotificationIndicator();updateConnection();syncBackButton();return;}
+    else {content.innerHTML='<section class="panel access-denied-panel"><h2>No sections are enabled for your account</h2><p>Ask an Owner / Administrator to grant access.</p></section>';refreshCompanyLogo();refreshUserProfile();refreshPermissionVisibility();refreshActivityVisibility();refreshBranchNav();refreshBranchSwitcher();refreshNotificationIndicator();updateConnection();syncBackButton();return;}
   }
   const crumb = document.getElementById('crumb-current');
   if (crumb) crumb.textContent = pageLabels[page] || 'Home';
@@ -2838,6 +2940,7 @@ function render() {
   refreshPermissionVisibility();
   refreshActivityVisibility();
   refreshBranchNav();
+  refreshBranchSwitcher();
   refreshNotificationIndicator();
   updateConnection();
   syncBackButton();
@@ -3224,7 +3327,9 @@ function switchBranch(id) {
   snapshotCurrentBranch();activeBranch=branch;
   const saved=state.branchData?.[id]||{};
   branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]||[]);});
-  state.activeBranchId=branch.id;state.branch=branch.name;saveState();page='dashboard';pageHistory.length=0;history.pushState({erpPage:page},'',`#${page}`);render();toast(`Opened ${branch.name}`);
+  state.activeBranchId=branch.id;state.branch=branch.name;saveState();
+  if(!canViewPage(page))page='dashboard';
+  pageHistory.length=0;history.pushState({erpPage:page},'',`#${page}`);render();toast(`Switched to ${branch.name}`);
 }
 
 async function handleDialogSubmit(form) {
