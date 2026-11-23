@@ -2125,3 +2125,232 @@ button.hub-fin-card {
 :root[data-theme="dark"] .due-amount-cell.is-paid {
   color: #64748b;
 }
+
+/* Multi-Product Stock Taking System & Pause Workflows */
+.stocktake-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: #eff6ff;
+  border: 1.5px solid #93c5fd;
+  border-radius: 10px;
+  padding: 12px 18px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+:root[data-theme="dark"] .stocktake-banner {
+  background: #172554;
+  border-color: #3b82f6;
+  color: #eff6ff;
+}
+.stocktake-banner-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.stocktake-status-chip {
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+}
+:root[data-theme="dark"] .stocktake-status-chip {
+  background: #1e3a8a;
+  color: #bfdbfe;
+  border-color: #3b82f6;
+}
+.stocktake-banner-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.stocktake-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 14px 0 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.stocktake-search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 240px;
+}
+.stocktake-search-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--white);
+  color: var(--ink);
+}
+.stocktake-search-input:focus {
+  outline: none;
+  border-color: var(--ocean);
+  box-shadow: 0 0 0 3px var(--ocean-light);
+}
+.stocktake-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--white);
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+  margin-top: 4px;
+}
+:root[data-theme="dark"] .stocktake-search-results {
+  background: #252c31;
+  border-color: #3a4d58;
+}
+.stocktake-search-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.stocktake-search-item:hover {
+  background: var(--canvas);
+}
+.stocktake-stats-bar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 8px 14px;
+  background: var(--canvas);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+:root[data-theme="dark"] .stocktake-stats-bar {
+  background: #1b2024;
+}
+.stocktake-table-wrap {
+  max-height: 52vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.stocktake-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.stocktake-table th {
+  position: sticky;
+  top: 0;
+  background: #0a1e36;
+  color: #fff;
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  z-index: 2;
+}
+.stocktake-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.stocktake-current-badge {
+  display: inline-block;
+  background: #e2e8f0;
+  color: #1e293b;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+:root[data-theme="dark"] .stocktake-current-badge {
+  background: #334155;
+  color: #f1f5f9;
+}
+.stocktake-qty-input {
+  width: 95px;
+  padding: 6px 8px;
+  border: 1.5px solid var(--line);
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: right;
+  background: var(--white);
+  color: var(--ink);
+}
+.stocktake-qty-input:focus {
+  outline: none;
+  border-color: var(--ocean);
+  box-shadow: 0 0 0 2px var(--ocean-light);
+}
+.stocktake-exp-input {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--white);
+  color: var(--ink);
+}
+.stocktake-var {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.stocktake-var.match {
+  color: #16a34a;
+  background: #f0fdf4;
+}
+:root[data-theme="dark"] .stocktake-var.match {
+  color: #4ade80;
+  background: #143522;
+}
+.stocktake-var.shortage {
+  color: #dc2626;
+  background: #fef2f2;
+}
+:root[data-theme="dark"] .stocktake-var.shortage {
+  color: #f87171;
+  background: #3b1414;
+}
+.stocktake-var.surplus {
+  color: #2563eb;
+  background: #eff6ff;
+}
+:root[data-theme="dark"] .stocktake-var.surplus {
+  color: #60a5fa;
+  background: #172554;
+}
+.stocktake-del-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.stocktake-del-btn:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}

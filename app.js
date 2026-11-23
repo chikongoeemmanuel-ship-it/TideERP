@@ -65,13 +65,14 @@ const initialState = {
     syncFailures: true
   },
   trashBin: [],
-  activityLog: []
+  activityLog: [],
+  stocktakeDraft: null
 };
 
 const branchCollections = [
   'products', 'customers', 'suppliers', 'orders', 'sales',
   'returns', 'purchaseReturns', 'purchases', 'entries', 'queue',
-  'stockMovements', 'trashBin'
+  'stockMovements', 'trashBin', 'stocktakeDraft'
 ];
 
 let state = structuredClone(initialState);
@@ -581,7 +582,7 @@ function activateAssignedBranch(user=currentWorkspaceUser()) {
     snapshotCurrentBranch();
     activeBranch=branch;
     const saved=state.branchData?.[branch.id]||{};
-    branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]||[]);});
+    branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]!==undefined?saved[key]:(key==='stocktakeDraft'?null:[]));});
   }
   state.activeBranchId=branch.id;
   state.branch=branch.name;
@@ -592,7 +593,7 @@ function snapshotCurrentBranch() {
   if (!activeBranch) return;
   const data = {};
   branchCollections.forEach(k => {
-    data[k] = structuredClone(state[k] || []);
+    data[k] = structuredClone(state[k]!==undefined?state[k]:(k==='stocktakeDraft'?null:[]));
   });
   if (!state.branchData) state.branchData = {};
   state.branchData[activeBranch.id] = data;
@@ -1079,7 +1080,7 @@ function openModal(title, subtitle, content, confirmLabel = 'Save', extraAction 
     ${content}
     <div class="modal-actions">${extraAction}<button type="button" class="button" data-action="close-modal">Cancel</button><button class="button primary" type="submit">${confirmLabel}</button></div>
   `;
-  modal.classList.toggle('transaction-modal', /sales order|purchase order|pos sale/i.test(title));
+  modal.classList.toggle('transaction-modal', /sales order|purchase order|pos sale|stock take|stocktake/i.test(title));
   form.querySelectorAll('[data-action]').forEach(button=>{button.hidden=!canPerformAction(button.dataset.action,button);});
   modal.showModal();
 }
@@ -2117,6 +2118,481 @@ function printOrderInvoice(order) {
   setTimeout(() => popup.print(), 250);
 }
 
+// Stock Taking System (Multi-Product, Fast Operations, Expiry Date & Pause/Resume)
+function renderStocktakeVariance(countedVal, currentStock, unit = '') {
+  if (countedVal === '' || countedVal === null || countedVal === undefined || isNaN(Number(countedVal))) {
+    return '<span class="muted" style="font-size:11px">Pending</span>';
+  }
+  const counted = Number(countedVal);
+  const diff = counted - Number(currentStock || 0);
+  if (diff === 0) {
+    return '<span class="stocktake-var match">✓ 0 (Matched)</span>';
+  }
+  if (diff < 0) {
+    return `<span class="stocktake-var shortage">▼ ${diff} ${unit} (Shortage)</span>`;
+  }
+  return `<span class="stocktake-var surplus">▲ +${diff} ${unit} (Surplus)</span>`;
+}
+
+function renderStocktakeExpiryBadge(dateStr) {
+  if (!dateStr) return '<small class="muted" style="font-size:10px">No expiry set</small>';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp = new Date(dateStr);
+  exp.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((exp - today) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) {
+    return `<small class="text-danger" style="font-weight:700;font-size:10px">⚠️ Expired (${Math.abs(diffDays)}d ago)</small>`;
+  }
+  if (diffDays <= 30) {
+    return `<small style="color:#d97706;font-weight:700;font-size:10px">⚠️ Expiring in ${diffDays}d</small>`;
+  }
+  return `<small style="color:#16a34a;font-weight:600;font-size:10px">✓ Good (${diffDays}d left)</small>`;
+}
+
+function renderStocktakeRow(item) {
+  const p = state.products.find(prod => prod.id === item.productId) || {
+    id: item.productId,
+    name: item.productName || item.productId,
+    category: item.category || 'General',
+    stock: item.currentStock || 0,
+    unit: item.unit || 'Piece',
+    expiryDate: item.expiryDate || ''
+  };
+  const curStock = Number(p.stock || 0);
+  const countedVal = (item.countedStock !== null && item.countedStock !== undefined && item.countedStock !== '') ? item.countedStock : '';
+  const itemExpiry = item.expiryDate !== undefined ? item.expiryDate : (p.expiryDate || '');
+
+  return `
+    <tr data-product-id="${esc(p.id)}" data-current-stock="${curStock}" data-product-unit="${esc(p.unit || '')}">
+      <td>
+        <strong style="display:block;font-size:13px">${esc(p.name)}</strong>
+        <small class="row-source">${esc(p.id)} · ${esc(p.category)}</small>
+      </td>
+      <td>
+        <span class="stocktake-current-badge">${curStock} ${esc(p.unit || '')}</span>
+      </td>
+      <td>
+        <input type="number" step="any" min="0" class="stocktake-qty-input" data-id="${esc(p.id)}" value="${esc(countedVal)}" placeholder="${curStock}" autocomplete="off">
+      </td>
+      <td>
+        <span class="stocktake-var-cell" data-id="${esc(p.id)}">${renderStocktakeVariance(countedVal, curStock, p.unit)}</span>
+      </td>
+      <td>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <input type="date" class="stocktake-exp-input" data-id="${esc(p.id)}" value="${esc(itemExpiry)}">
+          <span class="stocktake-exp-status" data-id="${esc(p.id)}">${renderStocktakeExpiryBadge(itemExpiry)}</span>
+        </div>
+      </td>
+      <td style="text-align:center">
+        <button type="button" class="stocktake-del-btn" data-action="stocktake-remove-item" data-id="${esc(p.id)}" title="Remove from stock take">✕</button>
+      </td>
+    </tr>
+  `;
+}
+
+function renderStocktakeBanner() {
+  const draft = state.stocktakeDraft;
+  if (!draft || !Array.isArray(draft.items) || !draft.items.length) return '';
+  const totalItems = draft.items.length;
+  const countedCount = draft.items.filter(item => item.countedStock !== '' && item.countedStock !== null && item.countedStock !== undefined).length;
+  const timeStr = draft.updatedAt ? new Date(draft.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+  return `
+    <div class="stocktake-banner">
+      <div class="stocktake-banner-info">
+        <span class="stocktake-status-chip">⏸ In progress (paused)</span>
+        <strong>Physical stock take session</strong>
+        <span>${countedCount} of ${totalItems} products counted ${timeStr ? `· Last saved at ${timeStr}` : ''}</span>
+      </div>
+      <div class="stocktake-banner-actions">
+        <button class="button primary small" data-action="open-stocktake">▶ Resume stock take</button>
+        <button class="button small danger-action" data-action="discard-stocktake-draft">Discard draft</button>
+      </div>
+    </div>
+  `;
+}
+
+function captureCurrentStocktakeDraft() {
+  const rows = Array.from(document.querySelectorAll('#stocktake-table-body tr[data-product-id]'));
+  const reason = document.getElementById('stocktake-reason')?.value || 'Physical stock take count';
+  const items = rows.map(row => {
+    const id = row.dataset.productId;
+    const product = state.products.find(p => p.id === id);
+    const qtyVal = row.querySelector('.stocktake-qty-input')?.value ?? '';
+    const expVal = row.querySelector('.stocktake-exp-input')?.value ?? (product?.expiryDate || '');
+    return {
+      productId: id,
+      productName: product?.name || id,
+      sku: product?.id || '',
+      category: product?.category || 'General',
+      currentStock: product ? product.stock : Number(row.dataset.currentStock || 0),
+      unit: product?.unit || row.dataset.productUnit || 'Piece',
+      cost: product?.cost || 0,
+      countedStock: qtyVal.trim(),
+      expiryDate: expVal.trim(),
+      initialExpiryDate: product?.expiryDate || ''
+    };
+  });
+
+  return {
+    id: state.stocktakeDraft?.id || ('STK-' + Date.now()),
+    startedAt: state.stocktakeDraft?.startedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    reason,
+    items
+  };
+}
+
+let stocktakeAutoSaveTimer = null;
+function autoSaveStocktakeDraft() {
+  clearTimeout(stocktakeAutoSaveTimer);
+  stocktakeAutoSaveTimer = setTimeout(() => {
+    const draft = captureCurrentStocktakeDraft();
+    if (draft.items.length > 0) {
+      state.stocktakeDraft = draft;
+      saveState();
+      const indicator = document.getElementById('stocktake-save-indicator');
+      if (indicator) {
+        indicator.textContent = `✓ Auto-saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+        indicator.style.opacity = '1';
+        setTimeout(() => { if (indicator) indicator.style.opacity = '0.7'; }, 2000);
+      }
+    }
+  }, 350);
+}
+
+function updateStocktakeStats() {
+  const rows = Array.from(document.querySelectorAll('#stocktake-table-body tr[data-product-id]'));
+  let total = rows.length;
+  let counted = 0;
+  let netDelta = 0;
+
+  for (const row of rows) {
+    const cur = Number(row.dataset.currentStock || 0);
+    const val = row.querySelector('.stocktake-qty-input')?.value.trim();
+    if (val !== '' && !isNaN(Number(val))) {
+      counted++;
+      netDelta += (Number(val) - cur);
+    }
+  }
+
+  const elTotal = document.getElementById('st-stat-total');
+  const elCounted = document.getElementById('st-stat-counted');
+  const elUncounted = document.getElementById('st-stat-uncounted');
+  const elVariance = document.getElementById('st-stat-variance');
+
+  if (elTotal) elTotal.textContent = total;
+  if (elCounted) elCounted.textContent = counted;
+  if (elUncounted) elUncounted.textContent = total - counted;
+  if (elVariance) {
+    elVariance.textContent = (netDelta > 0 ? `+${netDelta}` : String(netDelta)) + ' units';
+    elVariance.style.color = netDelta === 0 ? '#16a34a' : (netDelta < 0 ? '#dc2626' : '#2563eb');
+  }
+
+  const emptyMsg = document.getElementById('stocktake-empty-row');
+  if (emptyMsg) emptyMsg.style.display = total === 0 ? '' : 'none';
+}
+
+function pauseStocktakeSession() {
+  const draft = captureCurrentStocktakeDraft();
+  state.stocktakeDraft = draft;
+  saveState();
+  document.getElementById('app-modal')?.close();
+  render();
+  toast('Stock take paused! Your count progress is saved. You can take a break and resume anytime.');
+}
+
+function stocktakeAddSingleProduct(productId) {
+  const product = state.products.find(p => p.id === productId);
+  if (!product) return;
+
+  const existingRow = document.querySelector(`#stocktake-table-body tr[data-product-id="${esc(product.id)}"]`);
+  if (existingRow) {
+    const input = existingRow.querySelector('.stocktake-qty-input');
+    input?.focus();
+    input?.select();
+    existingRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    toast(`${product.name} is already in the count worksheet`);
+    const searchRes = document.getElementById('stocktake-search-results');
+    if (searchRes) searchRes.hidden = true;
+    return;
+  }
+
+  const emptyRow = document.getElementById('stocktake-empty-row');
+  if (emptyRow) emptyRow.style.display = 'none';
+
+  const tbody = document.getElementById('stocktake-table-body');
+  if (!tbody) return;
+
+  const temp = document.createElement('tbody');
+  temp.innerHTML = renderStocktakeRow({
+    productId: product.id,
+    productName: product.name,
+    category: product.category,
+    currentStock: product.stock,
+    unit: product.unit,
+    expiryDate: product.expiryDate || '',
+    countedStock: ''
+  });
+
+  const newRow = temp.firstElementChild;
+  tbody.appendChild(newRow);
+
+  const searchInput = document.getElementById('stocktake-search-input');
+  if (searchInput) searchInput.value = '';
+  const searchRes = document.getElementById('stocktake-search-results');
+  if (searchRes) searchRes.hidden = true;
+
+  const input = newRow.querySelector('.stocktake-qty-input');
+  input?.focus();
+  newRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  updateStocktakeStats();
+  autoSaveStocktakeDraft();
+}
+
+function stocktakeAddAllActiveProducts() {
+  const tbody = document.getElementById('stocktake-table-body');
+  if (!tbody) return;
+  const existingIds = new Set(Array.from(tbody.querySelectorAll('tr[data-product-id]')).map(r => r.dataset.productId));
+  const activeProds = state.products.filter(p => p.status !== 'Draft' && !existingIds.has(p.id));
+
+  if (!activeProds.length) {
+    toast('All active products are already in the count sheet');
+    return;
+  }
+
+  const emptyRow = document.getElementById('stocktake-empty-row');
+  if (emptyRow) emptyRow.style.display = 'none';
+
+  const html = activeProds.map(p => renderStocktakeRow({
+    productId: p.id,
+    productName: p.name,
+    category: p.category,
+    currentStock: p.stock,
+    unit: p.unit,
+    expiryDate: p.expiryDate || '',
+    countedStock: ''
+  })).join('');
+
+  const temp = document.createElement('tbody');
+  temp.innerHTML = html;
+  while (temp.firstElementChild) {
+    tbody.appendChild(temp.firstElementChild);
+  }
+
+  updateStocktakeStats();
+  autoSaveStocktakeDraft();
+  toast(`Added ${activeProds.length} active products to worksheet`);
+}
+
+function stocktakeAddCategory(cat) {
+  if (!cat) return;
+  const tbody = document.getElementById('stocktake-table-body');
+  if (!tbody) return;
+  const existingIds = new Set(Array.from(tbody.querySelectorAll('tr[data-product-id]')).map(r => r.dataset.productId));
+  const prods = state.products.filter(p => p.category === cat && !existingIds.has(p.id));
+
+  if (!prods.length) {
+    toast(`All products from category "${cat}" are already in the worksheet`);
+    return;
+  }
+
+  const emptyRow = document.getElementById('stocktake-empty-row');
+  if (emptyRow) emptyRow.style.display = 'none';
+
+  const html = prods.map(p => renderStocktakeRow({
+    productId: p.id,
+    productName: p.name,
+    category: p.category,
+    currentStock: p.stock,
+    unit: p.unit,
+    expiryDate: p.expiryDate || '',
+    countedStock: ''
+  })).join('');
+
+  const temp = document.createElement('tbody');
+  temp.innerHTML = html;
+  while (temp.firstElementChild) {
+    tbody.appendChild(temp.firstElementChild);
+  }
+
+  updateStocktakeStats();
+  autoSaveStocktakeDraft();
+  toast(`Added ${prods.length} products from ${cat}`);
+}
+
+function stocktakeFillCurrentStock() {
+  const rows = Array.from(document.querySelectorAll('#stocktake-table-body tr[data-product-id]'));
+  let count = 0;
+  for (const row of rows) {
+    const input = row.querySelector('.stocktake-qty-input');
+    if (input && input.value.trim() === '') {
+      input.value = row.dataset.currentStock || '0';
+      const varCell = row.querySelector('.stocktake-var-cell');
+      if (varCell) varCell.innerHTML = renderStocktakeVariance(input.value, Number(row.dataset.currentStock || 0), row.dataset.productUnit);
+      count++;
+    }
+  }
+  updateStocktakeStats();
+  autoSaveStocktakeDraft();
+  toast(`Filled ${count} uncounted products with current stock`);
+}
+
+function stocktakeClearAllCounts() {
+  const rows = Array.from(document.querySelectorAll('#stocktake-table-body tr[data-product-id]'));
+  for (const row of rows) {
+    const input = row.querySelector('.stocktake-qty-input');
+    if (input) input.value = '';
+    const varCell = row.querySelector('.stocktake-var-cell');
+    if (varCell) varCell.innerHTML = renderStocktakeVariance('', Number(row.dataset.currentStock || 0), row.dataset.productUnit);
+  }
+  updateStocktakeStats();
+  autoSaveStocktakeDraft();
+  toast('Cleared all counts');
+}
+
+function openStocktakeDialog() {
+  if (!userHasPermission('inventory', 'stocktake')) {
+    toast('You do not have permission to run stock take');
+    return;
+  }
+  if (!state.products.length) {
+    toast('Add products to Inventory before running a stock take');
+    return;
+  }
+
+  const hasDraft = state.stocktakeDraft && Array.isArray(state.stocktakeDraft.items) && state.stocktakeDraft.items.length > 0;
+  const draft = hasDraft ? state.stocktakeDraft : null;
+  const items = draft ? draft.items : [];
+  const reason = draft?.reason || 'Monthly physical stock take';
+
+  const categories = Array.from(new Set(state.products.map(p => p.category).filter(Boolean))).sort();
+  const categoryOptions = categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const activeProducts = state.products.filter(p => p.status !== 'Draft');
+
+  const content = `
+    <input type="hidden" name="dialog-kind" value="finalize-stocktake">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <label style="font-size:12px;font-weight:700">Reason / Reference:
+          <input id="stocktake-reason" name="stocktake-reason" value="${esc(reason)}" class="text-control" style="margin-left:6px;width:260px;display:inline-block;padding:6px 10px;font-size:12px">
+        </label>
+      </div>
+      <div style="font-size:11px;color:var(--muted);transition:opacity 0.3s ease" id="stocktake-save-indicator">
+        ${hasDraft ? `⏸ Resumed session (started ${new Date(draft.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : 'Physical counts directly replace current stock'}
+      </div>
+    </div>
+
+    <div class="stocktake-toolbar">
+      <div class="stocktake-search-wrap">
+        <input type="text" id="stocktake-search-input" class="stocktake-search-input" placeholder="🔍 Search product name, SKU or scan barcode to add... (Press Enter to add)" autocomplete="off">
+        <div id="stocktake-search-results" class="stocktake-search-results" hidden></div>
+      </div>
+      <button type="button" class="button small" data-action="stocktake-add-all" title="Add all active inventory products to this count sheet">＋ Add all active (${activeProducts.length})</button>
+      <select id="stocktake-select-category" class="select-control small" style="max-width:180px">
+        <option value="">＋ Add by category...</option>
+        ${categoryOptions}
+      </select>
+      <button type="button" class="button small" data-action="stocktake-fill-current" title="Set uncounted fields to match their current stock">Fill with current</button>
+      <button type="button" class="button small" data-action="stocktake-clear-all" title="Clear all counted inputs">Clear counts</button>
+    </div>
+
+    <div class="stocktake-stats-bar">
+      <span>Products in sheet: <strong id="st-stat-total">${items.length}</strong></span>
+      <span>•</span>
+      <span>Counted: <strong id="st-stat-counted" style="color:#16a34a">0</strong></span>
+      <span>•</span>
+      <span>Remaining: <strong id="st-stat-uncounted" style="color:#d97706">0</strong></span>
+      <span>•</span>
+      <span>Net Variance: <strong id="st-stat-variance" style="font-weight:700">0 units</strong></span>
+    </div>
+
+    <div class="stocktake-table-wrap">
+      <table class="stocktake-table">
+        <thead>
+          <tr>
+            <th style="min-width:200px">Product</th>
+            <th style="min-width:110px">Current Stock</th>
+            <th style="min-width:140px">Physical Count (New stock)</th>
+            <th style="min-width:130px">Variance</th>
+            <th style="min-width:150px">Expiry Date</th>
+            <th style="width:40px;text-align:center">✕</th>
+          </tr>
+        </thead>
+        <tbody id="stocktake-table-body">
+          ${items.map(renderStocktakeRow).join('')}
+          <tr id="stocktake-empty-row" style="${items.length ? 'display:none' : ''}">
+            <td colspan="6" style="text-align:center;padding:32px 16px;color:var(--muted)">
+              <div style="font-size:24px;margin-bottom:6px">▤</div>
+              <strong>No products added to this stock take worksheet yet</strong>
+              <p style="margin:4px 0 10px;font-size:12px">Use the search box above or click "＋ Add all active" to quickly populate the list.</p>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  const extraAction = `
+    <button type="button" class="button" data-action="pause-stocktake" title="Pause counting and save draft for a break">⏸ Pause & Save draft (Take a break)</button>
+    ${hasDraft ? `<button type="button" class="button small danger-action" data-action="discard-stocktake-draft">Discard draft</button>` : ''}
+  `;
+
+  openModal(
+    'Stock take',
+    'Verify on-hand products and expiry dates. Physical counts will directly replace current stock.',
+    content,
+    '✓ Finalize & Apply Stock Count',
+    extraAction
+  );
+
+  const form = document.getElementById('modal-content');
+  if (form) form.dataset.dialogKind = 'finalize-stocktake';
+
+  updateStocktakeStats();
+}
+
+function handleStocktakeSearch(term) {
+  const query = String(term || '').trim().toLowerCase();
+  const res = document.getElementById('stocktake-search-results');
+  if (!res) return;
+
+  if (!query) {
+    res.hidden = true;
+    res.innerHTML = '';
+    return;
+  }
+
+  const existingIds = new Set(Array.from(document.querySelectorAll('#stocktake-table-body tr[data-product-id]')).map(r => r.dataset.productId));
+  const matches = state.products.filter(p => {
+    return `${p.id} ${p.name} ${p.category} ${p.batchNumber || ''}`.toLowerCase().includes(query);
+  }).slice(0, 15);
+
+  if (!matches.length) {
+    res.hidden = false;
+    res.innerHTML = '<div style="padding:10px 14px;color:var(--muted);font-size:12px">No matching products found</div>';
+    return;
+  }
+
+  res.hidden = false;
+  res.innerHTML = matches.map(p => {
+    const alreadyAdded = existingIds.has(p.id);
+    return `
+      <div class="stocktake-search-item" data-action="stocktake-pick-product" data-id="${esc(p.id)}" style="${alreadyAdded ? 'opacity:0.6' : ''}">
+        <div>
+          <strong style="font-size:12px">${esc(p.name)}</strong>
+          <small class="muted" style="display:block;font-size:10px">${esc(p.id)} · ${esc(p.category)} · Current: <b>${p.stock} ${esc(p.unit || '')}</b></small>
+        </div>
+        <button type="button" class="button small ${alreadyAdded ? '' : 'primary'}" style="font-size:10px;padding:3px 8px">
+          ${alreadyAdded ? 'Added' : '＋ Add'}
+        </button>
+      </div>
+    `;
+  }).join('');
+}
+
 // Inventory
 function renderInventory() {
   const rows = inventoryRowsFiltered();
@@ -2147,9 +2623,11 @@ function renderInventory() {
       <button class="button" data-action="export-inventory">↓ Export CSV</button>
       <button class="button" data-action="import-products">↑ Upload CSV</button>
       <button class="button" data-action="download-product-template">↓ CSV template</button>
+      <button class="button ${state.stocktakeDraft?.items?.length ? 'primary' : ''}" data-action="open-stocktake">${state.stocktakeDraft?.items?.length ? '▶ Resume stock take' : '▤ Stock take'}</button>
       <button class="button primary" data-action="new-product">＋ Add product</button>
     `)}
     <input id="product-csv-file" type="file" accept=".csv,text/csv" hidden>
+    ${renderStocktakeBanner()}
     <section class="summary-strip">
       <div class="summary-mini"><small>Total Products</small><strong>${state.products.length}</strong></div>
       <div class="summary-mini"><small>Stock Value (at cost)</small><strong>${money(state.products.reduce((sum, p) => sum + p.stock * p.cost, 0))}</strong></div>
@@ -2197,7 +2675,7 @@ function renderInventory() {
     <section class="panel stock-control-panel">
       <div class="panel-header"><div><h2 class="panel-title">Stock control</h2><p class="panel-subtitle">Count physical quantities or perform bulk adjustments.</p></div></div>
       <div class="stock-control-actions">
-        <button class="stock-control-card" data-action="bulk-stocktake"><span class="quick-icon">▤</span><span><strong>Stock take</strong><small>Enter physical counts and record variances</small></span><b>›</b></button>
+        <button class="stock-control-card" data-action="open-stocktake"><span class="quick-icon">▤</span><span><strong>Stock take</strong><small>${state.stocktakeDraft?.items?.length ? `Resume count (${state.stocktakeDraft.items.length} products in progress)` : 'Enter physical counts, verify expiry dates, and directly replace stock'}</small></span><b>›</b></button>
         <button class="stock-control-card" data-action="bulk-stock-adjust"><span class="quick-icon">±</span><span><strong>Bulk adjustment</strong><small>Set updated stock quantities for multiple products</small></span><b>›</b></button>
       </div>
     </section>
@@ -3393,7 +3871,7 @@ function switchBranch(id) {
   if(branch.id===activeBranch.id)return;
   snapshotCurrentBranch();activeBranch=branch;
   const saved=state.branchData?.[id]||{};
-  branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]||[]);});
+  branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]!==undefined?saved[key]:(key==='stocktakeDraft'?null:[]));});
   state.activeBranchId=branch.id;state.branch=branch.name;saveState();
   if(!canViewPage(page))page='dashboard';
   pageHistory.length=0;history.pushState({erpPage:page},'',`#${page}`);render();toast(`Switched to ${branch.name}`);
@@ -3639,6 +4117,67 @@ async function handleDialogSubmit(form) {
     state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: next, delta: next-before, reason: val('stock-reason') || 'Manual adjustment', user: currentWorkspaceUser().name });
     recordActivity('Stock adjusted',`${product.name} · ${before} → ${next}`,product.id);
     saveState(); document.getElementById('app-modal').close(); render(); toast('Stock adjusted'); return;
+  }
+  if (kind === 'finalize-stocktake') {
+    const reason = val('stocktake-reason') || 'Physical stock take count';
+    const rows = Array.from(document.querySelectorAll('#stocktake-table-body tr[data-product-id]'));
+    if (!rows.length) {
+      toast('Add at least one product to the stock take sheet');
+      return;
+    }
+
+    const updates = [];
+    for (const row of rows) {
+      const productId = row.dataset.productId;
+      const product = state.products.find(p => p.id === productId);
+      if (!product) continue;
+      const qtyInput = row.querySelector('.stocktake-qty-input');
+      const expInput = row.querySelector('.stocktake-exp-input');
+      const rawCount = qtyInput?.value.trim();
+      if (rawCount === '' || isNaN(Number(rawCount))) continue;
+      const newStock = Math.max(0, Number(rawCount));
+      const newExpiry = expInput ? expInput.value.trim() : (product.expiryDate || '');
+      updates.push({ product, newStock, newExpiry, before: product.stock, oldExpiry: product.expiryDate || '' });
+    }
+
+    if (!updates.length) {
+      toast('Enter a physical count for at least one product to apply stock take');
+      return;
+    }
+
+    let appliedChanges = 0;
+    const now = today();
+    for (const u of updates) {
+      const p = u.product;
+      const before = u.before;
+      const next = u.newStock;
+      p.stock = next;
+      if (u.newExpiry !== u.oldExpiry) {
+        p.expiryDate = u.newExpiry;
+      }
+      appliedChanges++;
+      if (next !== before) {
+        state.stockMovements.unshift({
+          id: idFor('STK', state.stockMovements),
+          productId: p.id,
+          product: p.name,
+          date: now,
+          before,
+          after: next,
+          delta: next - before,
+          reason,
+          user: currentWorkspaceUser().name
+        });
+      }
+    }
+
+    state.stocktakeDraft = null;
+    recordActivity('Stock take finalized', `${appliedChanges} product quantities directly updated · ${reason}`, 'STOCKTAKE');
+    saveState();
+    document.getElementById('app-modal')?.close();
+    render();
+    toast(`Stock take applied! Directly updated stock for ${appliedChanges} products.`);
+    return;
   }
   if (kind === 'bulk-adjust-stock') {
     const productId=val('bulk-product').split(' · ')[0],product=state.products.find(p=>p.id===productId);
@@ -4199,11 +4738,55 @@ function handleAction(button) {
       openDialog('adjust-stock','Adjust stock',`Set the new on-hand quantity for ${esc(product.name)}.`,`${inputField('stock-new-quantity','New quantity','','number',true,product.stock)}${inputField('stock-reason','Reason','e.g. Count correction')}`,'Save adjustment');
       document.getElementById('modal-content').dataset.recordId = id; break;
     }
-    case 'bulk-stock-adjust':
-    case 'bulk-stocktake': {
+    case 'bulk-stock-adjust': {
       if(!state.products.length){toast('Add products to Inventory before adjusting stock');break;}
       const options=state.products.map(p=>`${p.id} · ${p.name}`);
-      openDialog('bulk-adjust-stock',action==='bulk-stocktake'?'Stock take':'Bulk stock adjustment','Select a product and enter its verified on-hand count.',`${selectField('bulk-product','Product',options)}${inputField('bulk-quantity','Counted / new quantity','','number',true)}${inputField('stock-reason','Reason',action==='bulk-stocktake'?'e.g. Monthly stock take':'e.g. Damaged goods correction')}`,'Save stock');break;
+      openDialog('bulk-adjust-stock','Bulk stock adjustment','Select a product and enter its verified on-hand count.',`${selectField('bulk-product','Product',options)}${inputField('bulk-quantity','Counted / new quantity','','number',true)}${inputField('stock-reason','Reason','e.g. Damaged goods correction')}`,'Save stock');break;
+    }
+    case 'bulk-stocktake':
+    case 'open-stocktake':
+    case 'resume-stocktake': {
+      openStocktakeDialog();
+      break;
+    }
+    case 'pause-stocktake': {
+      pauseStocktakeSession();
+      break;
+    }
+    case 'discard-stocktake-draft': {
+      if (confirm('Discard in-progress stock take draft? Unapplied physical counts will be erased.')) {
+        state.stocktakeDraft = null;
+        saveState();
+        render();
+        document.getElementById('app-modal')?.close();
+        toast('Stock take draft discarded');
+      }
+      break;
+    }
+    case 'stocktake-remove-item': {
+      const row = button.closest('tr[data-product-id]');
+      if (row) {
+        row.remove();
+        updateStocktakeStats();
+        autoSaveStocktakeDraft();
+      }
+      break;
+    }
+    case 'stocktake-add-all': {
+      stocktakeAddAllActiveProducts();
+      break;
+    }
+    case 'stocktake-fill-current': {
+      stocktakeFillCurrentStock();
+      break;
+    }
+    case 'stocktake-clear-all': {
+      stocktakeClearAllCounts();
+      break;
+    }
+    case 'stocktake-pick-product': {
+      stocktakeAddSingleProduct(button.dataset.id || button.closest('[data-id]')?.dataset.id);
+      break;
     }
     case 'import-products': document.getElementById('product-csv-file')?.click(); break;
     case 'restore-trash': {
@@ -4619,6 +5202,10 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape') clos
 
 // Global Event Listeners
 document.addEventListener('click', event => {
+  if (!event.target.closest('.stocktake-search-wrap')) {
+    const sr = document.getElementById('stocktake-search-results');
+    if (sr) sr.hidden = true;
+  }
   const nav = event.target.closest('[data-page]');
   if (nav) {
     event.preventDefault();
@@ -4689,6 +5276,31 @@ document.addEventListener('input', event => {
     );
     refreshPermissionVisibility();
   }
+  if (event.target.classList.contains('stocktake-qty-input')) {
+    const row = event.target.closest('tr[data-product-id]');
+    if (row) {
+      const cur = Number(row.dataset.currentStock || 0);
+      const unit = row.dataset.productUnit || '';
+      const varCell = row.querySelector('.stocktake-var-cell');
+      if (varCell) varCell.innerHTML = renderStocktakeVariance(event.target.value, cur, unit);
+      updateStocktakeStats();
+      autoSaveStocktakeDraft();
+    }
+  }
+  if (event.target.classList.contains('stocktake-exp-input')) {
+    const row = event.target.closest('tr[data-product-id]');
+    if (row) {
+      const statusCell = row.querySelector('.stocktake-exp-status');
+      if (statusCell) statusCell.innerHTML = renderStocktakeExpiryBadge(event.target.value.trim());
+      autoSaveStocktakeDraft();
+    }
+  }
+  if (event.target.id === 'stocktake-search-input') {
+    handleStocktakeSearch(event.target.value);
+  }
+  if (event.target.id === 'stocktake-reason') {
+    autoSaveStocktakeDraft();
+  }
 });
 
 document.addEventListener('change', event => {
@@ -4741,6 +5353,13 @@ document.addEventListener('change', event => {
   if (event.target.id === 'product-csv-file' && event.target.files?.[0]) {
     const reader=new FileReader();reader.onload=()=>importProductsCSV(String(reader.result||''));reader.readAsText(event.target.files[0]);event.target.value='';
   }
+  if (event.target.id === 'stocktake-select-category') {
+    const cat = event.target.value;
+    if (cat) {
+      stocktakeAddCategory(cat);
+      event.target.value = '';
+    }
+  }
 });
 
 document.getElementById('theme-toggle')?.addEventListener('click', () => {
@@ -4754,6 +5373,24 @@ window.addEventListener('offline', updateConnection);
 
 // Keyboard shortcuts: / for POS search, Ctrl+K for general search
 document.addEventListener('keydown', event => {
+  if (event.target.id === 'stocktake-search-input' && event.key === 'Enter') {
+    event.preventDefault();
+    const firstItem = document.querySelector('#stocktake-search-results .stocktake-search-item');
+    if (firstItem) {
+      stocktakeAddSingleProduct(firstItem.dataset.id);
+    }
+    return;
+  }
+  if (event.target.classList.contains('stocktake-qty-input') && event.key === 'Enter') {
+    event.preventDefault();
+    const inputs = Array.from(document.querySelectorAll('.stocktake-qty-input'));
+    const idx = inputs.indexOf(event.target);
+    if (idx !== -1 && idx < inputs.length - 1) {
+      inputs[idx + 1].focus();
+      inputs[idx + 1].select();
+    }
+    return;
+  }
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
