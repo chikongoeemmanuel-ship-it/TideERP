@@ -5719,9 +5719,9 @@ body {
   }
 }
 
-/* Responsive interaction layer: compositor-friendly motion for high-refresh displays. */
+/* Responsive interaction layer: fast 1:1 hardware-accelerated fluid scrolling */
 html {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scroll-padding-top: calc(var(--topbar-height) + 14px)
 }
 
@@ -5730,15 +5730,12 @@ body,
 .page-wrap,
 .sidebar,
 .table-scroll {
-  overscroll-behavior: contain
+  overscroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .main-area {
   contain: layout style
-}
-
-.page-wrap {
-  will-change: scroll-position
 }
 
 .sidebar,
@@ -5750,16 +5747,11 @@ body,
 }
 
 .sidebar {
-  will-change: width, transform
-}
-
-.sidebar.open,
-.sidebar.collapsed.hover-expanded {
-  will-change: transform, width
+  will-change: transform;
 }
 
 .table-scroll {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: rgba(91, 119, 130, .55) transparent
@@ -5806,8 +5798,7 @@ body,
 }
 
 .page-wrap>* {
-  content-visibility: auto;
-  contain-intrinsic-size: 1px 480px
+  content-visibility: visible !important;
 }
 
 .page-heading,
@@ -8914,20 +8905,6 @@ textarea:focus {
 }
 
 /* Home Quick Actions Hub Layout */
-body.page-is-home .sidebar,
-body.page-is-home .sidebar-hover-zone {
-  display: none !important;
-  pointer-events: none !important;
-}
-
-body.page-is-home .main-area {
-  margin-left: 0 !important;
-}
-
-body.page-is-home #sidebar-toggle {
-  display: none !important;
-}
-
 .hub-container,
 .page-wrap>.hub-container {
   max-width: 1040px;
@@ -10656,4 +10633,168 @@ tr.row-revoked td strong {
   background: rgba(14, 165, 233, 0.2);
   color: #38bdf8;
   border-color: rgba(56, 189, 248, 0.35);
+}
+
+/* =========================================================
+   MOBILE RESPONSIVENESS & ANTI-OVERLAP ENHANCEMENTS
+   ========================================================= */
+
+/* 1. Mobile Sidebar Backdrop */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 14, 26, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 48;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+.sidebar-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 2. Sidebar button-driven responsive collapse */
+@media (min-width: 761px) {
+  .sidebar {
+    width: 252px !important;
+    transform: translateX(0) !important;
+    transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1), padding 0.2s ease !important;
+  }
+  .sidebar.collapsed {
+    width: 72px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  .sidebar.collapsed + .main-area {
+    margin-left: 72px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .sidebar {
+    position: fixed !important;
+    top: var(--topbar-height, 58px) !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 280px !important;
+    max-width: 82vw !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    z-index: 50 !important;
+    box-shadow: 8px 0 28px rgba(0, 0, 0, 0.35) !important;
+  }
+
+  .sidebar.open {
+    transform: translateX(0) !important;
+  }
+
+  .main-area {
+    margin-left: 0 !important;
+  }
+
+  .sidebar-hover-zone {
+    display: none !important;
+  }
+}
+
+/* 3. Topbar Layout: Eliminate overlapping buttons */
+.topbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.topbar-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex-shrink: 0 !important;
+  margin-left: auto !important;
+}
+
+.topbar-actions .icon-button {
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 16px !important;
+  border-radius: 9px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  position: relative !important;
+  overflow: visible !important;
+  box-sizing: border-box !important;
+}
+
+.topbar-actions .notification-button {
+  position: relative !important;
+}
+
+.notification-count {
+  position: absolute !important;
+  top: -4px !important;
+  right: -4px !important;
+  min-width: 16px !important;
+  height: 16px !important;
+  padding: 0 4px !important;
+  border-radius: 999px !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  line-height: 16px !important;
+  z-index: 3 !important;
+  pointer-events: none !important;
+}
+
+/* Mobile Topbar Specifics */
+@media (max-width: 760px) {
+  .topbar {
+    padding: 0 10px !important;
+    gap: 8px !important;
+  }
+
+  .topbar .today-label {
+    display: none !important;
+  }
+
+  .topbar .breadcrumb {
+    display: none !important;
+  }
+
+  .topbar .back-button span {
+    display: none !important;
+  }
+
+  .topbar-brand {
+    font-size: 17px !important;
+    gap: 6px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .topbar-brand .brand-mark {
+    width: 30px !important;
+    height: 30px !important;
+    font-size: 21px !important;
+  }
+
+  .topbar-actions {
+    gap: 7px !important;
+  }
+
+  .topbar-avatar {
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 11px !important;
+    flex-shrink: 0 !important;
+  }
 }
