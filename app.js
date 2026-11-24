@@ -7537,11 +7537,14 @@ document.addEventListener('keydown', event => {
   }
 });
 
-// Direct, deterministic sidebar toggle controller (button-driven, no pointer jitter)
-const SIDEBAR_COLLAPSED_KEY = 'tide-erp-sidebar-collapsed';
+// Sidebar Controller:
+// - PC (Desktop > 760px): Automatic hover-based collapse/extend (no toggle button)
+// - Phone (Mobile <= 760px): Button-driven toggle drawer with backdrop
 const sidebar = document.getElementById('sidebar');
 const sidebarToggleButton = document.getElementById('sidebar-toggle');
 const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+const sidebarHoverZone = document.getElementById('sidebar-hover-zone');
+let sidebarHoverTimer = 0;
 
 function isDesktopSidebar() {
   return window.innerWidth > 760;
@@ -7550,21 +7553,20 @@ function isDesktopSidebar() {
 function updateSidebarUI() {
   if (!sidebar) return;
   if (isDesktopSidebar()) {
-    const isCollapsed = safeStorageGet(SIDEBAR_COLLAPSED_KEY) === 'true';
-    sidebar.classList.toggle('collapsed', isCollapsed);
-    sidebar.classList.remove('open', 'hover-expanded', 'pinned-open');
+    // Desktop: default collapsed icon rail, hover auto-expands
+    sidebar.classList.add('collapsed');
+    sidebar.classList.remove('open');
     sidebarBackdrop?.classList.remove('active');
     if (sidebarToggleButton) {
-      const label = isCollapsed ? 'Expand navigation' : 'Collapse navigation';
-      sidebarToggleButton.setAttribute('aria-label', label);
-      sidebarToggleButton.setAttribute('title', label);
-      sidebarToggleButton.textContent = '☰';
+      sidebarToggleButton.hidden = true;
     }
   } else {
-    sidebar.classList.remove('collapsed', 'hover-expanded', 'pinned-open');
+    // Mobile: drawer driven by sidebarToggleButton
+    sidebar.classList.remove('collapsed', 'hover-expanded');
     const isOpen = sidebar.classList.contains('open');
     sidebarBackdrop?.classList.toggle('active', isOpen);
     if (sidebarToggleButton) {
+      sidebarToggleButton.hidden = false;
       const label = isOpen ? 'Close navigation' : 'Open navigation';
       sidebarToggleButton.setAttribute('aria-label', label);
       sidebarToggleButton.setAttribute('title', label);
@@ -7573,16 +7575,30 @@ function updateSidebarUI() {
   }
 }
 
-function toggleSidebar() {
-  if (!sidebar) return;
-  if (isDesktopSidebar()) {
-    const isCollapsed = sidebar.classList.contains('collapsed');
-    const nextCollapsed = !isCollapsed;
-    sidebar.classList.toggle('collapsed', nextCollapsed);
-    safeStorageSet(SIDEBAR_COLLAPSED_KEY, String(nextCollapsed));
-  } else {
-    sidebar.classList.toggle('open');
-  }
+// Automatic hover expansion for desktop
+function handleDesktopEnter() {
+  if (!isDesktopSidebar() || !sidebar) return;
+  clearTimeout(sidebarHoverTimer);
+  sidebar.classList.add('hover-expanded');
+}
+
+function handleDesktopLeave() {
+  if (!isDesktopSidebar() || !sidebar) return;
+  clearTimeout(sidebarHoverTimer);
+  sidebarHoverTimer = setTimeout(() => {
+    sidebar.classList.remove('hover-expanded');
+  }, 120);
+}
+
+sidebar?.addEventListener('mouseenter', handleDesktopEnter);
+sidebar?.addEventListener('mouseleave', handleDesktopLeave);
+sidebarHoverZone?.addEventListener('mouseenter', handleDesktopEnter);
+sidebarHoverZone?.addEventListener('mouseleave', handleDesktopLeave);
+
+// Mobile toggle button and backdrop interactions
+function toggleMobileSidebar() {
+  if (!sidebar || isDesktopSidebar()) return;
+  sidebar.classList.toggle('open');
   updateSidebarUI();
 }
 
@@ -7595,7 +7611,7 @@ function closeMobileSidebar() {
 
 sidebarToggleButton?.addEventListener('click', event => {
   event.stopPropagation();
-  toggleSidebar();
+  toggleMobileSidebar();
 });
 
 sidebarBackdrop?.addEventListener('click', closeMobileSidebar);

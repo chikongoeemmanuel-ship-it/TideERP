@@ -10657,24 +10657,108 @@ tr.row-revoked td strong {
   pointer-events: auto;
 }
 
-/* 2. Sidebar button-driven responsive collapse */
+/* 2. Responsive Sidebar:
+   - PC (min-width: 761px): Automatic collapsing & extending on hover; sidebar button hidden
+   - Phone (max-width: 760px): Sidebar button toggle drawer with backdrop */
 @media (min-width: 761px) {
-  .sidebar {
-    width: 252px !important;
-    transform: translateX(0) !important;
-    transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1), padding 0.2s ease !important;
+  #sidebar-toggle {
+    display: none !important; /* Button ONLY used on phone */
   }
-  .sidebar.collapsed {
+
+  .sidebar-hover-zone {
+    display: block !important;
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 24px;
+    z-index: 39;
+  }
+
+  .sidebar {
     width: 72px !important;
     padding-left: 10px !important;
     padding-right: 10px !important;
+    transform: translateX(0) !important;
+    transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease, padding 0.22s ease !important;
+    z-index: 45 !important;
+    overflow-x: hidden !important;
   }
-  .sidebar.collapsed + .main-area {
+
+  .main-area {
     margin-left: 72px !important;
+    transition: margin-left 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+
+  /* Automatic hover-extension on PC */
+  .sidebar:hover,
+  .sidebar.hover-expanded {
+    width: 252px !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    box-shadow: 12px 0 36px rgba(4, 14, 26, 0.35) !important;
+    z-index: 55 !important;
+  }
+
+  .sidebar:hover .workspace-switch,
+  .sidebar.hover-expanded .workspace-switch {
+    display: flex !important;
+    justify-content: flex-start !important;
+    padding: 8px 10px !important;
+  }
+
+  .sidebar:hover .workspace-copy,
+  .sidebar.hover-expanded .workspace-copy,
+  .sidebar:hover .nav-label,
+  .sidebar.hover-expanded .nav-label,
+  .sidebar:hover .profile-copy,
+  .sidebar.hover-expanded .profile-copy,
+  .sidebar:hover .offline-indicator span:not(.online-dot),
+  .sidebar.hover-expanded .offline-indicator span:not(.online-dot) {
+    display: block !important;
+  }
+
+  .sidebar:hover .nav-count,
+  .sidebar.hover-expanded .nav-count {
+    display: inline-flex !important;
+  }
+
+  .sidebar:hover .nav-item,
+  .sidebar.hover-expanded .nav-item {
+    justify-content: flex-start !important;
+    gap: 12px !important;
+    padding: 10px 12px !important;
+    font-size: 13.5px !important;
+  }
+
+  .sidebar:hover .nav-icon,
+  .sidebar.hover-expanded .nav-icon {
+    font-size: 17px !important;
+    width: 20px !important;
+  }
+
+  .sidebar:hover .profile-button,
+  .sidebar.hover-expanded .profile-button {
+    justify-content: flex-start !important;
+    padding: 8px 10px !important;
+  }
+
+  .sidebar:hover .offline-indicator,
+  .sidebar.hover-expanded .offline-indicator {
+    justify-content: flex-start !important;
+    padding: 0 8px 10px !important;
   }
 }
 
 @media (max-width: 760px) {
+  #sidebar-toggle {
+    display: inline-flex !important; /* Button ACTIVE on phone */
+  }
+
+  .sidebar-hover-zone {
+    display: none !important;
+  }
+
   .sidebar {
     position: fixed !important;
     top: var(--topbar-height, 58px) !important;
@@ -10694,10 +10778,6 @@ tr.row-revoked td strong {
 
   .main-area {
     margin-left: 0 !important;
-  }
-
-  .sidebar-hover-zone {
-    display: none !important;
   }
 }
 
