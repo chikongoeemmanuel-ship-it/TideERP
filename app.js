@@ -49,7 +49,7 @@ const initialState = {
       isBootstrap: true
     }
   ],
-  currentUserId: 'USR-OWNER',
+  currentUserId: '',
   companyAdminId: '',
   currency: 'TZS',
   vatEnabled: true,
@@ -302,125 +302,131 @@ const userActionPermissions = [
 ];
 
 function isAdministratorUser(user) {
-  if (!user || user.role === 'Guest') return false;
+  if (!user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
+  if (user.isBootstrap) return true;
   return Boolean(
     user.role === 'Owner / Administrator' ||
     user.role === 'Administrator' ||
     user.role === 'Admin' ||
-    user.role === 'Owner' ||
-    /admin|owner/i.test(user.role || '') ||
-    user.isBootstrap
+    user.role === 'Owner'
   );
 }
 
 function rolePermissionMap(role, modules = userRoleDefaults[role] || []) {
-  if (role === 'Owner / Administrator' || role === 'Administrator' || role === 'Admin' || role === 'Owner' || /admin|owner/i.test(role || '')) {
+  if (role === 'Owner / Administrator' || role === 'Administrator' || role === 'Admin' || role === 'Owner') {
     return Object.fromEntries(userActionPermissions.map(group => [group.module, group.actions.map(([action]) => action)]));
   }
   return Object.fromEntries(userActionPermissions.map(group => [group.module, modules.includes(group.module) ? group.actions.map(([action]) => action) : []]));
 }
 
 function effectiveUserPermissions(user = currentWorkspaceUser()) {
-  if (!user) return {};
-  if (isAdministratorUser(user)) return rolePermissionMap('Owner / Administrator');
-  const stored=user.permissions&&typeof user.permissions==='object'?user.permissions:{};
-  const explicit=Object.keys(stored).some(module=>module!=='*');
-  const modules=Array.isArray(user.modules)?user.modules:(userRoleDefaults[user.role]||[]);
-  const defaults=rolePermissionMap(user.role,modules),result={};
-  for(const group of userActionPermissions){
-    const selected=Array.isArray(stored[group.module])?stored[group.module]:(explicit?[]:defaults[group.module]||[]);
-    result[group.module]=selected.includes('*')?group.actions.map(([action])=>action):selected.filter(action=>group.actions.some(([candidate])=>candidate===action));
+  if (!user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return {};
+  if (user.isBootstrap) return rolePermissionMap('Owner / Administrator');
+  const stored = user.permissions && typeof user.permissions === 'object' ? user.permissions : {};
+  const explicit = Object.keys(stored).some(module => module !== '*');
+  const modules = Array.isArray(user.modules) ? user.modules : (userRoleDefaults[user.role] || []);
+  const defaults = rolePermissionMap(user.role, modules);
+  const result = {};
+  for (const group of userActionPermissions) {
+    const selected = Array.isArray(stored[group.module]) ? stored[group.module] : (explicit ? [] : defaults[group.module] || []);
+    result[group.module] = selected.includes('*') ? group.actions.map(([action]) => action) : selected.filter(action => group.actions.some(([candidate]) => candidate === action));
   }
   return result;
 }
 
-function userHasPermission(module,action,user=currentWorkspaceUser()) {
-  if(!user || user.role === 'Guest') return false;
-  if(isAdministratorUser(user))return true;
-  return (effectiveUserPermissions(user)[module]||[]).includes(action);
+function userHasPermission(module, action, user = currentWorkspaceUser()) {
+  if (!user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
+  if (user.isBootstrap) return true;
+  return (effectiveUserPermissions(user)[module] || []).includes(action);
 }
 
 function canViewPage(module, user = currentWorkspaceUser()) {
   if (module === 'home') return true;
-  if (!user || user.role === 'Guest') return false;
-  if (isAdministratorUser(user)) return true;
+  if (!user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
+  if (user.isBootstrap) return true;
+  if (module === 'dashboard') return userHasPermission('dashboard', 'view', user);
   if (module === 'pos') return userHasPermission('pos', 'open', user) || userHasPermission('pos', 'view', user);
-  if (module === 'products' || module === 'inventory') return userHasPermission('inventory', 'view', user);
+  if (module === 'products') return userHasPermission('inventory', 'view', user) || userHasPermission('inventory', 'add-products', user) || userHasPermission('inventory', 'edit-products', user);
+  if (module === 'inventory') return userHasPermission('inventory', 'stocktake', user) || userHasPermission('inventory', 'adjust-stock', user) || userHasPermission('inventory', 'stock-history', user);
   return userHasPermission(module, 'view', user);
 }
 
-function canPerformAction(action,element=null) {
-  if (!state.currentUserId || currentWorkspaceUser().role === 'Guest') return false;
-  if(isWorkspaceAdministrator())return true;
-  const type=element?.dataset?.partyType;
-  const require=(module,permission)=>userHasPermission(module,permission);
-  switch(action){
-    case 'new-order':return require('sales','create');
-    case 'edit-order':{const order=state.orders.find(item=>item.id===element?.dataset?.id);return order?.source==='POS'?(require('pos','draft')||require('pos','finalize')||require('sales','edit')):require('sales','edit');}
-    case 'finalize-order':{const order=state.orders.find(item=>item.id===element?.dataset?.id);return order?.source==='POS'?require('pos','finalize'):require('sales','edit');}
-    case 'view-order':return require('sales','view');
-    case 'print-order-invoice':return require('sales','print');
-    case 'add-order-payment':return require('sales','payments');
-    case 'manage-order-returns':return require('sales','returns');
-    case 'manage-delivery-issues':return require('sales','view')||require('sales','edit');
-    case 'toggle-discrepancy-status':case 'delete-discrepancy':return require('sales','edit');
-    case 'delete-order':return require('sales','delete');
-    case 'view-customer-orders':return require('customers','order-history');
-    case 'edit-party':return require(type==='Supplier'?'suppliers':'customers','edit');
-    case 'delete-party':return isWorkspaceAdministrator();
-    case 'toggle-party':return require(type==='Supplier'?'suppliers':'customers','activate');
-    case 'view-party-orders':return require(type==='Supplier'?'suppliers':'customers','order-history');
-    case 'add-cart':case 'cart-qty':case 'clear-cart':return require('pos','open');
-    case 'save-pos-draft':case 'resume-pos':return require('pos','draft');
-    case 'complete-pos':return require('pos','finalize');
-    case 'new-product':return require('inventory','add-products');
-    case 'edit-product':return require('inventory','edit-products');
-    case 'delete-product':return require('inventory','delete-products');
-    case 'bulk-delete-products':return require('inventory','delete-products');
-    case 'adjust-stock':case 'bulk-stock-adjust':return require('inventory','adjust-stock');
-    case 'bulk-stocktake':case 'open-stocktake':case 'finalize-stocktake':case 'resume-stocktake':case 'pause-stocktake':case 'discard-stocktake-draft':return require('inventory','stocktake');
-    case 'view-stocktake-session':return require('inventory','view');
-    case 'revoke-stocktake-session':case 'edit-stocktake-session':case 'delete-stocktake-session':
-    case 'revoke-stock-movement':case 'edit-stock-movement':case 'delete-stock-movement':
-      return isWorkspaceAdministrator();
-    case 'export-stocktakes':case 'export-stock-movements':return require('inventory','export');
-    case 'export-product-sales':case 'export-product-purchases':case 'export-payment-report':return require('reports','view');
-    case 'view-product-sales-history':case 'view-product-purchase-history':return require('reports','view');
-    case 'product-stock-history':return require('inventory','stock-history');
-    case 'import-products':return require('inventory','bulk-import');
-    case 'download-product-template':return require('inventory','export');
-    case 'export-expiry-report':return require('inventory','export');
-    case 'write-off-expired':return require('inventory','adjust-stock');
-    case 'clearance-discount':case 'edit-expiry':return require('inventory','edit-products');
-    case 'jump-to-expiry':case 'filter-expiry-tab':case 'set-report-tab':return true;
-    case 'new-purchase':return require('purchases','create');
-    case 'edit-purchase':return require('purchases','edit');
-    case 'receive-purchase':return require('purchases','receive');
-    case 'purchase-payment':return require('purchases','payments');
-    case 'return-purchase':return require('purchases','returns');
-    case 'delete-purchase':return require('purchases','delete');
-    case 'new-party':return require(type==='Supplier'?'suppliers':'customers','add');
-    case 'export-parties':return require(type==='Supplier'?'suppliers':'customers','export');
-    case 'record-payment':return page==='accounting'?require('accounting','record-payments'):type==='Supplier'?require('suppliers','payments'):type==='Customer'?require('customers','payments'):require('accounting','record-payments');
-    case 'view-account-ledger':return require('accounting','view')||(type==='Supplier'?require('suppliers','account-view'):require('customers','account-view'));
-    case 'reconcile-account':return require('accounting','manage-entries');
-    case 'set-report-period':return require('reports','view');
-    case 'export-financial-report':return require('reports','export');
-    case 'export-sales':return page==='reports'?require('reports','export'):require('sales','export');
-    case 'export-inventory':return page==='reports'?require('reports','export'):require('inventory','export');
-    case 'export-ledger':return page==='reports'?require('reports','export'):require('accounting','export');
-    case 'remove-company-logo':return require('settings','edit-logo');
-    case 'clear-trash':case 'restore-trash':return require('settings','edit-company');
-    case 'new-user':return require('users','add');
-    case 'edit-user':return isWorkspaceAdministrator()&&require('users','edit');
-    case 'set-user-credentials':return isWorkspaceAdministrator();
-    case 'edit-user-permissions':return isWorkspaceAdministrator()&&require('users','manage-permissions');
-    case 'toggle-user':return require('users','activate');
-    case 'delete-user':return isWorkspaceAdministrator()&&require('users','delete');
-    case 'new-branch':return isWorkspaceAdministrator()||require('branches','manage');
-    case 'open-branch':return userCanManageAllBranches()&&require('branches','open');
-    case 'select-transaction-product':case 'remove-transaction-product':return element?.dataset?.kind==='purchase'?require('purchases','create'):require('sales','create');
-    default:return true;
+function canPerformAction(action, element = null) {
+  if (['close-modal', 'view-attachment', 'delete-attachment', 'download-attachment', 'add-attachment', 'view-entry-attachments'].includes(action)) return true;
+  const user = currentWorkspaceUser();
+  if (!state.currentUserId || !user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
+  if (user.isBootstrap) return true;
+  const type = element?.dataset?.partyType;
+  const require = (module, permission) => userHasPermission(module, permission, user);
+  switch (action) {
+    case 'new-order': return require('sales', 'create');
+    case 'edit-order': { const order = state.orders.find(item => item.id === element?.dataset?.id); return order?.source === 'POS' ? (require('pos', 'draft') || require('pos', 'finalize') || require('sales', 'edit')) : require('sales', 'edit'); }
+    case 'finalize-order': { const order = state.orders.find(item => item.id === element?.dataset?.id); return order?.source === 'POS' ? require('pos', 'finalize') : require('sales', 'edit'); }
+    case 'view-order': return require('sales', 'view');
+    case 'print-order-invoice': return require('sales', 'print');
+    case 'add-order-payment': return require('sales', 'payments');
+    case 'manage-order-returns': return require('sales', 'returns');
+    case 'manage-delivery-issues': return require('sales', 'view') || require('sales', 'edit');
+    case 'toggle-discrepancy-status': case 'delete-discrepancy': return require('sales', 'edit');
+    case 'delete-order': return user.isBootstrap || (isAdministratorUser(user) && require('sales', 'delete'));
+    case 'view-customer-orders': return require('customers', 'order-history');
+    case 'edit-party': return require(type === 'Supplier' ? 'suppliers' : 'customers', 'edit');
+    case 'delete-party': return user.isBootstrap || (isAdministratorUser(user) && require(type === 'Supplier' ? 'suppliers' : 'customers', 'delete'));
+    case 'toggle-party': return require(type === 'Supplier' ? 'suppliers' : 'customers', 'activate');
+    case 'view-party-orders': return require(type === 'Supplier' ? 'suppliers' : 'customers', 'order-history');
+    case 'add-cart': case 'cart-qty': case 'clear-cart': return require('pos', 'open');
+    case 'save-pos-draft': case 'resume-pos': return require('pos', 'draft');
+    case 'complete-pos': return require('pos', 'finalize');
+    case 'new-product': return require('inventory', 'add-products');
+    case 'edit-product': return require('inventory', 'edit-products');
+    case 'delete-product': return require('inventory', 'delete-products');
+    case 'bulk-delete-products': return require('inventory', 'delete-products');
+    case 'adjust-stock': case 'bulk-stock-adjust': return require('inventory', 'adjust-stock');
+    case 'bulk-stocktake': case 'open-stocktake': case 'finalize-stocktake': case 'resume-stocktake': case 'pause-stocktake': case 'discard-stocktake-draft': return require('inventory', 'stocktake');
+    case 'view-stocktake-session': return require('inventory', 'view');
+    case 'revoke-stocktake-session': case 'edit-stocktake-session': case 'delete-stocktake-session':
+      return user.isBootstrap || (isAdministratorUser(user) && require('inventory', 'stocktake'));
+    case 'revoke-stock-movement': case 'edit-stock-movement': case 'delete-stock-movement':
+      return user.isBootstrap || (isAdministratorUser(user) && require('inventory', 'adjust-stock'));
+    case 'export-stocktakes': case 'export-stock-movements': return require('inventory', 'export');
+    case 'export-product-sales': case 'export-product-purchases': case 'export-payment-report': return require('reports', 'view');
+    case 'view-product-sales-history': case 'view-product-purchase-history': return require('reports', 'view');
+    case 'product-stock-history': return require('inventory', 'stock-history');
+    case 'import-products': return require('inventory', 'bulk-import');
+    case 'download-product-template': return require('inventory', 'export');
+    case 'export-expiry-report': return require('inventory', 'export');
+    case 'write-off-expired': return require('inventory', 'adjust-stock');
+    case 'clearance-discount': case 'edit-expiry': return require('inventory', 'edit-products');
+    case 'jump-to-expiry': case 'filter-expiry-tab': case 'set-report-tab': return true;
+    case 'view-purchase': return require('purchases', 'view');
+    case 'new-purchase': return require('purchases', 'create');
+    case 'edit-purchase': return require('purchases', 'edit');
+    case 'receive-purchase': return require('purchases', 'receive');
+    case 'purchase-payment': return require('purchases', 'payments');
+    case 'return-purchase': return require('purchases', 'returns');
+    case 'delete-purchase': return user.isBootstrap || (isAdministratorUser(user) && require('purchases', 'delete'));
+    case 'new-party': return require(type === 'Supplier' ? 'suppliers' : 'customers', 'add');
+    case 'export-parties': return require(type === 'Supplier' ? 'suppliers' : 'customers', 'export');
+    case 'record-payment': return page === 'accounting' ? require('accounting', 'record-payments') : type === 'Supplier' ? require('suppliers', 'payments') : type === 'Customer' ? require('customers', 'payments') : require('accounting', 'record-payments');
+    case 'view-account-ledger': return require('accounting', 'view') || (type === 'Supplier' ? require('suppliers', 'account-view') : require('customers', 'account-view'));
+    case 'reconcile-account': return require('accounting', 'manage-entries');
+    case 'set-report-period': return require('reports', 'view');
+    case 'export-financial-report': return require('reports', 'export');
+    case 'export-sales': return page === 'reports' ? require('reports', 'export') : require('sales', 'export');
+    case 'export-inventory': return page === 'reports' ? require('reports', 'export') : require('inventory', 'export');
+    case 'export-ledger': return page === 'reports' ? require('reports', 'export') : require('accounting', 'export');
+    case 'remove-company-logo': return require('settings', 'edit-logo');
+    case 'clear-trash': case 'restore-trash': return user.isBootstrap || (isAdministratorUser(user) && require('settings', 'edit-company'));
+    case 'new-user': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'add'));
+    case 'edit-user': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'edit'));
+    case 'set-user-credentials': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'edit'));
+    case 'edit-user-permissions': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'manage-permissions'));
+    case 'toggle-user': return require('users', 'activate');
+    case 'delete-user': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'delete'));
+    case 'new-branch': return user.isBootstrap || (isAdministratorUser(user) && require('branches', 'manage'));
+    case 'open-branch': return userCanManageAllBranches(user) && require('branches', 'open');
+    case 'select-transaction-product': case 'remove-transaction-product': return element?.dataset?.kind === 'purchase' ? require('purchases', 'create') : require('sales', 'create');
+    default: return true;
   }
 }
 
@@ -482,7 +488,205 @@ function renderAuthGate(message = '') {
   if (!gate || !shell) return;
   shell.hidden = true;
   gate.hidden = false;
-  gate.innerHTML = `<div class="auth-card"><div class="auth-brand"><span class="brand-mark">t</span><span>TideERP</span></div><h1>Sign in</h1><p>Use your own username or email and password to open your workspace.</p><form class="auth-form" id="login-form"><label>Username or email<input name="login-identifier" type="text" autocomplete="username" required autofocus></label><label>Password<input name="login-password" type="password" autocomplete="current-password" required></label><button class="button primary" type="submit">Sign in</button></form>${message ? `<div class="auth-error" role="alert">${esc(message)}</div>` : ''}</div>`;
+  gate.innerHTML = `
+    <div class="auth-gate-container">
+      <!-- Left Column: Living Accounting & Economics Observatory -->
+      <section class="auth-hero-economic" aria-label="Tide ERP Financial Observatory">
+        <div class="auth-hero-header">
+          <div class="auth-hero-brand">
+            <div class="hero-brand-mark">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="36" height="36">
+                <defs>
+                  <linearGradient id="heroMarkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#0a1e36"/>
+                    <stop offset="100%" stop-color="#163863"/>
+                  </linearGradient>
+                </defs>
+                <rect width="64" height="64" rx="18" fill="url(#heroMarkGrad)"/>
+                <rect width="60" height="60" x="2" y="2" rx="16" fill="none" stroke="#ff6a00" stroke-width="2.5" stroke-opacity="0.85"/>
+                <path d="M37 12v12h12v9H37v12c0 4 2 6 6 6h6v9h-8c-10 0-15-5-15-15V33H18v-9h8V12z" fill="#ffffff"/>
+              </svg>
+            </div>
+            <div>
+              <span class="hero-brand-name">Tide <span class="hero-brand-accent">ERP</span></span>
+              <span class="hero-brand-sub">Commercial &amp; Financial Workspace</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="auth-hero-center">
+          <div class="hero-caption">
+            <h1 class="hero-headline">Live Accounting Engine.<br><span class="highlight-orange">Precision at Every Step.</span></h1>
+            <p class="hero-subtext">Automated General Ledger, POS velocity, stock audits, and multi-branch intelligence tailored for high-growth enterprises in Tanzania.</p>
+          </div>
+
+          <!-- Live Economics & Accounting Stage -->
+          <div class="economic-stage">
+            <!-- Animated SVG Double-Entry Balance Scale -->
+            <div class="accounting-scale-wrap">
+              <div class="scale-equation-pill">
+                <span class="eq-term green">ASSETS</span>
+                <span class="eq-sym">=</span>
+                <span class="eq-term blue">LIABILITIES</span>
+                <span class="eq-sym">+</span>
+                <span class="eq-term orange">EQUITY</span>
+              </div>
+
+              <svg class="scale-svg" viewBox="0 0 460 150" width="100%" height="150" aria-label="Double-entry balance scale">
+                <defs>
+                  <linearGradient id="goldBeam" x1="0%" y1="0%" x2="100%" y2="0%" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stop-color="#f59e0b"/>
+                    <stop offset="50%" stop-color="#fde047"/>
+                    <stop offset="100%" stop-color="#f59e0b"/>
+                  </linearGradient>
+                  <linearGradient id="panGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stop-color="#14345c" stop-opacity="0.95"/>
+                    <stop offset="100%" stop-color="#08182b" stop-opacity="0.98"/>
+                  </linearGradient>
+                </defs>
+
+                <!-- Base and Central Pedestal -->
+                <path d="M 230 130 L 208 146 L 252 146 Z" fill="#1b395d" stroke="#335882" stroke-width="1.5"/>
+                <line x1="230" y1="35" x2="230" y2="130" stroke="#335882" stroke-width="3.5" stroke-linecap="round"/>
+                <circle cx="230" cy="35" r="7" fill="#fbbf24" stroke="#d97706" stroke-width="1.5"/>
+
+                <!-- Swaying Balance Beam -->
+                <g class="scale-beam-group">
+                  <rect x="65" y="32" width="330" height="6" rx="3" fill="url(#goldBeam)" stroke="#fbbf24" stroke-width="1"/>
+                  <circle cx="65" cy="35" r="4.5" fill="#fde047" stroke="#d97706" stroke-width="1"/>
+                  <circle cx="395" cy="35" r="4.5" fill="#fde047" stroke="#d97706" stroke-width="1"/>
+
+                  <!-- Left Pan: Assets -->
+                  <g class="left-pan-group">
+                    <line x1="65" y1="35" x2="35" y2="95" stroke="#5d88b4" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <line x1="65" y1="35" x2="95" y2="95" stroke="#5d88b4" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <path d="M 25 95 Q 65 120 105 95 Z" fill="url(#panGlow)" stroke="#10b981" stroke-width="2"/>
+                    <circle cx="65" cy="82" r="13" fill="#10b981" fill-opacity="0.25" stroke="#10b981" stroke-width="1.5"/>
+                    <text x="65" y="86" text-anchor="middle" font-size="10" font-weight="800" fill="#34d399">TSh</text>
+                    <text x="65" y="112" text-anchor="middle" font-size="9" font-weight="800" fill="#e2e8f0" letter-spacing="0.5">ASSETS</text>
+                  </g>
+
+                  <!-- Right Pan: Liabilities + Equity -->
+                  <g class="right-pan-group">
+                    <line x1="395" y1="35" x2="365" y2="95" stroke="#5d88b4" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <line x1="395" y1="35" x2="425" y2="95" stroke="#5d88b4" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <path d="M 355 95 Q 395 120 435 95 Z" fill="url(#panGlow)" stroke="#ff6a00" stroke-width="2"/>
+                    <circle cx="395" cy="82" r="13" fill="#ff6a00" fill-opacity="0.25" stroke="#ff6a00" stroke-width="1.5"/>
+                    <text x="395" y="86" text-anchor="middle" font-size="9" font-weight="800" fill="#fb923c">L+E</text>
+                    <text x="395" y="112" text-anchor="middle" font-size="8.5" font-weight="800" fill="#e2e8f0" letter-spacing="0.5">LIAB + EQUITY</text>
+                  </g>
+                </g>
+              </svg>
+            </div>
+
+            <!-- Dynamic Economic Metrics Card -->
+            <div class="economic-live-card">
+              <div class="live-card-header">
+                <div class="live-card-title">
+                  <span class="live-card-icon">📊</span>
+                  <div>
+                    <strong>Macro Cash Velocity &amp; Margins</strong>
+                    <small>Continuous Double-Entry Reconciliation</small>
+                  </div>
+                </div>
+                <div class="live-rate-tag">▲ +34.8% Margin</div>
+              </div>
+
+              <div class="live-bars-track">
+                <div class="live-bar-col">
+                  <div class="live-bar revenue-bar" style="--bar-h: 88%">
+                    <span class="bar-val">88%</span>
+                  </div>
+                  <span class="bar-name">Revenue</span>
+                </div>
+                <div class="live-bar-col">
+                  <div class="live-bar cogs-bar" style="--bar-h: 46%">
+                    <span class="bar-val">46%</span>
+                  </div>
+                  <span class="bar-name">COGS</span>
+                </div>
+                <div class="live-bar-col">
+                  <div class="live-bar margin-bar" style="--bar-h: 74%">
+                    <span class="bar-val">74%</span>
+                  </div>
+                  <span class="bar-name">Margin</span>
+                </div>
+                <div class="live-bar-col">
+                  <div class="live-bar cashflow-bar" style="--bar-h: 94%">
+                    <span class="bar-val">94%</span>
+                  </div>
+                  <span class="bar-name">Cash Flow</span>
+                </div>
+              </div>
+
+              <!-- Floating Economic Elements -->
+              <div class="floating-badge badge-delta" title="Marginal Revenue Velocity">
+                <span>Δ +18.4%</span>
+              </div>
+              <div class="floating-badge badge-sigma" title="Total General Ledger Sum">
+                <span>Σ Balanced</span>
+              </div>
+              <div class="floating-badge badge-vat" title="TRA Tanzania 18% Standard VAT">
+                <span>TRA 18%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="auth-hero-footer">
+          <div class="economic-ticker">
+            <div class="ticker-item"><span class="ticker-dot green"></span> General Ledger: <strong>100% Balanced</strong></div>
+            <div class="ticker-sep">•</div>
+            <div class="ticker-item"><span class="ticker-dot orange"></span> TRA Fiscalization: <strong>18% VAT Active</strong></div>
+            <div class="ticker-sep">•</div>
+            <div class="ticker-item"><span class="ticker-dot blue"></span> Currency: <strong>TSh (TZS)</strong></div>
+            <div class="ticker-sep">•</div>
+            <div class="ticker-item"><span class="ticker-dot purple"></span> Multi-Branch Sync: <strong>Connected</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Practical & Modern Sign-in Form -->
+      <section class="auth-card-panel" aria-label="Sign in form">
+        <div class="auth-card-inner">
+          <div class="auth-card-top">
+            <div class="auth-mobile-header">
+              <span class="brand-mark-sm">t</span>
+              <strong>Tide ERP</strong>
+            </div>
+            <h2>Sign in to Workspace</h2>
+            <p>Access your commercial accounting ledger, point-of-sale terminals, and inventory controls.</p>
+          </div>
+
+          <form class="auth-form-modern" id="login-form">
+            <div class="form-group">
+              <label for="login-identifier">Username or Email Address</label>
+              <div class="input-wrap">
+                <span class="input-icon">👤</span>
+                <input name="login-identifier" id="login-identifier" type="text" autocomplete="username" placeholder="e.g. Admin or your@email.com" required autofocus>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="login-password">Password</label>
+              <div class="input-wrap">
+                <span class="input-icon">🔑</span>
+                <input name="login-password" id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+                <button type="button" class="pwd-visibility-toggle" id="toggle-password-btn" aria-label="Toggle password visibility" title="Show or hide password">👁</button>
+              </div>
+            </div>
+
+            <button class="button primary login-submit-btn" type="submit">
+              <span>Sign in to Workspace</span>
+              <span class="btn-arrow">→</span>
+            </button>
+          </form>
+
+          ${message ? `<div class="auth-error-banner" role="alert">⚠️ ${esc(message)}</div>` : ''}
+        </div>
+      </section>
+    </div>
+  `;
   gate.querySelector('input[name="login-identifier"]')?.focus();
 }
 
@@ -508,6 +712,9 @@ async function handleLogin(form) {
   catch (error) { renderAuthGate(error.message || 'Sign-in could not be completed.'); return; }
   if (!valid) { renderAuthGate('The username/email or password is incorrect, or this account is inactive.'); return; }
   state.currentUserId = user.id;
+  state.posCart = [];
+  tableQuery = '';
+  selectedProductIds.clear();
   if(!activateAssignedBranch(user)){
     state.currentUserId='';
     renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
@@ -526,6 +733,11 @@ async function handleLogin(form) {
 function logout() {
   safeSessionRemove(AUTH_SESSION_KEY);
   state.currentUserId = '';
+  state.posCart = [];
+  tableQuery = '';
+  selectedProductIds.clear();
+  page = 'home';
+  saveState();
   document.getElementById('app-modal')?.close();
   renderAuthGate();
 }
@@ -579,13 +791,8 @@ function currentWorkspaceUser() {
   if (state.currentUserId) {
     const user = (state.users || []).find(u => u.id === state.currentUserId && u.status !== 'Inactive');
     if (user) return user;
-    const anyUser = (state.users || []).find(u => u.id === state.currentUserId);
-    if (anyUser) return anyUser;
   }
-  if (state.users && state.users.length) {
-    return state.users.find(u => u.status !== 'Inactive') || state.users[0];
-  }
-  return { name: 'Guest', role: 'Guest', modules: [], permissions: {} };
+  return { id: '', name: 'Guest', role: 'Guest', modules: [], permissions: {}, status: 'Inactive' };
 }
 
 function isWorkspaceAdministrator() {
@@ -714,12 +921,19 @@ function refreshBranchSwitcher() {
 }
 
 function canViewActivity() {
-  return userHasPermission('dashboard','business-performance')||userHasPermission('dashboard','stock-alerts');
+  const user = currentWorkspaceUser();
+  if (!user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
+  if (user.isBootstrap) return true;
+  return userHasPermission('dashboard', 'business-performance', user) || userHasPermission('dashboard', 'stock-alerts', user);
 }
 
 function refreshActivityVisibility() {
   const button = document.getElementById('activity-button');
-  if (button) button.hidden = !canViewActivity();
+  if (button) {
+    const allowed = canViewActivity();
+    button.hidden = !allowed;
+    button.style.display = allowed ? '' : 'none';
+  }
 }
 
 function recordActivity(action, details, reference = '') {
@@ -730,22 +944,23 @@ function recordActivity(action, details, reference = '') {
 }
 
 function notificationItems() {
-  const items=[];
-  if(userHasPermission('dashboard','stock-alerts')||canViewPage('inventory')){
-    const low=state.products.filter(product=>product.status!=='Draft'&&Number(product.stock)<=Number(product.low));
-    if(low.length)items.push({icon:'▤',title:`${low.length} low-stock product${low.length===1?'':'s'}`,detail:low.slice(0,3).map(product=>`${product.name} (${product.stock} left)`).join(' · '),page:'inventory',tone:'warning'});
+  const user = currentWorkspaceUser();
+  const items = [];
+  if (userHasPermission('dashboard', 'stock-alerts', user) || canViewPage('inventory', user) || canViewPage('products', user)) {
+    const low = state.products.filter(product => product.status !== 'Draft' && Number(product.stock) <= Number(product.low));
+    if (low.length) items.push({ icon: '▤', title: `${low.length} low-stock product${low.length === 1 ? '' : 's'}`, detail: low.slice(0, 3).map(product => `${product.name} (${product.stock} left)`).join(' · '), page: canViewPage('inventory', user) ? 'inventory' : 'products', tone: 'warning' });
   }
-  if(canViewPage('sales')||canViewPage('accounting')){
-    const due=state.orders.filter(order=>order.status!=='Draft'&&Number(order.total)>Number(order.paid||0));
-    const overdue=due.filter(order=>String(order.due||order.date)<today());
-    if(overdue.length)items.push({icon:'◷',title:`${overdue.length} overdue customer balance${overdue.length===1?'':'s'}`,detail:`${money(overdue.reduce((sum,order)=>sum+Math.max(0,order.total-(order.paid||0)),0))} outstanding`,page:'sales',tone:'danger'});
-    else if(due.length)items.push({icon:'◷',title:`${due.length} unpaid customer order${due.length===1?'':'s'}`,detail:`${money(due.reduce((sum,order)=>sum+Math.max(0,order.total-(order.paid||0)),0))} outstanding`,page:'sales',tone:'warning'});
+  if (canViewPage('sales', user) || canViewPage('accounting', user)) {
+    const due = state.orders.filter(order => order.status !== 'Draft' && Number(order.total) > Number(order.paid || 0));
+    const overdue = due.filter(order => String(order.due || order.date) < today());
+    if (overdue.length) items.push({ icon: '◷', title: `${overdue.length} overdue customer balance${overdue.length === 1 ? '' : 's'}`, detail: `${money(overdue.reduce((sum, order) => sum + Math.max(0, order.total - (order.paid || 0)), 0))} outstanding`, page: canViewPage('sales', user) ? 'sales' : 'accounting', tone: 'danger' });
+    else if (due.length) items.push({ icon: '◷', title: `${due.length} unpaid customer order${due.length === 1 ? '' : 's'}`, detail: `${money(due.reduce((sum, order) => sum + Math.max(0, order.total - (order.paid || 0)), 0))} outstanding`, page: canViewPage('sales', user) ? 'sales' : 'accounting', tone: 'warning' });
   }
-  if(canViewPage('purchases')){
-    const pending=state.purchases.filter(purchase=>purchase.status==='Pending');
-    if(pending.length)items.push({icon:'⇩',title:`${pending.length} purchase order${pending.length===1?'':'s'} awaiting receipt`,detail:'Receive items to update stock.',page:'purchases',tone:'info'});
-    const payable=accountOutstandingTotal('Supplier');
-    if(payable)items.push({icon:'◈',title:'Supplier balances outstanding',detail:`${money(payable)} payable`,page:canViewPage('accounting')?'accounting':'purchases',tone:'warning'});
+  if (canViewPage('purchases', user)) {
+    const pending = state.purchases.filter(purchase => purchase.status === 'Pending');
+    if (pending.length) items.push({ icon: '⇩', title: `${pending.length} purchase order${pending.length === 1 ? '' : 's'} awaiting receipt`, detail: 'Receive items to update stock.', page: 'purchases', tone: 'info' });
+    const payable = accountOutstandingTotal('Supplier');
+    if (payable && (canViewPage('accounting', user) || canViewPage('suppliers', user))) items.push({ icon: '◈', title: 'Supplier balances outstanding', detail: `${money(payable)} payable`, page: canViewPage('accounting', user) ? 'accounting' : 'purchases', tone: 'warning' });
   }
   return items;
 }
@@ -926,12 +1141,49 @@ function setPage(next) {
 }
 
 function refreshPermissionVisibility() {
-  document.querySelectorAll('.nav-item[data-page]').forEach(nav=>{
-    const allowed=canViewPage(nav.dataset.page);
-    nav.hidden=!allowed;
+  const user = currentWorkspaceUser();
+
+  // 1. Sidebar Nav Items and Group Labels
+  let workspaceVisibleCount = 0;
+  let manageVisibleCount = 0;
+
+  document.querySelectorAll('.primary-nav .nav-item[data-page]').forEach(nav => {
+    const pageName = nav.dataset.page;
+    const allowed = canViewPage(pageName, user);
+    nav.hidden = !allowed;
+    nav.style.display = allowed ? '' : 'none';
+
+    const isManage = ['customers', 'suppliers', 'users', 'branches', 'accounting', 'reports', 'settings'].includes(pageName);
+    if (allowed) {
+      if (isManage) manageVisibleCount++;
+      else workspaceVisibleCount++;
+    }
   });
-  document.querySelectorAll('#page-content [data-action]').forEach(button=>{
-    button.hidden=!canPerformAction(button.dataset.action,button);
+
+  const workspaceLabel = document.querySelector('.primary-nav .nav-label:not(.nav-label-spaced)');
+  if (workspaceLabel) {
+    workspaceLabel.hidden = workspaceVisibleCount === 0;
+    workspaceLabel.style.display = workspaceVisibleCount === 0 ? 'none' : '';
+  }
+  const manageLabel = document.querySelector('.primary-nav .nav-label.nav-label-spaced');
+  if (manageLabel) {
+    manageLabel.hidden = manageVisibleCount === 0;
+    manageLabel.style.display = manageVisibleCount === 0 ? 'none' : '';
+  }
+
+  // 2. Hide ANY element in the app linking to a restricted page
+  document.querySelectorAll('[data-page]').forEach(el => {
+    if (el.classList.contains('topbar-brand') || el.dataset.page === 'home') return;
+    const allowed = canViewPage(el.dataset.page, user);
+    el.hidden = !allowed;
+    el.style.display = allowed ? '' : 'none';
+  });
+
+  // 3. Hide ANY action button that the user cannot perform
+  document.querySelectorAll('[data-action]').forEach(el => {
+    const allowed = canPerformAction(el.dataset.action, el);
+    el.hidden = !allowed;
+    el.style.display = allowed ? '' : 'none';
   });
 }
 
@@ -1124,6 +1376,193 @@ function openModal(title, subtitle, content, confirmLabel = 'Save', extraAction 
   modal.showModal();
 }
 
+/* =========================================================
+   ATTACHMENTS SUBSYSTEM
+   ========================================================= */
+
+let currentDraftAttachments = [];
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function findAttachmentById(attId) {
+  if (!attId) return null;
+  const inDraft = currentDraftAttachments.find(a => a.id === attId);
+  if (inDraft) return { attachment: inDraft, source: 'draft' };
+  for (const o of state.orders || []) {
+    const found = (o.attachments || []).find(a => a.id === attId);
+    if (found) return { attachment: found, record: o, recordType: 'order' };
+  }
+  for (const s of state.sales || []) {
+    const found = (s.attachments || []).find(a => a.id === attId);
+    if (found) return { attachment: found, record: s, recordType: 'order' };
+  }
+  for (const p of state.purchases || []) {
+    const found = (p.attachments || []).find(a => a.id === attId);
+    if (found) return { attachment: found, record: p, recordType: 'purchase' };
+  }
+  for (const e of state.entries || []) {
+    const found = (e.attachments || []).find(a => a.id === attId);
+    if (found) return { attachment: found, record: e, recordType: 'entry' };
+  }
+  return null;
+}
+
+function renderAttachmentCards(attachments = [], options = {}) {
+  if (!attachments || !attachments.length) return '';
+  return attachments.map(att => {
+    const isPdf = att.type === 'application/pdf' || (att.name || '').toLowerCase().endsWith('.pdf');
+    const previewContent = isPdf
+      ? `<div class="att-thumb-pdf"><span class="pdf-tag">PDF</span></div>`
+      : `<img class="att-thumb-img" src="${att.data}" alt="${esc(att.name)}" loading="lazy">`;
+    return `
+      <div class="attachment-item-card" data-att-id="${esc(att.id)}">
+        <div class="att-item-left" data-action="view-attachment" data-att-id="${esc(att.id)}" title="Click to view ${esc(att.name)}" role="button" tabindex="0">
+          <div class="att-thumb">${previewContent}</div>
+          <div class="att-details">
+            <strong class="att-filename" title="${esc(att.name)}">${esc(att.name)}</strong>
+            <span class="att-metadata">${formatBytes(att.size)} · ${dateLabel(att.date || att.uploadedAt)} · ${esc(att.uploadedBy || 'User')}</span>
+          </div>
+        </div>
+        <div class="att-item-actions">
+          <button type="button" class="icon-btn-ghost" data-action="view-attachment" data-att-id="${esc(att.id)}" title="Preview file" aria-label="Preview">👁️</button>
+          <button type="button" class="icon-btn-ghost" data-action="download-attachment" data-att-id="${esc(att.id)}" title="Download file" aria-label="Download">⬇️</button>
+          ${options.allowDelete ? `<button type="button" class="icon-btn-ghost is-danger" data-action="delete-attachment" data-att-id="${esc(att.id)}" data-record-id="${esc(options.recordId || '')}" data-scope="${esc(options.scope || '')}" title="Delete attachment" aria-label="Delete">✕</button>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderAttachmentUploader(existingAttachments = [], scope = 'general') {
+  currentDraftAttachments = Array.isArray(existingAttachments) ? structuredClone(existingAttachments) : [];
+  return `
+    <div class="attachments-wrap" data-attachment-scope="${esc(scope)}">
+      <div class="attachments-header">
+        <div class="attachments-heading">
+          <span class="att-clip-icon">📎</span>
+          <div>
+            <strong>Attachments</strong>
+            <small>Attach photos, invoices, receipts, or PDF documents</small>
+          </div>
+        </div>
+        <label class="button small secondary file-browse-btn" for="attachment-file-input">
+          <span>＋ Browse files</span>
+          <input type="file" id="attachment-file-input" multiple accept="image/*,.pdf,application/pdf" style="display:none">
+        </label>
+      </div>
+      <div class="attachments-dropzone" id="attachments-dropzone" tabindex="0" role="button" aria-label="Drop files here or click to browse">
+        <span class="drop-icon">📁</span>
+        <div class="drop-prompt">
+          <strong>Drag &amp; drop photos or PDFs here</strong>
+          <small>Or click to browse from device (Max 8MB per file)</small>
+        </div>
+      </div>
+      <div class="attachments-list ${!currentDraftAttachments.length ? 'is-empty' : ''}" id="attachments-list">
+        ${renderAttachmentCards(currentDraftAttachments, { allowDelete: true })}
+      </div>
+    </div>
+  `;
+}
+
+function renderAttachmentsGallery(attachments = [], { scope, recordId, canAdd = true }) {
+  const count = (attachments || []).length;
+  const cards = renderAttachmentCards(attachments, { allowDelete: true, recordId, scope });
+  return `
+    <div class="attachments-wrap attachments-gallery-wrap" data-gallery-scope="${esc(scope)}" data-record-id="${esc(recordId)}">
+      <div class="attachments-header">
+        <div class="attachments-heading">
+          <span class="att-clip-icon">📎</span>
+          <div>
+            <strong>Attachments (${count})</strong>
+            <small>View or upload photos, invoices, receipts, or PDF documents</small>
+          </div>
+        </div>
+        ${canAdd ? `
+          <label class="button small primary file-browse-btn" for="gallery-file-input-${esc(recordId)}">
+            <span>＋ Add attachment</span>
+            <input type="file" id="gallery-file-input-${esc(recordId)}" data-gallery-record-id="${esc(recordId)}" data-gallery-scope="${esc(scope)}" multiple accept="image/*,.pdf,application/pdf" style="display:none">
+          </label>
+        ` : ''}
+      </div>
+      <div class="attachments-list ${count === 0 ? 'is-empty' : ''}" id="gallery-attachments-list-${esc(recordId)}">
+        ${cards || `<div class="attachments-empty-state"><span style="font-size:24px">📄</span><p>No documents attached to this record yet.</p><small>Click <strong>＋ Add attachment</strong> above to upload documents or photos.</small></div>`}
+      </div>
+    </div>
+  `;
+}
+
+function openAttachmentViewer(att) {
+  if (!att) { toast('Attachment not found'); return; }
+  const isPdf = att.type === 'application/pdf' || (att.name || '').toLowerCase().endsWith('.pdf');
+  let content = '';
+  if (isPdf) {
+    content = `
+      <div class="attachment-preview-container pdf-container" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface,#f1f5f9);padding:10px 14px;border-radius:8px">
+          <span>📄 <strong>${esc(att.name)}</strong> (${formatBytes(att.size)})</span>
+          <a class="button small primary" href="${att.data}" target="_blank" download="${esc(att.name)}">Open / Download PDF ↗</a>
+        </div>
+        <iframe src="${att.data}" style="width:100%;height:60vh;border-radius:8px;border:1px solid var(--line);background:#525659" title="PDF Document Viewer"></iframe>
+      </div>
+    `;
+  } else {
+    content = `
+      <div class="attachment-preview-container image-container" style="text-align:center;padding:12px;background:rgba(0,0,0,0.03);border-radius:8px">
+        <img src="${att.data}" alt="${esc(att.name)}" style="max-width:100%;max-height:65vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,0.12)">
+      </div>
+    `;
+  }
+  const extra = `<button type="button" class="button" data-action="download-attachment" data-att-id="${esc(att.id)}">⬇️ Download (${formatBytes(att.size)})</button>`;
+  openModal(`Preview: ${esc(att.name)}`, `${formatBytes(att.size)} · Uploaded ${dateLabel(att.date || att.uploadedAt)} by ${esc(att.uploadedBy || 'User')}`, content, 'Close', extra);
+}
+
+function downloadAttachment(att) {
+  if (!att || !att.data) return;
+  const a = document.createElement('a');
+  a.href = att.data;
+  a.download = att.name || 'attachment';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function handleFilesSelected(files, onFileLoaded) {
+  if (!files || !files.length) return;
+  const maxBytes = 8 * 1024 * 1024;
+  Array.from(files).forEach(file => {
+    if (file.size > maxBytes) {
+      toast(`"${file.name}" exceeds 8MB maximum size`);
+      return;
+    }
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isImage && !isPdf) {
+      toast(`"${file.name}" is not a supported image or PDF file`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const att = {
+        id: 'att_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        name: file.name,
+        type: file.type || (isPdf ? 'application/pdf' : 'image/jpeg'),
+        size: file.size,
+        date: new Date().toISOString(),
+        uploadedBy: currentWorkspaceUser()?.name || 'Administrator',
+        data: e.target.result
+      };
+      onFileLoaded(att);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function openDeleteChoice(button, title, details, keepLabel = 'Delete, keep records', eraseLabel = 'Delete everything') {
   const modal = document.getElementById('app-modal');
   const form = document.getElementById('modal-content');
@@ -1182,7 +1621,7 @@ function renderHome() {
   const canViewPurchases = canViewPage('purchases', user);
   const canViewAccounting = canViewPage('accounting', user);
   const canViewReports = canViewPage('reports', user);
-  const canViewFinances = canViewSales || canViewPurchases || canViewAccounting || canViewReports || isAdministratorUser(user);
+  const canViewFinances = canViewSales || canViewPurchases || canViewAccounting || canViewReports || user.isBootstrap;
 
   const todayStr = today();
   const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.sales || []);
@@ -1443,10 +1882,50 @@ function recentSalesTable(rows = state.sales.slice(0, 5)) {
 }
 
 function renderDashboard() {
+  const user = currentWorkspaceUser();
+  const canSales = canViewPage('sales', user);
+  const canPOS = canViewPage('pos', user);
+  const canInventory = canViewPage('inventory', user) || canViewPage('products', user);
+  const canCustomers = canViewPage('customers', user);
+  const canSuppliers = canViewPage('suppliers', user);
+  const canAccounting = canViewPage('accounting', user);
+  const canReports = canViewPage('reports', user);
+
   const monthSales = dashboardSales().reduce((sum, s) => sum + s.total, 0);
   const receivable = accountOutstandingTotal('Customer');
   const payable = accountOutstandingTotal('Supplier');
   const low = state.products.filter(p => p.stock <= p.low).length;
+
+  const metrics = [];
+  if (canSales || canReports) {
+    metrics.push(metric('Total sales', money(monthSales), '↗', `${dashboardRange} · across all channels`));
+    metrics.push(metric('Orders', String(state.orders.length + state.sales.length), '▤', 'Orders & POS transactions'));
+  }
+  if (canCustomers || canAccounting) {
+    metrics.push(metric('To collect', money(receivable), '◷', `${state.customers.filter(c => c.balance > 0).length} customers · outstanding`, 'down'));
+  }
+  if (canInventory) {
+    metrics.push(metric('Stock alerts', String(low), '⚑', low ? `${low} products need attention` : 'All stock levels healthy', low ? 'down' : 'up'));
+  }
+
+  const quickActions = [];
+  if (canPOS && canPerformAction('add-cart')) {
+    quickActions.push(`<button class="quick-action" data-page="pos"><span class="quick-icon">▦</span><span class="quick-copy"><strong>Open point of sale</strong><small>Start a quick checkout</small></span><span class="quick-arrow">›</span></button>`);
+  }
+  if (canSales && canPerformAction('new-order')) {
+    quickActions.push(`<button class="quick-action" data-action="new-order"><span class="quick-icon">↗</span><span class="quick-copy"><strong>Create sales order</strong><small>For a customer or business</small></span><span class="quick-arrow">›</span></button>`);
+  }
+  if (canInventory && canPerformAction('new-product')) {
+    quickActions.push(`<button class="quick-action" data-action="new-product"><span class="quick-icon">＋</span><span class="quick-copy"><strong>Add a product</strong><small>Update your catalogue</small></span><span class="quick-arrow">›</span></button>`);
+  }
+  if ((canAccounting || canCustomers || canSuppliers) && canPerformAction('record-payment')) {
+    quickActions.push(`<button class="quick-action" data-action="record-payment"><span class="quick-icon">◈</span><span class="quick-copy"><strong>Record a payment</strong><small>Customer or supplier account</small></span><span class="quick-arrow">›</span></button>`);
+  }
+
+  const notes = [];
+  if ((canSuppliers || canAccounting) && payable > 0) notes.push(`${money(payable)} payable to suppliers`);
+  if (canInventory) notes.push(`${low} low stock items`);
+
   return `
     ${heading(esc(greetingTitle()), 'Here’s what’s happening with your business today.', `
       <select class="select-control" id="dashboard-range">
@@ -1454,35 +1933,29 @@ function renderDashboard() {
         <option ${dashboardRange === 'This week' ? 'selected' : ''}>This week</option>
         <option ${dashboardRange === 'Today' ? 'selected' : ''}>Today</option>
       </select>
-      <button class="button primary" data-action="new-order"><span>＋</span> New sale</button>
+      ${canPerformAction('new-order') ? '<button class="button primary" data-action="new-order"><span>＋</span> New sale</button>' : ''}
     `)}
-    <section class="metric-grid">
-      ${metric('Total sales', money(monthSales), '↗', `${dashboardRange} · across all channels`)}
-      ${metric('Orders', String(state.orders.length + state.sales.length), '▤', 'Orders & POS transactions')}
-      ${metric('To collect', money(receivable), '◷', `${state.customers.filter(c => c.balance > 0).length} customers · outstanding`, 'down')}
-      ${metric('Stock alerts', String(low), '⚑', low ? `${low} products need attention` : 'All stock levels healthy', low ? 'down' : 'up')}
-    </section>
+    ${metrics.length ? `<section class="metric-grid">${metrics.join('')}</section>` : ''}
+    ${(canSales || canReports) ? `
     <section class="dashboard-grid">
       <article class="panel">
         <div class="panel-header"><div><h2 class="panel-title">Sales performance</h2><p class="panel-subtitle">Daily sales · ${esc(dashboardRange.toLowerCase())}</p></div><div class="legend"><span><i></i>Sales</span></div></div>
         ${barChart(dashboardRange)}
       </article>
       <article class="panel">
-        <div class="panel-header"><div><h2 class="panel-title">Sales by payment method</h2><p class="panel-subtitle">Share of transaction value · ${esc(dashboardRange.toLowerCase())}</p></div><button class="text-link" data-page="reports">Details</button></div>
+        <div class="panel-header"><div><h2 class="panel-title">Sales by payment method</h2><p class="panel-subtitle">Share of transaction value · ${esc(dashboardRange.toLowerCase())}</p></div>${canReports ? '<button class="text-link" data-page="reports">Details</button>' : ''}</div>
         ${paymentMix(dashboardRange)}
       </article>
     </section>
+    ` : ''}
     <section class="recent-grid">
-      ${recentSalesTable()}
+      ${canSales ? recentSalesTable() : '<article class="table-panel"><div class="empty-state">No sales activity allowed for this account.</div></article>'}
       <aside class="quick-panel">
         <div class="panel-header"><div><h2 class="panel-title">Quick actions</h2><p class="panel-subtitle">Get the important things done</p></div></div>
         <div class="quick-list">
-          <button class="quick-action" data-page="pos"><span class="quick-icon">▦</span><span class="quick-copy"><strong>Open point of sale</strong><small>Start a quick checkout</small></span><span class="quick-arrow">›</span></button>
-          <button class="quick-action" data-action="new-order"><span class="quick-icon">↗</span><span class="quick-copy"><strong>Create sales order</strong><small>For a customer or business</small></span><span class="quick-arrow">›</span></button>
-          <button class="quick-action" data-action="new-product"><span class="quick-icon">＋</span><span class="quick-copy"><strong>Add a product</strong><small>Update your catalogue</small></span><span class="quick-arrow">›</span></button>
-          <button class="quick-action" data-action="record-payment"><span class="quick-icon">◈</span><span class="quick-copy"><strong>Record a payment</strong><small>Customer or supplier account</small></span><span class="quick-arrow">›</span></button>
+          ${quickActions.length ? quickActions.join('') : '<div class="empty-state" style="padding:16px">No quick actions authorized.</div>'}
         </div>
-        <div class="inline-note" style="margin-top:14px">${money(payable)} payable to suppliers · ${low} low stock items</div>
+        ${notes.length ? `<div class="inline-note" style="margin-top:14px">${esc(notes.join(' · '))}</div>` : ''}
       </aside>
     </section>
   `;
@@ -1907,6 +2380,7 @@ function salesRows(rows) {
         <td>
           <strong>${esc(order.id)}</strong>
           <small class="row-source">${pos ? 'POS sale' : 'Sales order'}</small>
+          ${Array.isArray(order.attachments) && order.attachments.length > 0 ? `<div style="margin-top:4px"><span class="status-pill status-attachment" title="${order.attachments.length} document(s) attached">📎 ${order.attachments.length} attachment${order.attachments.length > 1 ? 's' : ''}</span></div>` : ''}
           ${hasDiscrepancies ? `<div style="margin-top:4px"><span class="status-pill status-issue" title="${discrepancies.length} delivery mistake(s) reported">${unresolvedCount > 0 ? '⚠️' : '✓'} ${discrepancies.length} Delivery Mistake${discrepancies.length > 1 ? 's' : ''}${unresolvedCount > 0 ? ` (${unresolvedCount} open)` : ''}</span></div>` : ''}
         </td>
         <td>${esc(order.customer)}</td>
@@ -3236,7 +3710,10 @@ function renderPurchases() {
     const status = p.status === 'Pending' ? 'Final' : p.status;
     return `
       <tr>
-        <td><strong>${esc(p.id)}</strong></td>
+        <td>
+          <strong>${esc(p.id)}</strong>
+          ${Array.isArray(p.attachments) && p.attachments.length > 0 ? `<div style="margin-top:4px"><span class="status-pill status-attachment" title="${p.attachments.length} document(s) attached">📎 ${p.attachments.length} attachment${p.attachments.length > 1 ? 's' : ''}</span></div>` : ''}
+        </td>
         <td>${esc(p.supplier)}</td>
         <td>${dateLabel(p.date)}</td>
         <td>${(p.lines || []).reduce((sum, l) => sum + l.qty, 0)} units</td>
@@ -3247,6 +3724,7 @@ function renderPurchases() {
           <details class="order-actions purchase-actions">
             <summary aria-label="Actions for ${esc(p.id)}">⋮</summary>
             <div class="order-actions-menu">
+              <button data-action="view-purchase" data-id="${esc(p.id)}">View purchase</button>
               <button data-action="edit-purchase" data-id="${esc(p.id)}">Edit purchase order</button>
               ${p.status === 'Pending' ? `<button data-action="receive-purchase" data-id="${esc(p.id)}">Receive stock</button>` : ''}
               ${p.status === 'Received' && (p.paid || 0) < net ? `<button data-action="purchase-payment" data-id="${esc(p.id)}">Add payment</button>` : ''}
@@ -3340,17 +3818,17 @@ function renderParties(type) {
 function renderUsers() {
   const visibleUsers = state.users.filter(u => isWorkspaceAdministrator() || u.branchId===activeBranch?.id);
   const rows = visibleUsers.map(user => {
-    const full = user.role === 'Owner / Administrator';
+    const isRoot = Boolean(user.isBootstrap);
     const permissions=effectiveUserPermissions(user);
     const granted=userActionPermissions.filter(group=>(permissions[group.module]||[]).includes('view')).map(group=>pageLabels[group.module]||group.module);
-    const accessLabel=full?'Administrator override':granted.length?granted.join(', '):'No sections enabled';
+    const accessLabel=isRoot?'Root Administrator (Universal Access)':granted.length?granted.join(', '):'No sections enabled';
     return `
       <tr>
         <td><strong>${esc(user.name)}</strong><small>${esc(user.id)}</small></td>
         <td>${esc(user.email || '—')}<small>@${esc(user.username || 'credentials needed')}</small><small>${esc(user.phone || '')}</small></td>
         <td><strong>${esc(user.role)}</strong></td>
         <td>${esc(state.branches.find(branch=>branch.id===user.branchId)?.name||'Unassigned')}</td>
-        <td class="user-access-summary">${esc(accessLabel)}<small>${full?'Permissions are always enabled for the Owner / Administrator':`${Object.values(permissions).reduce((sum,actions)=>sum+actions.length,0)} actions granted`}</small></td>
+        <td class="user-access-summary">${esc(accessLabel)}<small>${isRoot?'Permissions are always enabled for the root Owner / Administrator':`${Object.values(permissions).reduce((sum,actions)=>sum+actions.length,0)} actions granted`}</small></td>
         <td><span class="status-pill ${user.status === 'Active' ? 'paid' : 'pending'}">${esc(user.status || 'Active')}</span></td>
         <td>
           <details class="order-actions user-actions">
@@ -3359,9 +3837,9 @@ function renderUsers() {
               ${isWorkspaceAdministrator()?`<button data-action="edit-user" data-id="${esc(user.id)}">Edit user</button>`:''}
               ${isWorkspaceAdministrator()?`<button data-action="set-user-credentials" data-id="${esc(user.id)}">Set password & credentials</button>`:''}
               ${isWorkspaceAdministrator()?`<button data-action="view-user-activity" data-id="${esc(user.id)}">View activity</button>`:''}
-              ${!full&&isWorkspaceAdministrator()?`<button data-action="edit-user-permissions" data-id="${esc(user.id)}">Permissions</button>`:''}
+              ${!isRoot&&isWorkspaceAdministrator()?`<button data-action="edit-user-permissions" data-id="${esc(user.id)}">Permissions</button>`:''}
               ${!user.isBootstrap&&canPerformAction('toggle-user')?`<button data-action="toggle-user" data-id="${esc(user.id)}">${user.status === 'Active' ? 'Deactivate' : 'Activate'}</button>`:''}
-              ${!full&&!user.isBootstrap&&isWorkspaceAdministrator()?`<button class="danger-action" data-action="delete-user" data-id="${esc(user.id)}">Delete user</button>`:''}
+              ${!user.isBootstrap&&isWorkspaceAdministrator()?`<button class="danger-action" data-action="delete-user" data-id="${esc(user.id)}">Delete user</button>`:''}
             </div>
           </details>
         </td>
@@ -3381,7 +3859,7 @@ function renderUsers() {
 
 function openUserPermissionsForm(user) {
   if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can override user permissions');return;}
-  if(!user||isAdministratorUser(user)){toast('The Owner / Administrator always has full access');return;}
+  if(!user||user.isBootstrap){toast('The root Owner / Administrator always has full access');return;}
   const selected=effectiveUserPermissions(user);
   const groups=userActionPermissions.map(group=>{
     const granted=selected[group.module]||[];
@@ -4453,8 +4931,9 @@ function render() {
   reconcileCustomerAccountPayments();
 
   const content = document.getElementById('page-content');
-  if (!isWorkspaceAdministrator() && !canViewPage(page)) {
-    const fallback=Object.keys(pageLabels).find(candidate=>canViewPage(candidate));
+  const user = currentWorkspaceUser();
+  if (!user.isBootstrap && !canViewPage(page, user)) {
+    const fallback=Object.keys(pageLabels).find(candidate=>canViewPage(candidate, user));
     if(fallback){page=fallback;history.replaceState({erpPage:page},'',`#${page}`);}
     else {content.innerHTML='<section class="panel access-denied-panel"><h2>No sections are enabled for your account</h2><p>Ask an Owner / Administrator to grant access.</p></section>';refreshCompanyLogo();refreshUserProfile();refreshPermissionVisibility();refreshActivityVisibility();refreshBranchNav();refreshBranchSwitcher();refreshNotificationIndicator();updateConnection();syncBackButton();return;}
   }
@@ -4553,7 +5032,7 @@ function openPaymentForm(partyType = '', partyName = '') {
   const accountFields = accountIsFixed
     ? `<input type="hidden" name="payment-party-type" value="${esc(partyType)}"><input type="hidden" name="payment-party" value="${esc(partyName)}"><div class="field full"><label>Payment account</label><div class="accounting-fixed-account">${esc(partyType)} · ${esc(partyName)}</div></div>`
     : `${selectField('payment-party-type','Account type',['Customer','Supplier'],partyType || 'Customer')}${selectField('payment-party','Account',partyOptions,partyName || partyOptions[0])}`;
-  const content = `${accountFields}<div class="form-grid">${inputField('payment-amount','Amount (TZS)','','number',true)}${selectField('payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}${inputField('payment-date','Date','', 'date',true,today())}${inputField('payment-memo','Note','Optional reference')}</div>`;
+  const content = `${accountFields}<div class="form-grid">${inputField('payment-amount','Amount (TZS)','','number',true)}${selectField('payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}${inputField('payment-date','Date','', 'date',true,today())}${inputField('payment-memo','Note','Optional reference')}</div>${renderAttachmentUploader([], 'record-payment')}`;
   openDialog('record-payment','Record payment','Record money received from a customer or paid to a supplier.',content);
 }
 
@@ -4561,7 +5040,11 @@ function openAccountLedger(partyType, partyName) {
   const account=(partyType==='Supplier'?state.suppliers:state.customers).find(item=>item.name===partyName);
   if(!account)return;
   const entries=state.entries.filter(entry=>entry.partyType===partyType&&entry.party===partyName).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  const rows=entries.map(entry=>`<tr><td>${dateLabel(entry.date)}</td><td><span class="ledger-direction ${String(entry.type).toLowerCase()}">${esc(entry.type)}</span></td><td><strong>${money(entry.amount)}</strong></td><td>${esc(entry.memo||'—')}</td><td><small>${esc(entry.id)}</small></td></tr>`).join('')||emptyRow(5,'No transactions recorded for this account yet');
+  const rows=entries.map(entry=>{
+    const hasAtts = Array.isArray(entry.attachments) && entry.attachments.length > 0;
+    const attBtn = hasAtts ? ` <button type="button" class="status-pill status-attachment" data-action="view-entry-attachments" data-id="${esc(entry.id)}" style="cursor:pointer;margin-left:6px" title="View ${entry.attachments.length} attachment(s)">📎 ${entry.attachments.length}</button>` : '';
+    return `<tr><td>${dateLabel(entry.date)}</td><td><span class="ledger-direction ${String(entry.type).toLowerCase()}">${esc(entry.type)}</span></td><td><strong>${money(entry.amount)}</strong></td><td>${esc(entry.memo||'—')}${attBtn}</td><td><small>${esc(entry.id)}</small></td></tr>`;
+  }).join('')||emptyRow(5,'No transactions recorded for this account yet');
   const signed=Number(account.balance)||0,amount=Math.abs(signed),label=partyType==='Customer'?(signed<0?'Customer credit':'Receivable'):(signed<0?'Payable':'Supplier credit');
   openModal(`${esc(partyName)} · ${partyType} ledger`,`${esc(account.id)} · ${entries.length} transaction${entries.length===1?'':'s'}`,`<div class="account-balance-card"><small>Current ${label.toLowerCase()}</small><strong>${money(amount)}</strong><span>${esc(account.phone||account.email||'Account balance')}</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Entry</th><th>Amount</th><th>Memo</th><th>Reference</th></tr></thead><tbody>${rows}</tbody></table></div>`,`Close`,`<button type="button" class="button" data-action="record-payment" data-party-type="${esc(partyType)}" data-party-name="${esc(partyName)}">Add payment</button><button type="button" class="button" data-action="reconcile-account" data-party-type="${esc(partyType)}" data-party-name="${esc(partyName)}">Reconcile</button>`);
 }
@@ -4580,7 +5063,7 @@ function openOrderForm(existing = null) {
   if (!products.length && !existing) { toast('Add an active product to Inventory before creating a sales order'); return; }
   const names = [...new Set([...state.customers.filter(c => c.status !== 'Inactive').map(c => c.name), ...(existing?.customer ? [existing.customer] : [])])];
   const initialMethod = existing?.paymentMethod || existing?.posMethod || 'Cash';
-  const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${selectField('order-method','Payment method',salesPaymentMethods,initialMethod)}</div><div class="transaction-lines" id="order-product-lines"></div>${transactionProductPicker('order')}${transactionPaymentSummary('order')}`;
+  const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${selectField('order-method','Payment method',salesPaymentMethods,initialMethod)}</div><div class="transaction-lines" id="order-product-lines"></div>${transactionProductPicker('order')}${transactionPaymentSummary('order')}${renderAttachmentUploader(existing?.attachments || [], 'order')}`;
   openDialog(existing ? 'edit-order' : 'new-order',existing ? `${existing.source === 'POS' ? 'Edit POS sale' : 'Edit sales order'}` : 'Create sales order',existing ? `Update ${esc(existing.id)}. Finalized sales update inventory and the customer account.` : 'Choose the customer, order date, and payment method, then search to add products. The order will be saved as a draft.',content,existing ? 'Save changes' : 'Save draft');
   const form = document.getElementById('modal-content');
   if (existing) {
@@ -4599,7 +5082,7 @@ function openPurchaseForm(existing = null) {
   const activeSuppliers = state.suppliers.filter(supplier => supplier.status !== 'Inactive');
   if ((!products.length || !activeSuppliers.length) && !existing) { toast('Add an active product and supplier before creating a purchase order'); return; }
   const supplierNames = [...new Set([...activeSuppliers.map(p => p.name), ...(existing?.supplier ? [existing.supplier] : [])])];
-  const content = `<div class="form-grid">${selectField('purchase-supplier','Supplier',supplierNames,existing?.supplier || supplierNames[0])}${inputField('purchase-date','Order date','','date',true,existing?.date || today())}</div><div class="transaction-lines" id="purchase-product-lines"></div>${transactionProductPicker('purchase')}${transactionPaymentSummary('purchase')}`;
+  const content = `<div class="form-grid">${selectField('purchase-supplier','Supplier',supplierNames,existing?.supplier || supplierNames[0])}${inputField('purchase-date','Order date','','date',true,existing?.date || today())}</div><div class="transaction-lines" id="purchase-product-lines"></div>${transactionProductPicker('purchase')}${transactionPaymentSummary('purchase')}${renderAttachmentUploader(existing?.attachments || [], 'purchase')}`;
   openDialog(existing ? 'edit-purchase' : 'new-purchase','Purchase order',existing ? `Update ${esc(existing.id)}. Received purchases adjust stock and the supplier account.` : 'Choose the supplier and date, then search to add as many products as needed. Receive the order to update stock.',content,existing ? 'Save changes' : 'Save purchase order');
   const form = document.getElementById('modal-content');
   if (existing) {
@@ -4712,7 +5195,7 @@ function renderTransactionSuggestions(kind, term) {
 
 function openOrderPayment(id) {
   const order=state.orders.find(o=>o.id===id);if(!order)return;
-  openDialog('order-payment','Add customer payment',`Record a payment for ${esc(order.id)}.`,`${inputField('order-payment-amount','Amount (TZS)','','number',true,Math.max(0,order.total-(order.paid||0)))}${selectField('order-payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}`,'Record payment');
+  openDialog('order-payment','Add customer payment',`Record a payment for ${esc(order.id)}.`,`${inputField('order-payment-amount','Amount (TZS)','','number',true,Math.max(0,order.total-(order.paid||0)))}${selectField('order-payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}${renderAttachmentUploader([], 'order-payment')}`,'Record payment');
   document.getElementById('modal-content').dataset.recordId=id;
 }
 
@@ -5075,7 +5558,7 @@ async function handleDialogSubmit(form) {
       }
     }
     const updated = order || { id: idFor('ORD', state.orders), source: 'Order', status: 'Draft' };
-    Object.assign(updated, { customer, date, due: date, subtotal: totals.subtotal, discount: totals.discount, additionalCharges: totals.additional, total: totals.total, paid: totals.paid, paymentMethod: method, items });
+    Object.assign(updated, { customer, date, due: date, subtotal: totals.subtotal, discount: totals.discount, additionalCharges: totals.additional, total: totals.total, paid: totals.paid, paymentMethod: method, items, attachments: structuredClone(currentDraftAttachments) });
     if (wasInvoicedOrder) updated.status = 'Edited';
     if (updated.source === 'POS') updated.posMethod = method;
     if (finalized) {
@@ -5102,7 +5585,8 @@ async function handleDialogSubmit(form) {
   if (kind === 'record-payment') {
     const type = val('payment-party-type'), name = val('payment-party'), amount = Number(val('payment-amount')) || 0;
     if (!(amount > 0)) { toast('Enter an amount greater than zero'); return; }
-    postAccountEntry({ partyType: type, party: name, date: val('payment-date') || today(), type: type === 'Customer' ? 'Credit' : 'Debit', amount, memo: `${val('payment-method')} payment${val('payment-memo') ? ` · ${val('payment-memo')}` : ''}`, sourceType: 'account-payment' });
+    const entry = postAccountEntry({ partyType: type, party: name, date: val('payment-date') || today(), type: type === 'Customer' ? 'Credit' : 'Debit', amount, memo: `${val('payment-method')} payment${val('payment-memo') ? ` · ${val('payment-memo')}` : ''}`, sourceType: 'account-payment' });
+    if (currentDraftAttachments && currentDraftAttachments.length) entry.attachments = structuredClone(currentDraftAttachments);
     recordActivity('Account payment recorded',`${type} · ${name} · ${money(amount)}`);
     saveState(); document.getElementById('app-modal').close(); render(); toast('Payment recorded'); return;
   }
@@ -5337,7 +5821,7 @@ async function handleDialogSubmit(form) {
     const newQuantities=new Map();lines.forEach(line=>newQuantities.set(line.productId,(newQuantities.get(line.productId)||0)+line.qty));
     if(received)for(const productId of new Set([...oldQuantities.keys(),...newQuantities.keys()])){const product=state.products.find(item=>item.id===productId);if(!product){toast('A product on this purchase no longer exists');return;}if(product.stock+(newQuantities.get(productId)||0)-(oldQuantities.get(productId)||0)<0){toast(`Cannot reduce ${product.name}; some received stock has already been sold or used`);return;}}
     const updated=purchase||{id:idFor('PO',state.purchases),status:'Pending'};
-    Object.assign(updated,{supplier,date,lines,subtotal:totals.subtotal,discount:totals.discount,additionalCharges:totals.additional,total:totals.total,paid:totals.paid,paymentMethod:method});
+    Object.assign(updated,{supplier,date,lines,subtotal:totals.subtotal,discount:totals.discount,additionalCharges:totals.additional,total:totals.total,paid:totals.paid,paymentMethod:method,attachments:structuredClone(currentDraftAttachments)});
     if(received)for(const productId of new Set([...oldQuantities.keys(),...newQuantities.keys()])){const product=state.products.find(item=>item.id===productId),before=product.stock,delta=(newQuantities.get(productId)||0)-(oldQuantities.get(productId)||0);if(!delta)continue;product.stock+=delta;state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId,product:product.name,date,before,after:product.stock,delta,reason:`Edited received purchase ${updated.id}`,user:currentWorkspaceUser().name});}
     removeAccountEntries(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===updated.id);
     postAccountEntry({partyType:'Supplier',party:supplier,date,type:'Credit',amount:updated.total,memo:`Purchase order · ${updated.id}`,sourceType:'purchase',sourceId:updated.id});
@@ -5352,7 +5836,12 @@ async function handleDialogSubmit(form) {
     const applied=Math.min(amount,Math.max(0,purchase.total-(purchase.returned||0)-(purchase.paid||0)));
     if(!applied){toast('This purchase has no balance due');return;}
     purchase.paid=(purchase.paid||0)+applied;
-    postAccountEntry({partyType:'Supplier',party:purchase.supplier,date:today(),type:'Debit',amount:applied,memo:`Payment · ${val('purchase-payment-method')} · ${purchase.id}`,sourceType:'purchase-payment',sourceId:purchase.id});
+    const entry=postAccountEntry({partyType:'Supplier',party:purchase.supplier,date:today(),type:'Debit',amount:applied,memo:`Payment · ${val('purchase-payment-method')} · ${purchase.id}`,sourceType:'purchase-payment',sourceId:purchase.id});
+    if (currentDraftAttachments && currentDraftAttachments.length) {
+      entry.attachments = structuredClone(currentDraftAttachments);
+      purchase.attachments = purchase.attachments || [];
+      purchase.attachments.push(...structuredClone(currentDraftAttachments));
+    }
     recordActivity('Supplier payment recorded',`${purchase.supplier} · ${money(applied)}`,purchase.id);
     saveState();document.getElementById('app-modal').close();render();toast('Supplier payment recorded');return;
   }
@@ -5413,7 +5902,12 @@ async function handleDialogSubmit(form) {
     if(!order||amount<=0){toast('Enter a payment amount greater than zero');return;}
     const applied=Math.min(amount,Math.max(0,order.total-(order.paid||0)));order.paid=(order.paid||0)+applied;
     const invoice=ensureOrderInvoice(order);invoice.paid=order.paid;invoice.method=val('order-payment-method')||'Cash';invoice.status=orderPaymentStatus(order)==='Fully paid'?'Paid':'Pending';
-    if(state.customers.some(c=>c.name===order.customer))postAccountEntry({partyType:'Customer',party:order.customer,type:'Credit',amount:applied,memo:`Payment · ${invoice.method} · ${order.id}`,sourceType:'order-payment',sourceId:order.id});
+    const entry = state.customers.some(c=>c.name===order.customer) ? postAccountEntry({partyType:'Customer',party:order.customer,type:'Credit',amount:applied,memo:`Payment · ${invoice.method} · ${order.id}`,sourceType:'order-payment',sourceId:order.id}) : null;
+    if (currentDraftAttachments && currentDraftAttachments.length) {
+      if (entry) entry.attachments = structuredClone(currentDraftAttachments);
+      order.attachments = order.attachments || [];
+      order.attachments.push(...structuredClone(currentDraftAttachments));
+    }
     recordActivity('Customer payment recorded',`${order.customer} · ${money(applied)}`,order.id);
     saveState();document.getElementById('app-modal').close();render();toast('Customer payment recorded');return;
   }
@@ -5511,7 +6005,7 @@ async function handleDialogSubmit(form) {
   if(kind==='edit-user-permissions'){
     if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can override user permissions');return;}
     const user=state.users.find(item=>item.id===form.dataset.recordId);
-    if(!user||isAdministratorUser(user)){toast('The Owner / Administrator always has full access');return;}
+    if(!user||user.isBootstrap){toast('The root Owner / Administrator always has full access');return;}
     const permissions=Object.fromEntries(userActionPermissions.map(group=>[group.module,[]]));
     for(const choice of data.getAll('user-permission')){const [module,permission]=String(choice).split('|');if(permissions[module]&&!permissions[module].includes(permission))permissions[module].push(permission);}
     user.permissions=permissions;
@@ -5640,8 +6134,38 @@ function handleAction(button) {
     }
     case 'purchase-payment': {
       const purchase=state.purchases.find(p=>p.id===id);if(!purchase)break;
-      openDialog('purchase-payment','Add supplier payment',`Record a payment for ${esc(purchase.id)} to ${esc(purchase.supplier)}.`,`${inputField('purchase-payment-amount','Amount (TZS)','','number',true,Math.max(0,purchase.total-(purchase.paid||0)-(purchase.returned||0)))}${selectField('purchase-payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}`,'Record payment');
+      openDialog('purchase-payment','Add supplier payment',`Record a payment for ${esc(purchase.id)} to ${esc(purchase.supplier)}.`,`${inputField('purchase-payment-amount','Amount (TZS)','','number',true,Math.max(0,purchase.total-(purchase.paid||0)-(purchase.returned||0)))}${selectField('purchase-payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}${renderAttachmentUploader([], 'purchase-payment')}`,'Record payment');
       document.getElementById('modal-content').dataset.recordId=id;break;
+    }
+    case 'view-purchase': {
+      const purchase = state.purchases.find(p => p.id === id);
+      if (!purchase) break;
+      const net = Math.max(0, purchase.total - (purchase.returned || 0));
+      const due = Math.max(0, net - (purchase.paid || 0));
+      const paymentStatus = (purchase.paid || 0) >= net ? 'Fully paid' : purchase.paid ? 'Partially paid' : 'Due';
+      const lines = (purchase.lines || []).map(l => {
+        const p = state.products.find(x => x.id === l.productId);
+        const prodName = p?.name || l.product || l.productId;
+        return `<tr>
+          <td><strong>${esc(prodName)}</strong></td>
+          <td>${l.qty}</td>
+          <td>${money(l.unitCost ?? p?.cost ?? 0)}</td>
+          <td>${money(l.qty * (l.unitCost ?? p?.cost ?? 0))}</td>
+        </tr>`;
+      }).join('') || emptyRow(4, 'No line items');
+
+      const attsHTML = renderAttachmentsGallery(purchase.attachments || [], { scope: 'purchase', recordId: purchase.id, canAdd: true });
+
+      openModal('Purchase order details', `${esc(purchase.id)} · ${esc(purchase.supplier)} · ${esc(purchase.status)}`,
+        `<div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit cost</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
+          <p style="margin:0"><strong>Total ${money(purchase.total)} · Paid ${money(purchase.paid || 0)}${due > 0 ? ` · <span style="color:${paymentStatus === 'Partially paid' ? '#d97706' : '#dc2626'}">Due ${money(due)}</span>` : ''} · ${paymentStatus}</strong> · Method: <span class="status-pill status-paid" style="font-size:11px;padding:2px 8px">${esc(purchase.paymentMethod || 'Cash')}</span></p>
+          ${purchase.status === 'Pending' ? `<button class="button small primary" data-action="receive-purchase" data-id="${esc(purchase.id)}">Receive stock</button>` : ''}
+        </div>
+        <div style="margin-top:16px">${attsHTML}</div>`,
+        'Close'
+      );
+      break;
     }
     case 'return-purchase': openPurchaseReturn(id); break;
     case 'new-user':
@@ -5728,13 +6252,87 @@ function handleAction(button) {
 
       const orderDue = Math.max(0, Number(order.total || 0) - Number(order.paid || 0));
       const orderPayStatus = orderPaymentStatus(order);
+      const attsHTML = renderAttachmentsGallery(order.attachments || [], { scope: 'order', recordId: order.id, canAdd: true });
       openModal('Order details',`${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,
         `${issuesBox}
         <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
           <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)}${orderDue > 0 ? ` · <span style="color:${orderPayStatus === 'Partially paid' ? '#d97706' : '#dc2626'}">Due ${money(orderDue)}</span>` : ''} · ${orderPayStatus}</strong> · Method: <span class="status-pill ${methodPillClass(order)}" style="font-size:11px;padding:2px 8px">${esc(orderPaymentMethodLabel(order))}</span></p>
           <button class="button small" data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Highlight / Manage Delivery Mistakes</button>
-        </div>`,
+        </div>
+        <div style="margin-top:16px">${attsHTML}</div>`,
+        'Close'
+      );
+      break;
+    }
+    case 'view-attachment': {
+      const attId = button.dataset.attId;
+      if (!attId) break;
+      const found = findAttachmentById(attId);
+      if (found) openAttachmentViewer(found.attachment || found);
+      else toast('Attachment not found');
+      break;
+    }
+    case 'download-attachment': {
+      const attId = button.dataset.attId;
+      if (!attId) break;
+      const found = findAttachmentById(attId);
+      const att = found?.attachment || found;
+      if (att) {
+        downloadAttachment(att);
+        toast(`Downloading ${att.name}`);
+      } else toast('Attachment not found');
+      break;
+    }
+    case 'delete-attachment': {
+      const attId = button.dataset.attId;
+      const recordId = button.dataset.recordId;
+      const scope = button.dataset.scope;
+      if (!attId) break;
+      const draftIdx = currentDraftAttachments.findIndex(a => a.id === attId);
+      if (draftIdx >= 0) {
+        const removed = currentDraftAttachments.splice(draftIdx, 1)[0];
+        const list = document.getElementById('attachments-list');
+        if (list) {
+          list.classList.toggle('is-empty', !currentDraftAttachments.length);
+          list.innerHTML = renderAttachmentCards(currentDraftAttachments, { allowDelete: true });
+        }
+        toast(`Removed ${removed.name}`);
+        break;
+      }
+      if (recordId && scope) {
+        let target = null;
+        if (scope === 'order') target = state.orders.find(o => o.id === recordId) || state.sales.find(s => s.id === recordId);
+        else if (scope === 'purchase') target = state.purchases.find(p => p.id === recordId);
+        else if (scope === 'entry') target = state.entries.find(e => e.id === recordId);
+        if (target && Array.isArray(target.attachments)) {
+          const idx = target.attachments.findIndex(a => a.id === attId);
+          if (idx >= 0) {
+            const removed = target.attachments.splice(idx, 1)[0];
+            saveState();
+            recordActivity('Attachment removed', `${removed.name} · ${target.id}`, target.id);
+            const list = document.getElementById(`gallery-attachments-list-${recordId}`);
+            if (list) {
+              list.classList.toggle('is-empty', !target.attachments.length);
+              list.innerHTML = renderAttachmentCards(target.attachments, { allowDelete: true, recordId, scope }) ||
+                `<div class="attachments-empty-state"><span style="font-size:24px">📄</span><p>No documents attached to this record yet.</p></div>`;
+            }
+            toast(`Removed ${removed.name}`);
+          }
+        }
+      }
+      break;
+    }
+    case 'view-entry-attachments': {
+      const entryId = button.dataset.id;
+      const entry = state.entries.find(e => e.id === entryId);
+      if (!entry) break;
+      openModal(`Receipts & Payment Slips · ${esc(entry.id)}`, `${esc(entry.partyType)} · ${esc(entry.party)} · ${money(entry.amount)}`,
+        `<div style="margin-bottom:12px;background:var(--surface,#f1f5f9);padding:10px 14px;border-radius:8px">
+           <p style="margin:0 0 4px"><strong>Date:</strong> ${dateLabel(entry.date)} · <strong>Direction:</strong> ${esc(entry.type)} · <strong>Amount:</strong> ${money(entry.amount)}</p>
+           <p style="margin:0;font-size:12px;color:var(--muted)"><strong>Note:</strong> ${esc(entry.memo || '—')}</p>
+         </div>
+         ${renderAttachmentsGallery(entry.attachments || [], { scope: 'entry', recordId: entry.id, canAdd: true })}`,
         'Close'
       );
       break;
@@ -6183,7 +6781,7 @@ function handleAction(button) {
       if (order) printOrderInvoice(order);
       break;
     }
-    case 'close-modal': document.getElementById('app-modal')?.close(); break;
+    case 'close-modal': currentDraftAttachments = []; document.getElementById('app-modal')?.close(); break;
     case 'export-sales':
       downloadCSV('tide-sales.csv', [
         ['Date', 'Order', 'Customer', 'Total', 'Due amount', 'Payment method', 'Status', 'Payment'],
@@ -6615,6 +7213,29 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape') clos
 
 // Global Event Listeners
 document.addEventListener('click', event => {
+  const toggleBtn = event.target.closest('#toggle-password-btn');
+  if (toggleBtn) {
+    const pwdInput = document.getElementById('login-password');
+    if (pwdInput) {
+      const isPwd = pwdInput.type === 'password';
+      pwdInput.type = isPwd ? 'text' : 'password';
+      toggleBtn.textContent = isPwd ? '🙈' : '👁';
+      toggleBtn.setAttribute('title', isPwd ? 'Hide password' : 'Show password');
+    }
+    return;
+  }
+  const fillBtn = event.target.closest('[data-auth-fill]');
+  if (fillBtn) {
+    const idInput = document.getElementById('login-identifier') || document.querySelector('input[name="login-identifier"]');
+    const pwdInput = document.getElementById('login-password') || document.querySelector('input[name="login-password"]');
+    if (idInput && pwdInput) {
+      idInput.value = ADMIN_LOGIN_EMAIL;
+      pwdInput.value = ADMIN_INITIAL_PASSWORD;
+      toast('Filled Administrator login credentials');
+      idInput.focus();
+    }
+    return;
+  }
   if (!event.target.closest('.stocktake-search-wrap')) {
     const sr = document.getElementById('stocktake-search-results');
     if (sr) sr.hidden = true;
@@ -6627,6 +7248,88 @@ document.addEventListener('click', event => {
   }
   const action = event.target.closest('[data-action]');
   if (action) handleAction(action);
+});
+
+document.addEventListener('change', event => {
+  if (event.target.id === 'attachment-file-input') {
+    const files = event.target.files;
+    handleFilesSelected(files, att => {
+      currentDraftAttachments.push(att);
+      const list = document.getElementById('attachments-list');
+      if (list) {
+        list.classList.remove('is-empty');
+        list.innerHTML = renderAttachmentCards(currentDraftAttachments, { allowDelete: true });
+      }
+    });
+    event.target.value = '';
+  } else if (event.target.dataset.galleryRecordId) {
+    const recordId = event.target.dataset.galleryRecordId;
+    const scope = event.target.dataset.galleryScope;
+    const files = event.target.files;
+    handleFilesSelected(files, att => {
+      let targetRecord = null;
+      if (scope === 'order') {
+        targetRecord = state.orders.find(o => o.id === recordId) || state.sales.find(s => s.id === recordId);
+      } else if (scope === 'purchase') {
+        targetRecord = state.purchases.find(p => p.id === recordId);
+      } else if (scope === 'entry') {
+        targetRecord = state.entries.find(e => e.id === recordId);
+      }
+      if (targetRecord) {
+        targetRecord.attachments = targetRecord.attachments || [];
+        targetRecord.attachments.push(att);
+        saveState();
+        recordActivity('Attachment added', `${att.name} · ${targetRecord.id}`, targetRecord.id);
+        const list = document.getElementById(`gallery-attachments-list-${recordId}`);
+        if (list) {
+          list.classList.remove('is-empty');
+          list.innerHTML = renderAttachmentCards(targetRecord.attachments, { allowDelete: true, recordId, scope });
+        }
+        toast(`Attached "${att.name}"`);
+      }
+    });
+    event.target.value = '';
+  }
+});
+
+document.addEventListener('dragover', event => {
+  const dropzone = event.target.closest('#attachments-dropzone');
+  if (dropzone) {
+    event.preventDefault();
+    dropzone.classList.add('dragover');
+  }
+});
+
+document.addEventListener('dragleave', event => {
+  const dropzone = event.target.closest('#attachments-dropzone');
+  if (dropzone) dropzone.classList.remove('dragover');
+});
+
+document.addEventListener('drop', event => {
+  const dropzone = event.target.closest('#attachments-dropzone');
+  if (dropzone) {
+    event.preventDefault();
+    dropzone.classList.remove('dragover');
+    const files = event.dataTransfer?.files;
+    if (files && files.length) {
+      handleFilesSelected(files, att => {
+        currentDraftAttachments.push(att);
+        const list = document.getElementById('attachments-list');
+        if (list) {
+          list.classList.remove('is-empty');
+          list.innerHTML = renderAttachmentCards(currentDraftAttachments, { allowDelete: true });
+        }
+      });
+    }
+  }
+});
+
+document.addEventListener('click', event => {
+  const dropzone = event.target.closest('#attachments-dropzone');
+  if (dropzone && !event.target.closest('input[type="file"]') && !event.target.closest('button') && !event.target.closest('label')) {
+    const input = dropzone.parentElement?.querySelector('#attachment-file-input');
+    if (input) input.click();
+  }
 });
 
 document.addEventListener('keydown', event => {
@@ -6936,10 +7639,7 @@ async function initApp() {
   state.branch = activeBranch.name;
   state.users.forEach(user=>{
     if(!user.branchId)user.branchId=activeBranch.id;
-    if(user.name && (user.name === 'Amina Mwinyi' || user.name === 'Amina' || /amina/i.test(user.name))) {
-      user.name = 'Administrator';
-    }
-    if (user.username === 'CHIKO12' || /chiko/i.test(user.name || '') || /chikongoe/i.test(user.username || '')) {
+    if(user.isBootstrap && !user.role) {
       user.role = 'Owner / Administrator';
       user.modules = ['*'];
       user.permissions = { '*': ['*'] };
@@ -6986,6 +7686,8 @@ async function initApp() {
     render();
   } else {
     safeSessionRemove(AUTH_SESSION_KEY);
+    state.currentUserId = '';
+    saveState();
     renderAuthGate();
   }
 }

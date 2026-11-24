@@ -4,8 +4,8 @@
   "description": "A sales-led business workspace for Tanzania.",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f4f7f9",
-  "theme_color": "#0082cf",
+  "background_color": "#0a1e36",
+  "theme_color": "#0a1e36",
   "icons": [
     { "src": "tide.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
