@@ -482,7 +482,8 @@ function esc(value = '') {
   return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function renderAuthGate(message = '') {
+function renderAuthGate(message = '', initialTab = 'login') {
+  const isRegister = initialTab === 'register';
   const gate = document.getElementById('auth-gate');
   const shell = document.querySelector('.app-shell');
   if (!gate || !shell) return;
