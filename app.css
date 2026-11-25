@@ -2409,18 +2409,21 @@ body {
   }
 
   .summary-strip {
-    grid-template-columns: 1fr
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
   }
 
   .summary-mini {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    padding: 7px 9px;
   }
 
   .summary-mini small {
-    margin: 0
+    margin: 0 0 2px 0;
   }
 
   .heading-actions .button {
@@ -2459,8 +2462,11 @@ body {
   }
 
   .back-button {
-    padding: 7px 8px;
-    font-size: 12px
+    padding: 3px 6px;
+    font-size: 11px;
+    height: 24px;
+    min-height: 24px;
+    border-radius: 6px;
   }
 
   .breadcrumb {
@@ -11413,6 +11419,137 @@ tr.row-revoked td strong {
   .login-submit-btn {
     font-size: 11px !important;
     padding: 7px 11px !important;
+  }
+
+  /* 12. Summary Strip & Metric Minis (Stock value, Total products, Low stock, Expiring) */
+  .summary-strip {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    margin-bottom: 8px !important;
+  }
+  .summary-mini {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    padding: 7px 9px !important;
+    border-radius: 8px !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+  .summary-mini small {
+    font-size: 8px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+    margin-bottom: 2px !important;
+    color: var(--muted) !important;
+    line-height: 1.2 !important;
+    display: block !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    width: 100% !important;
+  }
+  .summary-mini strong {
+    font-size: 12.5px !important;
+    font-weight: 800 !important;
+    line-height: 1.2 !important;
+    letter-spacing: -0.2px !important;
+    display: block !important;
+    word-break: break-word !important;
+  }
+
+  /* 13. Product Expiration & Management (Bottom Cards & Tabs) */
+  #product-expiration-section {
+    padding: 10px !important;
+    border-radius: 10px !important;
+    margin-top: 10px !important;
+  }
+  #product-expiration-section .panel-header {
+    margin-bottom: 6px !important;
+    gap: 6px !important;
+  }
+  #product-expiration-section .panel-title {
+    font-size: 12px !important;
+    margin: 0 !important;
+  }
+  #product-expiration-section .panel-subtitle {
+    font-size: 8.5px !important;
+    line-height: 1.25 !important;
+  }
+  #product-expiration-section .heading-actions .button {
+    font-size: 8.5px !important;
+    padding: 4px 8px !important;
+    min-height: 24px !important;
+  }
+  .expiry-stats-strip {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    margin: 8px 0 10px !important;
+  }
+  .expiry-stat-card {
+    padding: 7px 9px !important;
+    border-radius: 8px !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+  }
+  .expiry-stat-card small {
+    font-size: 8px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+    margin-bottom: 1px !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    width: 100% !important;
+  }
+  .expiry-stat-card strong {
+    font-size: 13px !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.2px !important;
+    margin: 1px 0 !important;
+    line-height: 1.2 !important;
+  }
+  .expiry-stat-card .expiry-val {
+    font-size: 8.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+  }
+  .expiry-filter-tabs {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+    margin-bottom: 8px !important;
+  }
+  .expiry-filter-btn {
+    padding: 4px 7px !important;
+    font-size: 8.5px !important;
+    border-radius: 6px !important;
+    min-height: 24px !important;
+  }
+
+  /* 14. Topbar Logo & Back Button Clamping */
+  .topbar-brand {
+    flex-shrink: 0 !important;
+    min-width: max-content !important;
+  }
+  .back-button {
+    padding: 3px 6px !important;
+    font-size: 11px !important;
+    height: 24px !important;
+    min-height: 24px !important;
+    border-radius: 6px !important;
+    flex-shrink: 0 !important;
   }
 }
 

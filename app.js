@@ -5184,6 +5184,19 @@ function renderSettings() {
       </form>
     </section>
 
+    <section class="panel data-sync-panel" style="margin-top:20px">
+      <div class="settings-section">
+        <h2>Data Backup &amp; Device Transfer (PC ⇄ Phone)</h2>
+        <p class="panel-subtitle">Export all products, sales, purchases, inventory, and customers to transfer between your PC and phone or save an offline backup.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+          <button type="button" class="button primary" data-action="export-full-backup">📥 Download Full Backup (.json)</button>
+          <button type="button" class="button" data-action="trigger-restore-backup">📤 Restore Backup (.json)</button>
+          <input type="file" id="restore-backup-file" accept=".json,application/json" hidden>
+        </div>
+        <small class="field-hint" style="display:block;margin-top:8px">Tip: Download the backup file on your PC, send it to your phone (via WhatsApp, Email, or Drive), then click 'Restore Backup' on your phone to instantly sync all your products and records.</small>
+      </div>
+    </section>
+
     <section class="table-panel trash-panel" style="margin-top:20px">
       <div class="table-heading">
         <div><h2>Trash bin (Soft Deletes &amp; Recovery)</h2><p class="panel-subtitle">Restore accidentally deleted items directly back into active workflows.</p></div>
@@ -7119,6 +7132,24 @@ function handleAction(button) {
       toast('Stock take audit sessions exported to CSV');
       break;
     }
+    case 'export-full-backup': {
+      const backupData = JSON.stringify(state, null, 2);
+      const blob = new Blob([backupData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tide-erp-backup-${today()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast('Full workspace backup downloaded successfully');
+      break;
+    }
+    case 'trigger-restore-backup': {
+      document.getElementById('restore-backup-file')?.click();
+      break;
+    }
     case 'export-stock-movements': {
       const movements = Array.isArray(state.stockMovements) ? state.stockMovements : [];
       downloadCSV(`tide-stock-movements-${today()}.csv`, [
@@ -7774,6 +7805,29 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'product-csv-file' && event.target.files?.[0]) {
     const reader=new FileReader();reader.onload=()=>importProductsCSV(String(reader.result||''));reader.readAsText(event.target.files[0]);event.target.value='';
+  }
+  if (event.target.id === 'restore-backup-file' && event.target.files?.[0]) {
+    const file = event.target.files[0];
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const text = String(reader.result || '');
+        const backup = JSON.parse(text);
+        if (!backup || typeof backup !== 'object' || !Array.isArray(backup.products)) {
+          toast('Invalid backup file. Must be a Tide ERP .json backup.');
+          return;
+        }
+        if (!confirm(`Restore backup "${file.name}"? This will sync ${backup.products.length} products and all workspace records to this device.`)) return;
+        Object.assign(state, backup);
+        await saveState();
+        toast('Backup restored successfully! Refreshing...');
+        setTimeout(() => location.reload(), 600);
+      } catch (err) {
+        toast('Failed to restore backup: ' + (err.message || 'Corrupt file'));
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
   }
   if (event.target.id === 'stocktake-select-category') {
     const cat = event.target.value;
