@@ -1116,6 +1116,7 @@ function snapshotCurrentBranch() {
 function saveState() {
   snapshotCurrentBranch();
   persistState(state);
+  if (typeof pushStateToCloud === 'function') pushStateToCloud(state);
   updateConnection();
 }
 
@@ -5184,6 +5185,34 @@ function renderSettings() {
       </form>
     </section>
 
+    <!-- Real-time Cross-Device Cloud Sync -->
+    <section class="panel cloud-sync-panel" style="margin-top:20px">
+      <div class="settings-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <div>
+            <h2>Live Multi-Device Cloud Sync (PC ⇄ Phone)</h2>
+            <p class="panel-subtitle">Automatically synchronize products, sales, purchases, and payments in real time across all your computers and phones.</p>
+          </div>
+          <span class="status-pill ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? 'status-paid' : 'status-draft'}" style="font-size:11px">
+            ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? '● Live Cloud Connected' : '○ Standalone Local Mode'}
+          </span>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="button primary" data-action="open-cloud-sync-dialog">
+            ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? '⚙ Manage Cloud Database' : '⚡ Connect Free Cloud Database (Firebase)'}
+          </button>
+          ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? `
+            <button type="button" class="button small" data-action="disconnect-cloud-sync" style="color:#ef4444">Disconnect Cloud Sync</button>
+          ` : ''}
+        </div>
+        <small class="field-hint" style="display:block;margin-top:8px">
+          ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() 
+            ? '✓ Active: Any product, sale, or payment recorded on your PC or phone updates both devices automatically.' 
+            : 'To enable automatic syncing between your PC and phone without transferring files, connect your free Google Firebase Firestore database.'}
+        </small>
+      </div>
+    </section>
+
     <section class="panel data-sync-panel" style="margin-top:20px">
       <div class="settings-section">
         <h2>Data Backup &amp; Device Transfer (PC ⇄ Phone)</h2>
@@ -5284,6 +5313,45 @@ function render() {
 function openDialog(kind, title, subtitle, content, confirmLabel = 'Save') {
   openModal(title, subtitle, `<input type="hidden" name="dialog-kind" value="${esc(kind)}">${content}`, confirmLabel);
   document.getElementById('modal-content').dataset.dialogKind = kind;
+}
+
+function handleRemoteCloudSync(remotePayload, deviceName) {
+  if (!remotePayload || typeof remotePayload !== 'object') return;
+  const curId = state.currentUserId;
+  const curBranchId = state.activeBranchId;
+  const sanitized = sanitizeState(remotePayload, initialState);
+  sanitized.currentUserId = curId;
+  if (curBranchId && (sanitized.branches || []).some(b => b.id === curBranchId)) {
+    sanitized.activeBranchId = curBranchId;
+  }
+  state = sanitized;
+  persistState(state);
+  render();
+  toast(`☁️ Live Sync: Synced changes from ${deviceName || 'cloud'}`);
+}
+
+function openCloudSyncDialog() {
+  const currentConfig = typeof getStoredFirebaseConfig === 'function' ? getStoredFirebaseConfig() : null;
+  const configJson = currentConfig ? JSON.stringify(currentConfig, null, 2) : '';
+  const content = `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="inline-note" style="line-height:1.45;font-size:11.5px">
+        <strong>Automatic Multi-Device Synchronization (PC ⇄ Phone)</strong><br>
+        Connect your free Google Firebase Firestore database below so changes made on your PC (new products, sales, purchases, payments) are automatically visible on your phone in real time.
+      </div>
+      <div class="field">
+        <label for="firebase-config-text">Firebase Web Configuration</label>
+        <textarea id="firebase-config-text" name="firebase-config-text" rows="7" style="font-family:monospace;font-size:10.5px" placeholder='{\n  "apiKey": "AIzaSy...",\n  "authDomain": "myproject.firebaseapp.com",\n  "projectId": "myproject",\n  "storageBucket": "myproject.appspot.com",\n  "messagingSenderId": "...",\n  "appId": "..."\n}'>${esc(configJson)}</textarea>
+        <small class="field-hint">Copy from Firebase Console: <strong>Project Settings > General > Your apps (Web) > firebaseConfig</strong></small>
+      </div>
+      <div class="field">
+        <label for="firebase-workspace-id">Shared Sync Channel (Company ID)</label>
+        <input type="text" id="firebase-workspace-id" name="firebase-workspace-id" value="${esc(state.companyName ? state.companyName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase() : 'main-workspace')}" placeholder="e.g. my_company">
+        <small class="field-hint">Must be identical on both PC and phone to connect to the same workspace.</small>
+      </div>
+    </div>
+  `;
+  openDialog('cloud-sync', 'Connect Live Cloud Database', 'Real-time multi-device sync with Google Firebase.', content, 'Save & Connect Cloud');
 }
 
 function openProductForm(product = null) {
@@ -5676,6 +5744,41 @@ async function handleDialogSubmit(form) {
   const data = new FormData(form);
   const kind = form.dataset.dialogKind;
   const val = key => String(data.get(key) || '').trim();
+
+  if (kind === 'cloud-sync') {
+    const rawConfig = form.elements['firebase-config-text']?.value?.trim();
+    const wsId = form.elements['firebase-workspace-id']?.value?.trim() || 'main-workspace';
+    if (!rawConfig) {
+      toast('Please paste your Firebase configuration');
+      return;
+    }
+    let parsed = null;
+    try {
+      parsed = JSON.parse(rawConfig);
+    } catch {
+      try {
+        parsed = (new Function(`return ${rawConfig}`))();
+      } catch (err) {
+        toast('Invalid format. Please paste a valid Firebase configuration object.');
+        return;
+      }
+    }
+    if (!parsed || !parsed.projectId) {
+      toast('Configuration must include at least "projectId" and "apiKey"');
+      return;
+    }
+    saveStoredFirebaseConfig(parsed);
+    const ok = initCloudSync(wsId, handleRemoteCloudSync);
+    if (ok) {
+      pushStateToCloud(state);
+      toast('⚡ Live Cloud Sync Connected! Syncing across devices...');
+      closeModal();
+      render();
+    } else {
+      toast('Could not connect to Firebase with provided credentials');
+    }
+    return;
+  }
 
   if (kind === 'save-order-discrepancy') {
     const orderId = form.dataset.recordId;
@@ -7150,6 +7253,14 @@ function handleAction(button) {
       document.getElementById('restore-backup-file')?.click();
       break;
     }
+    case 'open-cloud-sync-dialog': openCloudSyncDialog(); break;
+    case 'disconnect-cloud-sync': {
+      if (!confirm('Disconnect live cloud sync? App will switch back to local offline mode.')) break;
+      saveStoredFirebaseConfig(null);
+      toast('Cloud sync disconnected. App is in local mode.');
+      render();
+      break;
+    }
     case 'export-stock-movements': {
       const movements = Array.isArray(state.stockMovements) ? state.stockMovements : [];
       downloadCSV(`tide-stock-movements-${today()}.csv`, [
@@ -8008,6 +8119,12 @@ async function initApp() {
   });
   if (!state.companyName || state.companyName === 'Kipepeo Traders' || /kipepeo/i.test(state.companyName)) {
     state.companyName = 'My Company';
+  }
+
+  // Initialize Real-Time Multi-Device Cloud Sync if configured
+  if (typeof initCloudSync === 'function') {
+    const wsId = state.companyName || 'main-workspace';
+    initCloudSync(wsId, handleRemoteCloudSync);
   }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
