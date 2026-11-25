@@ -7953,6 +7953,14 @@ document.getElementById('theme-toggle')?.addEventListener('click', () => {
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 });
 
+document.getElementById('cloud-sync-button')?.addEventListener('click', () => {
+  if (typeof isCloudSyncConnected === 'function' && isCloudSyncConnected()) {
+    toast('☁️ Live Cloud Sync is Active: PC & Phone are synchronized');
+  } else {
+    navigate('settings');
+  }
+});
+
 document.getElementById('back-button')?.addEventListener('click', navigateBack);
 
 window.addEventListener('online', updateConnection);
@@ -8122,9 +8130,17 @@ async function initApp() {
   }
 
   // Initialize Real-Time Multi-Device Cloud Sync if configured
+  window.requestPushStateToCloud = () => {
+    if (typeof pushStateToCloud === 'function' && state) pushStateToCloud(state);
+  };
+
   if (typeof initCloudSync === 'function') {
-    const wsId = state.companyName || 'main-workspace';
-    initCloudSync(wsId, handleRemoteCloudSync);
+    initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
+    setTimeout(() => {
+      if (typeof pushStateToCloud === 'function' && state && (state.products.length > 0 || state.sales.length > 0)) {
+        pushStateToCloud(state);
+      }
+    }, 1200);
   }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

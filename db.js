@@ -164,9 +164,19 @@ function sanitizeState(restored, initialState) {
 // Automatically synchronizes state across PC, phone, & devices
 // =========================================================
 const FIREBASE_CONFIG_STORAGE_KEY = 'tide-firebase-config';
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDafgbjKDUHGS4hbBTb4sjJ76nK24ozkls",
+  authDomain: "tideerp.firebaseapp.com",
+  projectId: "tideerp",
+  storageBucket: "tideerp.firebasestorage.app",
+  messagingSenderId: "519899083425",
+  appId: "1:519899083425:web:a91554721d225a731476e0",
+  measurementId: "G-DMRTQPN22Z"
+};
+
 let firestoreDb = null;
 let cloudSyncActive = false;
-let cloudSyncWorkspaceId = 'main-workspace';
+let cloudSyncWorkspaceId = 'tideerp_global_workspace';
 let cloudSyncUnsubscribe = null;
 let lastCloudSaveTime = 0;
 let isReceivingCloudBroadcast = false;
@@ -174,10 +184,9 @@ let isReceivingCloudBroadcast = false;
 function getStoredFirebaseConfig() {
   try {
     const raw = localStorage.getItem(FIREBASE_CONFIG_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return DEFAULT_FIREBASE_CONFIG;
 }
 
 function saveStoredFirebaseConfig(config) {
@@ -214,7 +223,7 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
       firebase.initializeApp(config);
     }
     firestoreDb = firebase.firestore();
-    cloudSyncWorkspaceId = (workspaceId || 'main-workspace').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+    cloudSyncWorkspaceId = (workspaceId || 'tideerp_global_workspace').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
     cloudSyncActive = true;
 
     // Attach real-time Firestore listener
@@ -227,7 +236,13 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
       .collection('tide_erp_workspaces')
       .doc(cloudSyncWorkspaceId)
       .onSnapshot((snapshot) => {
-        if (!snapshot.exists) return;
+        if (!snapshot.exists) {
+          // Cloud doc does not exist yet; populate cloud from this client
+          if (typeof window.requestPushStateToCloud === 'function') {
+            window.requestPushStateToCloud();
+          }
+          return;
+        }
         const remote = snapshot.data();
         if (!remote || !remote.payload) return;
 
@@ -278,5 +293,5 @@ function pushStateToCloud(state) {
     } catch (err) {
       console.warn('Live cloud sync push failed:', err);
     }
-  }, 1200);
+  }, 1000);
 }
