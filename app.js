@@ -1133,7 +1133,7 @@ function setPage(next) {
   selectedProductIds.clear();
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === next));
   const sb = document.getElementById('sidebar');
-  sb?.classList.remove('open');
+  sb?.classList.remove('open', 'hover-expanded');
   document.getElementById('sidebar-backdrop')?.classList.remove('active');
   if (typeof updateSidebarUI === 'function') updateSidebarUI();
   render();
@@ -7553,9 +7553,8 @@ function isDesktopSidebar() {
 function updateSidebarUI() {
   if (!sidebar) return;
   if (isDesktopSidebar()) {
-    // Desktop: default collapsed icon rail, hover auto-expands
-    sidebar.classList.add('collapsed');
-    sidebar.classList.remove('open');
+    // Desktop: completely closed off-screen by default, auto-slides out only on hover
+    sidebar.classList.remove('open', 'collapsed');
     sidebarBackdrop?.classList.remove('active');
     if (sidebarToggleButton) {
       sidebarToggleButton.hidden = true;
@@ -7587,13 +7586,21 @@ function handleDesktopLeave() {
   clearTimeout(sidebarHoverTimer);
   sidebarHoverTimer = setTimeout(() => {
     sidebar.classList.remove('hover-expanded');
-  }, 120);
+  }, 160);
 }
 
 sidebar?.addEventListener('mouseenter', handleDesktopEnter);
 sidebar?.addEventListener('mouseleave', handleDesktopLeave);
 sidebarHoverZone?.addEventListener('mouseenter', handleDesktopEnter);
 sidebarHoverZone?.addEventListener('mouseleave', handleDesktopLeave);
+
+// Proximity detection: moving cursor to left edge (<= 18px) automatically slides open sidebar on desktop
+document.addEventListener('pointermove', event => {
+  if (!isDesktopSidebar() || !sidebar) return;
+  if (event.clientX <= 18) {
+    handleDesktopEnter();
+  }
+}, { passive: true });
 
 // Mobile toggle button and backdrop interactions
 function toggleMobileSidebar() {
@@ -7625,8 +7632,12 @@ document.addEventListener('click', event => {
 });
 
 sidebar?.addEventListener('click', event => {
-  if (!isDesktopSidebar() && (event.target.closest('.nav-item') || event.target.closest('[data-page]'))) {
-    closeMobileSidebar();
+  if (event.target.closest('.nav-item') || event.target.closest('[data-page]')) {
+    if (isDesktopSidebar()) {
+      sidebar.classList.remove('hover-expanded');
+    } else {
+      closeMobileSidebar();
+    }
   }
 });
 
