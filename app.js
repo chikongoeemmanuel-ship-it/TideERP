@@ -646,24 +646,36 @@ function renderAuthGate(message = '') {
         </div>
       </section>
 
-      <!-- Right Column: Practical & Modern Sign-in Form -->
-      <section class="auth-card-panel" aria-label="Sign in form">
-        <div class="auth-card-inner">
+      <!-- Right Column: Practical & Modern Sign-in & Register Panel -->
+      <section class="auth-card-panel" aria-label="Authentication portal">
+        <div class="auth-card-inner ${isRegister ? 'is-register' : ''}">
           <div class="auth-card-top">
             <div class="auth-mobile-header">
               <span class="brand-mark-sm">t</span>
               <strong>Tide ERP</strong>
             </div>
-            <h2>Sign in to Workspace</h2>
-            <p>Access your commercial accounting ledger, point-of-sale terminals, and inventory controls.</p>
+
+            <!-- Auth Mode Switcher Tabs -->
+            <div class="auth-tabs" role="tablist" aria-label="Sign-in and Registration choices">
+              <button type="button" class="auth-tab ${!isRegister ? 'active' : ''}" data-auth-tab="login" role="tab" aria-selected="${!isRegister}">
+                <span>🔑 Sign In</span>
+              </button>
+              <button type="button" class="auth-tab ${isRegister ? 'active' : ''}" data-auth-tab="register" role="tab" aria-selected="${isRegister}">
+                <span>🏢 Register Company</span>
+              </button>
+            </div>
+
+            <h2 id="auth-form-title">${isRegister ? 'Register Company Workspace' : 'Sign in to Workspace'}</h2>
+            <p id="auth-form-desc">${isRegister ? 'Create your enterprise workspace, primary branch, and administrator account.' : 'Access your commercial accounting ledger, point-of-sale terminals, and inventory controls.'}</p>
           </div>
 
-          <form class="auth-form-modern" id="login-form">
+          <!-- 1. SIGN IN FORM -->
+          <form class="auth-form-modern" id="login-form" style="${isRegister ? 'display:none;' : ''}">
             <div class="form-group">
               <label for="login-identifier">Username or Email Address</label>
               <div class="input-wrap">
                 <span class="input-icon">👤</span>
-                <input name="login-identifier" id="login-identifier" type="text" autocomplete="username" placeholder="e.g. Admin or your@email.com" required autofocus>
+                <input name="login-identifier" id="login-identifier" type="text" autocomplete="username" placeholder="e.g. Admin or your@email.com" required ${!isRegister ? 'autofocus' : ''}>
               </div>
             </div>
 
@@ -672,7 +684,7 @@ function renderAuthGate(message = '') {
               <div class="input-wrap">
                 <span class="input-icon">🔑</span>
                 <input name="login-password" id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" required>
-                <button type="button" class="pwd-visibility-toggle" id="toggle-password-btn" aria-label="Toggle password visibility" title="Show or hide password">👁</button>
+                <button type="button" class="pwd-visibility-toggle" aria-label="Toggle password visibility" title="Show or hide password">👁</button>
               </div>
             </div>
 
@@ -680,6 +692,115 @@ function renderAuthGate(message = '') {
               <span>Sign in to Workspace</span>
               <span class="btn-arrow">→</span>
             </button>
+
+            <div class="auth-switch-prompt">
+              <span>New to Tide ERP?</span>
+              <button type="button" class="auth-switch-link" data-switch-auth="register">Create an account &amp; register company →</button>
+            </div>
+          </form>
+
+          <!-- 2. REGISTER COMPANY & ACCOUNT FORM -->
+          <form class="auth-form-modern" id="register-form" style="${!isRegister ? 'display:none;' : ''}">
+            <div class="auth-section-divider">Company Profile</div>
+            
+            <div class="form-group">
+              <label for="reg-company-name">Company / Business Name *</label>
+              <div class="input-wrap">
+                <span class="input-icon">🏢</span>
+                <input name="reg-company-name" id="reg-company-name" type="text" placeholder="e.g. Serengeti General Supplies Ltd" required ${isRegister ? 'autofocus' : ''}>
+              </div>
+            </div>
+
+            <div class="form-grid-2col">
+              <div class="form-group">
+                <label for="reg-currency">Base Currency</label>
+                <div class="input-wrap">
+                  <span class="input-icon">💱</span>
+                  <select name="reg-currency" id="reg-currency">
+                    <option value="TZS" selected>TZS - Tanzanian Shilling (TSh)</option>
+                    <option value="USD">USD - US Dollar ($)</option>
+                    <option value="KES">KES - Kenyan Shilling (KSh)</option>
+                    <option value="UGX">UGX - Ugandan Shilling (USh)</option>
+                    <option value="EUR">EUR - Euro (€)</option>
+                    <option value="GBP">GBP - British Pound (£)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="reg-branch-name">Primary Branch Name</label>
+                <div class="input-wrap">
+                  <span class="input-icon">📍</span>
+                  <input name="reg-branch-name" id="reg-branch-name" type="text" value="Main branch" placeholder="e.g. Main branch or Kariakoo" required>
+                </div>
+              </div>
+            </div>
+
+            <div class="auth-section-divider">Administrator Account</div>
+
+            <div class="form-group">
+              <label for="reg-fullname">Your Full Name *</label>
+              <div class="input-wrap">
+                <span class="input-icon">👤</span>
+                <input name="reg-fullname" id="reg-fullname" type="text" placeholder="e.g. Emmanuel Chikongo" required>
+              </div>
+            </div>
+
+            <div class="form-grid-2col">
+              <div class="form-group">
+                <label for="reg-username">Choose Username *</label>
+                <div class="input-wrap">
+                  <span class="input-icon">🏷️</span>
+                  <input name="reg-username" id="reg-username" type="text" autocomplete="username" placeholder="e.g. admin or emmanuel" required>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="reg-phone">Phone Number</label>
+                <div class="input-wrap">
+                  <span class="input-icon">📞</span>
+                  <input name="reg-phone" id="reg-phone" type="tel" placeholder="e.g. 0754 123 456">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="reg-email">Email Address *</label>
+              <div class="input-wrap">
+                <span class="input-icon">✉️</span>
+                <input name="reg-email" id="reg-email" type="email" autocomplete="email" placeholder="e.g. emmanuel@company.co.tz" required>
+              </div>
+            </div>
+
+            <div class="form-grid-2col">
+              <div class="form-group">
+                <label for="reg-password">Password (min 6 chars) *</label>
+                <div class="input-wrap">
+                  <span class="input-icon">🔑</span>
+                  <input name="reg-password" id="reg-password" type="password" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
+                  <button type="button" class="pwd-visibility-toggle" aria-label="Toggle password visibility" title="Show or hide password">👁</button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="reg-confirm-password">Confirm Password *</label>
+                <div class="input-wrap">
+                  <span class="input-icon">🔒</span>
+                  <input name="reg-confirm-password" id="reg-confirm-password" type="password" autocomplete="new-password" placeholder="••••••••" minlength="6" required>
+                  <button type="button" class="pwd-visibility-toggle" aria-label="Toggle password visibility" title="Show or hide password">👁</button>
+                </div>
+              </div>
+            </div>
+
+            <button class="button primary login-submit-btn" type="submit">
+              <span>Create Account &amp; Register Company</span>
+              <span class="btn-arrow">→</span>
+            </button>
+
+            <div class="auth-switch-prompt">
+              <span>Already have an account?</span>
+              <button type="button" class="auth-switch-link" data-switch-auth="login">Sign in here →</button>
+            </div>
           </form>
 
           ${message ? `<div class="auth-error-banner" role="alert">⚠️ ${esc(message)}</div>` : ''}
@@ -687,7 +808,157 @@ function renderAuthGate(message = '') {
       </section>
     </div>
   `;
-  gate.querySelector('input[name="login-identifier"]')?.focus();
+  if (isRegister) {
+    gate.querySelector('input[name="reg-company-name"]')?.focus();
+  } else {
+    gate.querySelector('input[name="login-identifier"]')?.focus();
+  }
+}
+
+let currentAuthTab = 'login';
+
+function switchAuthTab(tab) {
+  currentAuthTab = tab;
+  const loginForm = document.getElementById('login-form');
+  const registerForm = document.getElementById('register-form');
+  const title = document.getElementById('auth-form-title');
+  const desc = document.getElementById('auth-form-desc');
+  const errorBanner = document.querySelector('.auth-error-banner');
+  if (errorBanner) errorBanner.style.display = 'none';
+
+  document.querySelectorAll('.auth-tab').forEach(b => {
+    const active = b.dataset.authTab === tab;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+
+  const cardInner = document.querySelector('.auth-card-inner');
+
+  if (tab === 'register') {
+    if (loginForm) loginForm.style.display = 'none';
+    if (registerForm) registerForm.style.display = 'grid';
+    if (title) title.textContent = 'Register Company Workspace';
+    if (desc) desc.textContent = 'Create your enterprise workspace, primary branch, and administrator account.';
+    if (cardInner) cardInner.classList.add('is-register');
+    registerForm?.querySelector('input[name="reg-company-name"]')?.focus();
+  } else {
+    if (registerForm) registerForm.style.display = 'none';
+    if (loginForm) loginForm.style.display = 'grid';
+    if (title) title.textContent = 'Sign in to Workspace';
+    if (desc) desc.textContent = 'Access your commercial accounting ledger, point-of-sale terminals, and inventory controls.';
+    if (cardInner) cardInner.classList.remove('is-register');
+    loginForm?.querySelector('input[name="login-identifier"]')?.focus();
+  }
+}
+
+async function handleRegister(form) {
+  const companyName = (form.elements['reg-company-name']?.value || '').trim();
+  const branchName = (form.elements['reg-branch-name']?.value || '').trim() || 'Main branch';
+  const currency = form.elements['reg-currency']?.value || 'TZS';
+  const fullName = (form.elements['reg-fullname']?.value || '').trim();
+  const username = normalizedLogin(form.elements['reg-username']?.value || '');
+  const email = normalizedLogin(form.elements['reg-email']?.value || '');
+  const phone = (form.elements['reg-phone']?.value || '').trim();
+  const password = form.elements['reg-password']?.value || '';
+  const confirmPassword = form.elements['reg-confirm-password']?.value || '';
+
+  if (!companyName) {
+    renderAuthGate('Please enter your company or business name.', 'register');
+    return;
+  }
+  if (!fullName) {
+    renderAuthGate('Please enter your full name.', 'register');
+    return;
+  }
+  if (!username) {
+    renderAuthGate('Please choose a username.', 'register');
+    return;
+  }
+  if (!password || password.length < 6) {
+    renderAuthGate('Password must be at least 6 characters.', 'register');
+    return;
+  }
+  if (password !== confirmPassword) {
+    renderAuthGate('Passwords do not match. Please re-enter.', 'register');
+    return;
+  }
+
+  // Check if username or email is already taken
+  const existing = (state.users || []).find(u => {
+    return (u.username && normalizedLogin(u.username) === username) || (email && u.email && normalizedLogin(u.email) === email);
+  });
+  if (existing) {
+    renderAuthGate('An account with this username or email already exists. Please sign in or choose another.', 'register');
+    return;
+  }
+
+  try {
+    // 1. Configure company
+    state.companyName = companyName;
+    state.currency = currency;
+    state.isRegistered = true;
+
+    // 2. Primary branch
+    const branchId = 'BR-MAIN';
+    state.branches = Array.isArray(state.branches) ? state.branches : [];
+    let mainBranch = state.branches.find(b => b.id === branchId);
+    if (mainBranch) {
+      mainBranch.name = branchName;
+    } else {
+      mainBranch = { id: branchId, name: branchName, status: 'Active' };
+      state.branches.unshift(mainBranch);
+    }
+    state.activeBranchId = branchId;
+    activeBranch = mainBranch;
+    state.branch = branchName;
+
+    // 3. Create administrator / owner user
+    const adminUser = {
+      id: idFor('USR', state.users || []),
+      name: fullName,
+      username: username,
+      email: email,
+      phone: phone,
+      role: 'Owner / Administrator',
+      modules: ['*'],
+      permissions: { '*': ['*'] },
+      branchId: branchId,
+      status: 'Active',
+      isBootstrap: true,
+      initialAdminLoginSeeded: true
+    };
+
+    await setUserPassword(adminUser, password);
+
+    // If there is an existing unconfigured bootstrap user, update it, otherwise add new
+    state.users = Array.isArray(state.users) ? state.users : [];
+    const bootstrapIdx = state.users.findIndex(u => u.isBootstrap);
+    if (bootstrapIdx >= 0) {
+      state.users[bootstrapIdx] = adminUser;
+    } else {
+      state.users.unshift(adminUser);
+    }
+
+    // 4. Auto-login
+    state.currentUserId = adminUser.id;
+    state.posCart = [];
+    tableQuery = '';
+    selectedProductIds.clear();
+    safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: adminUser.id, passwordHash: adminUser.passwordHash }));
+    saveState();
+
+    recordActivity('Company workspace registered', `${companyName} by ${fullName}`);
+
+    authErrorMessage = '';
+    page = 'home';
+    history.replaceState({ erpPage: 'home' }, '', '#home');
+    document.getElementById('auth-gate').hidden = true;
+    document.querySelector('.app-shell').hidden = false;
+    render();
+    toast(`🎉 Welcome to Tide ERP! Company "${companyName}" registered successfully.`);
+  } catch (err) {
+    renderAuthGate(err.message || 'Company registration could not be completed.', 'register');
+  }
 }
 
 async function ensureAdministratorLogin() {
@@ -7216,9 +7487,10 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape') clos
 
 // Global Event Listeners
 document.addEventListener('click', event => {
-  const toggleBtn = event.target.closest('#toggle-password-btn');
+  const toggleBtn = event.target.closest('#toggle-password-btn, .pwd-visibility-toggle');
   if (toggleBtn) {
-    const pwdInput = document.getElementById('login-password');
+    const wrap = toggleBtn.closest('.input-wrap');
+    const pwdInput = wrap?.querySelector('input') || document.getElementById('login-password');
     if (pwdInput) {
       const isPwd = pwdInput.type === 'password';
       pwdInput.type = isPwd ? 'text' : 'password';
@@ -7227,16 +7499,10 @@ document.addEventListener('click', event => {
     }
     return;
   }
-  const fillBtn = event.target.closest('[data-auth-fill]');
-  if (fillBtn) {
-    const idInput = document.getElementById('login-identifier') || document.querySelector('input[name="login-identifier"]');
-    const pwdInput = document.getElementById('login-password') || document.querySelector('input[name="login-password"]');
-    if (idInput && pwdInput) {
-      idInput.value = ADMIN_LOGIN_EMAIL;
-      pwdInput.value = ADMIN_INITIAL_PASSWORD;
-      toast('Filled Administrator login credentials');
-      idInput.focus();
-    }
+  const tabBtn = event.target.closest('[data-auth-tab], [data-switch-auth]');
+  if (tabBtn) {
+    const targetTab = tabBtn.dataset.authTab || tabBtn.dataset.switchAuth;
+    if (targetTab && typeof switchAuthTab === 'function') switchAuthTab(targetTab);
     return;
   }
   if (!event.target.closest('.stocktake-search-wrap')) {
@@ -7362,6 +7628,9 @@ document.addEventListener('submit', event => {
   if (event.target.id === 'login-form') {
     event.preventDefault();
     handleLogin(event.target);
+  } else if (event.target.id === 'register-form') {
+    event.preventDefault();
+    handleRegister(event.target);
   } else if (event.target.id === 'company-settings-form') {
     event.preventDefault();
     if(!isWorkspaceAdministrator()&&!userHasPermission('settings','edit-company')){toast('You do not have permission to change company settings');return;}
