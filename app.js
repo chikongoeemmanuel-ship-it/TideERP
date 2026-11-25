@@ -3936,6 +3936,9 @@ function deleteProduct(id, button = null) {
     }
   }
   state.products = state.products.filter(p => p.id !== id);
+  if (typeof window.TideFirebase?.deleteProduct === 'function') {
+    window.TideFirebase.deleteProduct(id);
+  }
   if (mode === 'erase-all') state.activityLog = (state.activityLog || []).filter(item => item.reference !== id && !String(item.details || '').includes(product.name));
   recordActivity('Product deleted', mode === 'erase-all' ? `${product.name} · related records erased` : `${product.name} · previous records retained`, id);
   saveState();
@@ -5899,7 +5902,11 @@ async function handleDialogSubmit(form) {
     if (old) Object.assign(old, product); else state.products.unshift(product);
     if (!state.productCategories.includes(product.category)) state.productCategories.push(product.category);
     recordActivity(old?'Product updated':'Product added',product.name,product.id);
-    saveState(); document.getElementById('app-modal').close(); render(); toast(old ? 'Product updated' : 'Product added'); return;
+    saveState();
+    if (typeof window.TideFirebase?.saveProduct === 'function') {
+      window.TideFirebase.saveProduct(product);
+    }
+    document.getElementById('app-modal').close(); render(); toast(old ? 'Product updated' : 'Product added'); return;
   }
   if (kind === 'confirm-write-off') {
     const product = state.products.find(p => p.id === form.dataset.recordId);
@@ -7206,6 +7213,9 @@ function handleAction(button) {
           }
         }
         state.products = state.products.filter(p => p.id !== pid);
+        if (typeof window.TideFirebase?.deleteProduct === 'function') {
+          window.TideFirebase.deleteProduct(pid);
+        }
         if (bulkMode === 'erase-all') state.activityLog = (state.activityLog || []).filter(item => item.reference !== pid);
       }
       recordActivity('Bulk product delete', `${ids.length} product${ids.length !== 1 ? 's' : ''} removed`);
@@ -7579,6 +7589,9 @@ function importProductsCSV(csv) {
   }
 
   saveState();
+  if (typeof window.TideFirebase?.batchSyncProducts === 'function') {
+    window.TideFirebase.batchSyncProducts(state.products);
+  }
   if (typeof pushStateToCloud === 'function') {
     pushStateToCloud(state, true);
   }
@@ -8229,6 +8242,36 @@ async function initApp() {
 
   if (typeof initCloudSync === 'function') {
     initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
+  }
+
+  // Real-Time Firestore Collection Stream for "products"
+  if (typeof window.TideFirebase?.initFirebase === 'function') {
+    window.TideFirebase.initFirebase().then(() => {
+      window.TideFirebase.streamProducts((remoteProducts) => {
+        if (!Array.isArray(remoteProducts)) return;
+        if (remoteProducts.length === 0 && (state.products || []).length > 0) {
+          // Seed the "products" collection if empty
+          window.TideFirebase.batchSyncProducts(state.products);
+          return;
+        }
+
+        // Merge remote products into local state
+        const productMap = new Map();
+        (state.products || []).forEach(p => { if (p && p.id) productMap.set(p.id, p); });
+        remoteProducts.forEach(rp => {
+          if (rp && rp.id) {
+            productMap.set(rp.id, { ...(productMap.get(rp.id) || {}), ...rp });
+          }
+        });
+        state.products = Array.from(productMap.values());
+        persistState(state);
+
+        const curPage = state.currentPage || location.hash.replace('#', '') || 'dashboard';
+        if (['products', 'inventory', 'pos', 'dashboard'].includes(curPage)) {
+          render();
+        }
+      });
+    }).catch(err => console.warn('Product stream setup error:', err));
   }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
