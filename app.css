@@ -11315,177 +11315,343 @@ tr.row-revoked td strong {
 }
 
 /* =========================================================
-   WORKSPACE TYPOGRAPHY OPTIMIZATION (AFTER LOGGING IN)
-   Refined, modern, compact enterprise scale for the logged-in app
+   WORKSPACE TYPOGRAPHY & DESKTOP SCALE
    ========================================================= */
+@media (min-width: 761px) {
+  .app-shell {
+    font-size: 13px !important;
+    line-height: 1.45 !important;
+  }
 
-/* Desktop & General Logged-In Workspace */
-.app-shell {
-  font-size: 13px !important;
-  line-height: 1.45 !important;
+  .app-shell .page-heading {
+    margin-bottom: 16px !important;
+  }
+
+  .app-shell .eyebrow {
+    font-size: 10px !important;
+    letter-spacing: 1px !important;
+    margin-bottom: 3px !important;
+  }
+
+  .app-shell .page-heading h1 {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.4px !important;
+    margin: 0 0 4px 0 !important;
+    line-height: 1.3 !important;
+  }
+
+  .app-shell .page-heading p {
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+  }
+
+  .app-shell .metric-card {
+    padding: 13px 15px !important;
+    border-radius: 12px !important;
+  }
+
+  .app-shell .metric-top {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    margin-bottom: 4px !important;
+  }
+
+  .app-shell .metric-value {
+    font-size: 20px !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.4px !important;
+    margin: 2px 0 4px !important;
+  }
+
+  .app-shell .metric-foot {
+    font-size: 10.5px !important;
+    line-height: 1.35 !important;
+  }
+
+  .app-shell .panel,
+  .app-shell .table-panel,
+  .app-shell .quick-panel,
+  .app-shell .report-card,
+  .app-shell .stock-control-panel,
+  .app-shell .chart-panel {
+    padding: 14px 16px !important;
+    border-radius: 12px !important;
+  }
+
+  .app-shell .panel-title,
+  .app-shell .table-heading h2,
+  .app-shell .section-title {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+  }
+
+  .app-shell .panel-subtitle {
+    font-size: 11.5px !important;
+    line-height: 1.35 !important;
+  }
+
+  .app-shell .data-table th {
+    font-size: 11px !important;
+    padding: 8px 10px !important;
+    font-weight: 700 !important;
+  }
+
+  .app-shell .data-table td {
+    font-size: 12px !important;
+    padding: 8px 10px !important;
+  }
+
+  .app-shell .table-toolbar {
+    padding: 8px 12px !important;
+  }
+
+  .app-shell .table-toolbar input,
+  .app-shell .table-toolbar select {
+    font-size: 11.5px !important;
+    padding: 6px 10px !important;
+  }
+
+  .app-shell .button {
+    font-size: 12px !important;
+    padding: 6px 12px !important;
+    border-radius: 7px !important;
+  }
+
+  .app-shell .button.small {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+    border-radius: 6px !important;
+  }
+
+  .app-shell label {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    margin-bottom: 3px !important;
+  }
+
+  .app-shell input,
+  .app-shell select,
+  .app-shell textarea {
+    font-size: 12px !important;
+    padding: 7px 10px !important;
+    border-radius: 7px !important;
+  }
+
+  .app-shell .quick-card {
+    padding: 12px !important;
+  }
+
+  .app-shell .quick-copy strong {
+    font-size: 12.5px !important;
+  }
+
+  .app-shell .quick-copy small {
+    font-size: 10.5px !important;
+  }
+
+  .app-shell .topbar-brand {
+    font-size: 17px !important;
+  }
+
+  .app-shell .breadcrumb {
+    font-size: 12.5px !important;
+  }
+
+  .app-shell .today-label {
+    font-size: 11px !important;
+  }
+
+  .sidebar .nav-item {
+    font-size: 12px !important;
+    padding: 8px 12px !important;
+  }
+
+  .sidebar .nav-label {
+    font-size: 9px !important;
+    letter-spacing: 0.8px !important;
+  }
+
+  .sidebar .workspace-copy strong {
+    font-size: 11.5px !important;
+  }
+
+  .sidebar .workspace-copy small {
+    font-size: 9.5px !important;
+  }
+
+  .sidebar .profile-copy strong {
+    font-size: 11.5px !important;
+  }
+
+  .sidebar .profile-copy small {
+    font-size: 9.5px !important;
+  }
 }
 
-.app-shell .page-heading {
-  margin-bottom: 16px !important;
-}
+/* =========================================================
+   MOBILE ANTI-OVERFLOW & TABLE CONTAINMENT SYSTEM
+   Eliminates horizontal screen bleeding and table overlap
+   ========================================================= */
+@media (max-width: 760px) {
+  /* 1. Global Viewport Clamping: zero horizontal page bleed */
+  html, body {
+    width: 100% !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+    position: relative !important;
+    box-sizing: border-box !important;
+  }
 
-.app-shell .eyebrow {
-  font-size: 10px !important;
-  letter-spacing: 1px !important;
-  margin-bottom: 3px !important;
-}
+  .app-shell,
+  .main-area,
+  .page-wrap {
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
+  }
 
-.app-shell .page-heading h1 {
-  font-size: 20px !important;
-  font-weight: 700 !important;
-  letter-spacing: -0.4px !important;
-  margin: 0 0 4px 0 !important;
-  line-height: 1.3 !important;
-}
+  /* 2. All Cards, Panels & Containers strictly bounded */
+  .panel,
+  .table-panel,
+  .quick-panel,
+  .metric-card,
+  .branch-card,
+  .report-card,
+  .chart-panel,
+  .stock-control-panel,
+  .accounting-account-section,
+  .accounting-account-grid {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important; /* Prevents children from blowing out card width */
+  }
 
-.app-shell .page-heading p {
-  font-size: 12px !important;
-  line-height: 1.4 !important;
-}
+  /* 3. Table Horizontal Scroll Containment (Self-Contained Scrollbar) */
+  .table-scroll,
+  .hub-table-wrapper,
+  .stocktake-table-wrap,
+  .table-wrap,
+  .bulk-stock-table {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    box-sizing: border-box !important;
+    margin: 4px 0 !important;
+    padding-bottom: 6px !important;
+  }
 
-.app-shell .metric-card {
-  padding: 13px 15px !important;
-  border-radius: 12px !important;
-}
+  /* Tables inside scroll container expand freely without expanding parent */
+  .table-scroll > table,
+  .hub-table-wrapper > table,
+  .stocktake-table-wrap > table,
+  .data-table,
+  .hub-finance-table,
+  .stocktake-table {
+    width: max-content !important;
+    min-width: 100% !important;
+    max-width: none !important;
+  }
 
-.app-shell .metric-top {
-  font-size: 11px !important;
-  font-weight: 700 !important;
-  margin-bottom: 4px !important;
-}
+  .data-table td,
+  .data-table th,
+  .hub-finance-table td,
+  .hub-finance-table th {
+    white-space: nowrap !important;
+  }
 
-.app-shell .metric-value {
-  font-size: 20px !important;
-  font-weight: 800 !important;
-  letter-spacing: -0.4px !important;
-  margin: 2px 0 4px !important;
-}
+  /* 4. Flexible Toolbars, Headers & Filter Stacks */
+  .toolbar,
+  .table-heading {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    padding: 8px 10px !important;
+  }
 
-.app-shell .metric-foot {
-  font-size: 10.5px !important;
-  line-height: 1.35 !important;
-}
+  .toolbar-left,
+  .toolbar-right {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
 
-.app-shell .panel,
-.app-shell .table-panel,
-.app-shell .quick-panel,
-.app-shell .report-card,
-.app-shell .stock-control-panel,
-.app-shell .chart-panel {
-  padding: 14px 16px !important;
-  border-radius: 12px !important;
-}
+  .toolbar-left > h2,
+  .table-heading > h2 {
+    font-size: 12.5px !important;
+    margin: 0 !important;
+  }
 
-.app-shell .panel-title,
-.app-shell .table-heading h2,
-.app-shell .section-title {
-  font-size: 14px !important;
-  font-weight: 700 !important;
-}
+  .toolbar input,
+  .toolbar select,
+  .toolbar .select-control,
+  .search-box {
+    max-width: 100% !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
 
-.app-shell .panel-subtitle {
-  font-size: 11.5px !important;
-  line-height: 1.35 !important;
-}
+  /* 5. Responsive Grids: collapse to single column on mobile */
+  .dashboard-grid,
+  .recent-grid,
+  .pos-layout,
+  .report-cards,
+  .accounting-account-grid,
+  .form-grid-2col,
+  .summary-strip {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 8px !important;
+  }
 
-.app-shell .data-table th {
-  font-size: 11px !important;
-  padding: 8px 10px !important;
-  font-weight: 700 !important;
-}
+  .pos-layout .cart-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
 
-.app-shell .data-table td {
-  font-size: 12px !important;
-  padding: 8px 10px !important;
-}
+  /* 6. Modals & Dialogs Clamping */
+  .modal,
+  .modal-card,
+  dialog {
+    max-width: calc(100vw - 16px) !important;
+    width: calc(100vw - 16px) !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+    margin: auto !important;
+  }
 
-.app-shell .table-toolbar {
-  padding: 8px 12px !important;
-}
+  .modal-card .table-scroll {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+  }
 
-.app-shell .table-toolbar input,
-.app-shell .table-toolbar select {
-  font-size: 11.5px !important;
-  padding: 6px 10px !important;
-}
-
-.app-shell .button {
-  font-size: 12px !important;
-  padding: 6px 12px !important;
-  border-radius: 7px !important;
-}
-
-.app-shell .button.small {
-  font-size: 11px !important;
-  padding: 4px 8px !important;
-  border-radius: 6px !important;
-}
-
-.app-shell label {
-  font-size: 11px !important;
-  font-weight: 700 !important;
-  margin-bottom: 3px !important;
-}
-
-.app-shell input,
-.app-shell select,
-.app-shell textarea {
-  font-size: 12px !important;
-  padding: 7px 10px !important;
-  border-radius: 7px !important;
-}
-
-.app-shell .quick-card {
-  padding: 12px !important;
-}
-
-.app-shell .quick-copy strong {
-  font-size: 12.5px !important;
-}
-
-.app-shell .quick-copy small {
-  font-size: 10.5px !important;
-}
-
-.app-shell .topbar-brand {
-  font-size: 17px !important;
-}
-
-.app-shell .breadcrumb {
-  font-size: 12.5px !important;
-}
-
-.app-shell .today-label {
-  font-size: 11px !important;
-}
-
-.sidebar .nav-item {
-  font-size: 12px !important;
-  padding: 8px 12px !important;
-}
-
-.sidebar .nav-label {
-  font-size: 9px !important;
-  letter-spacing: 0.8px !important;
-}
-
-.sidebar .workspace-copy strong {
-  font-size: 11.5px !important;
-}
-
-.sidebar .workspace-copy small {
-  font-size: 9.5px !important;
-}
-
-.sidebar .profile-copy strong {
-  font-size: 11.5px !important;
-}
-
-.sidebar .profile-copy small {
-  font-size: 9.5px !important;
+  /* 7. Charts & Visual Displays */
+  .chart-area,
+  .sales-performance-chart,
+  svg {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
 }
