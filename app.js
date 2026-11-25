@@ -5322,9 +5322,25 @@ function handleRemoteCloudSync(remotePayload, deviceName) {
   const curId = state.currentUserId;
   const curBranchId = state.activeBranchId;
 
-  // Non-destructive intelligent merge: local products, sales, etc. are never wiped out
+  // Non-destructive intelligent merge: local products, sales, customers, etc. are never wiped out
   const merged = typeof mergeWorkspaceState === 'function' ? mergeWorkspaceState(state, remotePayload) : { ...remotePayload, ...state };
-  const localHadMoreProducts = (state.products?.length || 0) > (remotePayload.products?.length || 0);
+  
+  const remoteProductCount = remotePayload.products?.length || 0;
+  const remoteCustomerCount = remotePayload.customers?.length || 0;
+  const remoteSalesCount = remotePayload.sales?.length || 0;
+  const remoteOrderCount = remotePayload.orders?.length || 0;
+  const remoteSupplierCount = remotePayload.suppliers?.length || 0;
+
+  const localHasUniqueData = 
+    (state.products?.length || 0) > remoteProductCount ||
+    (state.customers?.length || 0) > remoteCustomerCount ||
+    (state.sales?.length || 0) > remoteSalesCount ||
+    (state.orders?.length || 0) > remoteOrderCount ||
+    (state.suppliers?.length || 0) > remoteSupplierCount ||
+    (merged.customers?.length || 0) > remoteCustomerCount ||
+    (merged.products?.length || 0) > remoteProductCount ||
+    (merged.sales?.length || 0) > remoteSalesCount ||
+    (merged.orders?.length || 0) > remoteOrderCount;
 
   const sanitized = sanitizeState(merged, initialState);
   sanitized.currentUserId = curId;
@@ -5335,8 +5351,8 @@ function handleRemoteCloudSync(remotePayload, deviceName) {
   persistState(state);
   render();
 
-  if (localHadMoreProducts && typeof pushStateToCloud === 'function') {
-    // If local had products that remote didn't have yet, immediately push them to cloud
+  if (localHasUniqueData && typeof pushStateToCloud === 'function') {
+    // If this device has items (products, customers, sales) that remote didn't have, immediately push unified merge
     pushStateToCloud(state, true);
   } else {
     toast(`☁️ Live Sync: Synced changes from ${deviceName || 'cloud'}`);
@@ -8005,6 +8021,10 @@ async function forceReloadApp() {
 function openCloudStatusModal() {
   const connected = typeof isCloudSyncConnected === 'function' && isCloudSyncConnected();
   const deviceType = /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Phone' : 'PC';
+  const prodCount = state?.products?.length || 0;
+  const custCount = state?.customers?.length || 0;
+  const saleCount = state?.sales?.length || 0;
+
   const content = `
     <div style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:${connected ? 'rgba(0,166,81,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:10px;border:1px solid ${connected ? '#00a651' : '#ef4444'}">
@@ -8012,6 +8032,11 @@ function openCloudStatusModal() {
           <strong style="display:block;font-size:13px;color:${connected ? '#00a651' : '#ef4444'}">${connected ? '● Cloud Sync Connected' : '○ Cloud Sync Disconnected'}</strong>
           <small class="muted">Device: <strong>${deviceType}</strong> · Database: <strong>Google Firebase (tideerp)</strong></small>
         </div>
+      </div>
+      <div style="background:var(--bg-subtle, rgba(0,0,0,0.04));padding:10px;border-radius:8px;font-size:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
+        <div><small class="muted" style="display:block">Products</small><strong>${prodCount}</strong></div>
+        <div><small class="muted" style="display:block">Customers</small><strong>${custCount}</strong></div>
+        <div><small class="muted" style="display:block">Sales</small><strong>${saleCount}</strong></div>
       </div>
       <div style="font-size:12px;line-height:1.4">
         ${connected 
@@ -8204,11 +8229,6 @@ async function initApp() {
 
   if (typeof initCloudSync === 'function') {
     initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
-    setTimeout(() => {
-      if (typeof pushStateToCloud === 'function' && state && (state.products.length > 0 || state.sales.length > 0)) {
-        pushStateToCloud(state);
-      }
-    }, 1200);
   }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

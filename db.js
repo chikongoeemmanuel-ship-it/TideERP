@@ -279,7 +279,12 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
           return;
         }
         const remote = snapshot.data();
-        if (!remote || !remote.payload) return;
+        if (!remote || !remote.payload || Object.keys(remote.payload).length === 0) {
+          if (typeof window.requestPushStateToCloud === 'function') {
+            window.requestPushStateToCloud();
+          }
+          return;
+        }
 
         // Skip echo updates originated from this exact client push
         const remoteTime = remote.updatedAtMs || 0;
@@ -350,13 +355,33 @@ function mergeWorkspaceState(localState, remoteState) {
 
   // 4. Merge customers and suppliers
   const customerMap = new Map();
-  (remoteState.customers || []).forEach(c => { if (c && c.name) customerMap.set(c.name, c); });
-  (localState.customers || []).forEach(c => { if (c && c.name) customerMap.set(c.name, c); });
+  (remoteState.customers || []).forEach(c => { if (c) customerMap.set(c.id || c.name, c); });
+  (localState.customers || []).forEach(c => {
+    if (c) {
+      const key = c.id || c.name;
+      if (!customerMap.has(key)) {
+        customerMap.set(key, c);
+      } else {
+        const existing = customerMap.get(key);
+        customerMap.set(key, { ...existing, ...c });
+      }
+    }
+  });
   merged.customers = Array.from(customerMap.values());
 
   const supplierMap = new Map();
-  (remoteState.suppliers || []).forEach(s => { if (s && s.name) supplierMap.set(s.name, s); });
-  (localState.suppliers || []).forEach(s => { if (s && s.name) supplierMap.set(s.name, s); });
+  (remoteState.suppliers || []).forEach(s => { if (s) supplierMap.set(s.id || s.name, s); });
+  (localState.suppliers || []).forEach(s => {
+    if (s) {
+      const key = s.id || s.name;
+      if (!supplierMap.has(key)) {
+        supplierMap.set(key, s);
+      } else {
+        const existing = supplierMap.get(key);
+        supplierMap.set(key, { ...existing, ...s });
+      }
+    }
+  });
   merged.suppliers = Array.from(supplierMap.values());
 
   // 5. Preserve local session and active branch
