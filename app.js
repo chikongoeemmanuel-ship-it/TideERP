@@ -1257,8 +1257,20 @@ function openNotificationsPanel() {
   const panel=document.createElement('section');panel.className='notifications-popover';panel.setAttribute('aria-label','Notifications');
   panel.innerHTML=`<div class="topbar-popover-head"><div><strong>Notifications</strong><small>${items.length?`${items.length} item${items.length===1?'':'s'} need attention`:'You’re all caught up'}</small></div><button type="button" class="topbar-popover-close" aria-label="Close notifications">×</button></div>${items.length?`<div class="notification-list">${items.map((item,index)=>`<button type="button" class="notification-row notification-${item.tone}" data-notification-page="${esc(item.page)}"><span class="notification-row-icon">${item.icon}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.detail)}</small></span><span class="notification-arrow">›</span></button>`).join('')}</div>`:'<div class="notification-empty"><span>✓</span><p>No current alerts.</p></div>'}`;
   document.body.append(panel);
-  const rect=button.getBoundingClientRect();
-  Object.assign(panel.style,{top:`${Math.min(rect.bottom+8,window.innerHeight-80)}px`,right:`${Math.max(8,window.innerWidth-rect.right)}px`});
+  const rect = button.getBoundingClientRect();
+  if (window.innerWidth <= 760) {
+    Object.assign(panel.style, {
+      top: '50px',
+      left: '8px',
+      right: '8px',
+      width: 'auto'
+    });
+  } else {
+    Object.assign(panel.style, {
+      top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
+      right: `${Math.max(8, window.innerWidth - rect.right)}px`
+    });
+  }
   panel.querySelector('.topbar-popover-close').addEventListener('click',()=>panel.remove());
   panel.querySelectorAll('[data-notification-page]').forEach(item=>item.addEventListener('click',()=>{const target=item.dataset.notificationPage;panel.remove();setPage(target);}));
 }
@@ -1311,10 +1323,19 @@ function openBranchSwitcherPanel() {
 
   document.body.append(panel);
   const rect = button.getBoundingClientRect();
-  Object.assign(panel.style, {
-    top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
-    right: `${Math.max(8, window.innerWidth - rect.right)}px`
-  });
+  if (window.innerWidth <= 760) {
+    Object.assign(panel.style, {
+      top: '50px',
+      left: '8px',
+      right: '8px',
+      width: 'auto'
+    });
+  } else {
+    Object.assign(panel.style, {
+      top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
+      right: `${Math.max(8, window.innerWidth - rect.right)}px`
+    });
+  }
 
   panel.querySelector('.topbar-popover-close').addEventListener('click', () => panel.remove());
 
