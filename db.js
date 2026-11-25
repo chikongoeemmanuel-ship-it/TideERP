@@ -67,7 +67,7 @@ async function loadPersistedState(initialState) {
       if (parsed && typeof parsed === 'object') {
         const migrated = sanitizeState(parsed, initialState);
         // Persist migrated state to IndexedDB asynchronously
-        persistState(migrated).catch(() => {});
+        persistState(migrated).catch(() => { });
         return migrated;
       }
     }
@@ -185,7 +185,7 @@ function getStoredFirebaseConfig() {
   try {
     const raw = localStorage.getItem(FIREBASE_CONFIG_STORAGE_KEY);
     if (raw) return JSON.parse(raw);
-  } catch {}
+  } catch { }
   return DEFAULT_FIREBASE_CONFIG;
 }
 
@@ -271,17 +271,73 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
   }
 }
 
+function mergeWorkspaceState(localState, remoteState) {
+  if (!remoteState) return localState;
+  if (!localState) return remoteState;
+
+  const merged = { ...remoteState };
+
+  // 1. Merge products: Union by ID (SKU), local edits take priority if local has items
+  const productMap = new Map();
+  (remoteState.products || []).forEach(p => {
+    if (p && p.id) productMap.set(p.id, p);
+  });
+  (localState.products || []).forEach(p => {
+    if (p && p.id) {
+      if (!productMap.has(p.id)) {
+        productMap.set(p.id, p);
+      } else {
+        const existing = productMap.get(p.id);
+        productMap.set(p.id, { ...existing, ...p });
+      }
+    }
+  });
+  merged.products = Array.from(productMap.values());
+
+  // 2. Merge sales & orders: Union by ID
+  const salesMap = new Map();
+  (remoteState.sales || []).forEach(s => { if (s && s.id) salesMap.set(s.id, s); });
+  (localState.sales || []).forEach(s => { if (s && s.id) salesMap.set(s.id, s); });
+  merged.sales = Array.from(salesMap.values());
+
+  const ordersMap = new Map();
+  (remoteState.orders || []).forEach(o => { if (o && o.id) ordersMap.set(o.id, o); });
+  (localState.orders || []).forEach(o => { if (o && o.id) ordersMap.set(o.id, o); });
+  merged.orders = Array.from(ordersMap.values());
+
+  // 3. Merge purchases: Union by ID
+  const purchasesMap = new Map();
+  (remoteState.purchases || []).forEach(p => { if (p && p.id) purchasesMap.set(p.id, p); });
+  (localState.purchases || []).forEach(p => { if (p && p.id) purchasesMap.set(p.id, p); });
+  merged.purchases = Array.from(purchasesMap.values());
+
+  // 4. Merge customers and suppliers
+  const customerMap = new Map();
+  (remoteState.customers || []).forEach(c => { if (c && c.name) customerMap.set(c.name, c); });
+  (localState.customers || []).forEach(c => { if (c && c.name) customerMap.set(c.name, c); });
+  merged.customers = Array.from(customerMap.values());
+
+  const supplierMap = new Map();
+  (remoteState.suppliers || []).forEach(s => { if (s && s.name) supplierMap.set(s.name, s); });
+  (localState.suppliers || []).forEach(s => { if (s && s.name) supplierMap.set(s.name, s); });
+  merged.suppliers = Array.from(supplierMap.values());
+
+  // 5. Preserve local session and active branch
+  merged.currentUserId = localState.currentUserId;
+  merged.activeBranchId = localState.activeBranchId || remoteState.activeBranchId;
+  merged.branch = localState.branch || remoteState.branch;
+
+  return merged;
+}
+
 let cloudSaveDebounce = null;
-function pushStateToCloud(state) {
+async function pushStateToCloud(state, immediate = false) {
   if (!cloudSyncActive || !firestoreDb || isReceivingCloudBroadcast || !state) return;
 
-  if (cloudSaveDebounce) clearTimeout(cloudSaveDebounce);
-  cloudSaveDebounce = setTimeout(async () => {
+  const doPush = async () => {
     try {
       lastCloudSaveTime = Date.now();
-      // Clean serializable clone
       const cleanClone = JSON.parse(JSON.stringify(state));
-      // Delete temporary runtime flags
       delete cleanClone.currentUserId;
 
       await firestoreDb.collection('tide_erp_workspaces').doc(cloudSyncWorkspaceId).set({
@@ -290,8 +346,16 @@ function pushStateToCloud(state) {
         updatedAt: new Date().toISOString(),
         device: /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Phone' : 'PC'
       }, { merge: true });
+      console.info(`✓ Cloud state synced successfully (${cleanClone.products?.length || 0} products)`);
     } catch (err) {
       console.warn('Live cloud sync push failed:', err);
     }
-  }, 1000);
+  };
+
+  if (cloudSaveDebounce) clearTimeout(cloudSaveDebounce);
+  if (immediate) {
+    await doPush();
+  } else {
+    cloudSaveDebounce = setTimeout(doPush, 500);
+  }
 }

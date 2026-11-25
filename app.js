@@ -5319,7 +5319,12 @@ function handleRemoteCloudSync(remotePayload, deviceName) {
   if (!remotePayload || typeof remotePayload !== 'object') return;
   const curId = state.currentUserId;
   const curBranchId = state.activeBranchId;
-  const sanitized = sanitizeState(remotePayload, initialState);
+
+  // Non-destructive intelligent merge: local products, sales, etc. are never wiped out
+  const merged = typeof mergeWorkspaceState === 'function' ? mergeWorkspaceState(state, remotePayload) : { ...remotePayload, ...state };
+  const localHadMoreProducts = (state.products?.length || 0) > (remotePayload.products?.length || 0);
+
+  const sanitized = sanitizeState(merged, initialState);
   sanitized.currentUserId = curId;
   if (curBranchId && (sanitized.branches || []).some(b => b.id === curBranchId)) {
     sanitized.activeBranchId = curBranchId;
@@ -5327,7 +5332,13 @@ function handleRemoteCloudSync(remotePayload, deviceName) {
   state = sanitized;
   persistState(state);
   render();
-  toast(`☁️ Live Sync: Synced changes from ${deviceName || 'cloud'}`);
+
+  if (localHadMoreProducts && typeof pushStateToCloud === 'function') {
+    // If local had products that remote didn't have yet, immediately push them to cloud
+    pushStateToCloud(state, true);
+  } else {
+    toast(`☁️ Live Sync: Synced changes from ${deviceName || 'cloud'}`);
+  }
 }
 
 function openCloudSyncDialog() {
@@ -7534,6 +7545,9 @@ function importProductsCSV(csv) {
   }
 
   saveState();
+  if (typeof pushStateToCloud === 'function') {
+    pushStateToCloud(state, true);
+  }
   render();
   toast(`${added} added, ${updated} updated with verified pricing & stock`);
 }
