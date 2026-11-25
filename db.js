@@ -165,7 +165,7 @@ function sanitizeState(restored, initialState) {
 // =========================================================
 const FIREBASE_CONFIG_STORAGE_KEY = 'tide-firebase-config';
 const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDafgbjKDUHGS4hbBTb4sjJ76nK24ozkls",
+  apiKey: "AIzaSyDaFgbjKDUHGS4hbBTb4sjJ76nK24ozkls",
   authDomain: "tideerp.firebaseapp.com",
   projectId: "tideerp",
   storageBucket: "tideerp.firebasestorage.app",
@@ -184,7 +184,14 @@ let isReceivingCloudBroadcast = false;
 function getStoredFirebaseConfig() {
   try {
     const raw = localStorage.getItem(FIREBASE_CONFIG_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.apiKey && parsed.apiKey.includes('Dafgbj')) {
+        parsed.apiKey = DEFAULT_FIREBASE_CONFIG.apiKey;
+        localStorage.setItem(FIREBASE_CONFIG_STORAGE_KEY, JSON.stringify(parsed));
+      }
+      return parsed;
+    }
   } catch { }
   return DEFAULT_FIREBASE_CONFIG;
 }
