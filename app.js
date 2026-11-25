@@ -5201,8 +5201,10 @@ function renderSettings() {
           <button type="button" class="button primary" data-action="open-cloud-sync-dialog">
             ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? '⚙ Manage Cloud Database' : '⚡ Connect Free Cloud Database (Firebase)'}
           </button>
+          <button type="button" class="button" data-action="force-cloud-sync">⚡ Sync Now</button>
+          <button type="button" class="button small" data-action="force-reload-app">🔄 Clear Cache &amp; Reload</button>
           ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? `
-            <button type="button" class="button small" data-action="disconnect-cloud-sync" style="color:#ef4444">Disconnect Cloud Sync</button>
+            <button type="button" class="button small" data-action="disconnect-cloud-sync" style="color:#ef4444">Disconnect</button>
           ` : ''}
         </div>
         <small class="field-hint" style="display:block;margin-top:8px">
@@ -5940,7 +5942,9 @@ async function handleDialogSubmit(form) {
     if(type==='Customer')record.creditLimit=Math.max(0,Number(val('party-credit-limit'))||0);
     if(existing){const previousName=existing.name;Object.assign(existing,record);if(previousName!==record.name){if(type==='Customer'){state.orders.forEach(order=>{if(order.customer===previousName)order.customer=record.name;});state.sales.forEach(sale=>{if(sale.customer===previousName)sale.customer=record.name;});}else state.purchases.forEach(purchase=>{if(purchase.supplier===previousName)purchase.supplier=record.name;});state.entries.forEach(entry=>{if(entry.partyType===type&&entry.party===previousName)entry.party=record.name;});}}else list.unshift(record);
     recordActivity(`${type} ${editing?'updated':'added'}`,val('party-name'),record.id);
-    saveState(); document.getElementById('app-modal').close(); render(); toast(`${type} ${editing?'updated':'added'}`); return;
+    saveState();
+    if (typeof pushStateToCloud === 'function') pushStateToCloud(state, true);
+    document.getElementById('app-modal').close(); render(); toast(`${type} ${editing?'updated':'added'}`); return;
   }
   if (kind === 'new-order' || kind === 'edit-order') {
     const editing = kind === 'edit-order';
@@ -7265,6 +7269,20 @@ function handleAction(button) {
       break;
     }
     case 'open-cloud-sync-dialog': openCloudSyncDialog(); break;
+    case 'force-cloud-sync': {
+      toast('Syncing with cloud database...');
+      if (typeof initCloudSync === 'function') {
+        initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
+      }
+      if (typeof pushStateToCloud === 'function') {
+        pushStateToCloud(state, true);
+      }
+      break;
+    }
+    case 'force-reload-app': {
+      forceReloadApp();
+      break;
+    }
     case 'disconnect-cloud-sync': {
       if (!confirm('Disconnect live cloud sync? App will switch back to local offline mode.')) break;
       saveStoredFirebaseConfig(null);
@@ -7967,13 +7985,49 @@ document.getElementById('theme-toggle')?.addEventListener('click', () => {
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 });
 
-document.getElementById('cloud-sync-button')?.addEventListener('click', () => {
-  if (typeof isCloudSyncConnected === 'function' && isCloudSyncConnected()) {
-    toast('☁️ Live Cloud Sync is Active: PC & Phone are synchronized');
-  } else {
-    navigate('settings');
-  }
-});
+async function forceReloadApp() {
+  toast('Updating app and clearing mobile cache...');
+  try {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const reg of registrations) await reg.unregister();
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      for (const key of keys) await caches.delete(key);
+    }
+  } catch {}
+  setTimeout(() => {
+    window.location.href = window.location.origin + window.location.pathname + '?v=' + Date.now() + window.location.hash;
+  }, 350);
+}
+
+function openCloudStatusModal() {
+  const connected = typeof isCloudSyncConnected === 'function' && isCloudSyncConnected();
+  const deviceType = /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Phone' : 'PC';
+  const content = `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:${connected ? 'rgba(0,166,81,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:10px;border:1px solid ${connected ? '#00a651' : '#ef4444'}">
+        <div>
+          <strong style="display:block;font-size:13px;color:${connected ? '#00a651' : '#ef4444'}">${connected ? '● Cloud Sync Connected' : '○ Cloud Sync Disconnected'}</strong>
+          <small class="muted">Device: <strong>${deviceType}</strong> · Database: <strong>Google Firebase (tideerp)</strong></small>
+        </div>
+      </div>
+      <div style="font-size:12px;line-height:1.4">
+        ${connected 
+          ? `✓ <strong>Live link active:</strong> Any sales, purchases, customers, or products added on this ${deviceType} automatically sync with your other devices in real time.`
+          : `⚠️ <strong>Not syncing with cloud:</strong> This device is not currently connected to the shared Firebase database. Tap 'Force Sync Now' below.`}
+      </div>
+      <div style="display:flex;gap:8px;flex-direction:column;margin-top:4px">
+        <button type="button" class="button primary" data-action="force-cloud-sync" style="width:100%">⚡ Force Sync Now (Upload & Download)</button>
+        <button type="button" class="button" data-action="force-reload-app" style="width:100%">🔄 Clear Cache & Reload Latest App Version</button>
+      </div>
+    </div>
+  `;
+  openDialog('cloud-status', 'Cloud Synchronization Status', 'Real-time multi-device sync between PC and Phone.', content, 'Close');
+}
+
+document.getElementById('cloud-sync-button')?.addEventListener('click', openCloudStatusModal);
 
 document.getElementById('back-button')?.addEventListener('click', navigateBack);
 

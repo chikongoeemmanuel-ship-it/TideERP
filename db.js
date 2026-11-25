@@ -214,14 +214,40 @@ function isCloudSyncConnected() {
   return cloudSyncActive && !!firestoreDb;
 }
 
+function updateCloudStatusUI(status, info) {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('cloud-sync-button');
+  if (!btn) return;
+  if (status === 'connected') {
+    btn.style.color = '#00a651';
+    btn.title = 'Cloud Sync: Live Connected (PC ⇄ Phone)';
+  } else if (status === 'connecting') {
+    btn.style.color = '#f59e0b';
+    btn.title = 'Cloud Sync: Connecting to Firebase...';
+  } else {
+    btn.style.color = '#ef4444';
+    btn.title = 'Cloud Sync: Disconnected (Tap to view)';
+  }
+}
+
+let cloudInitRetries = 0;
 function initCloudSync(workspaceId, onRemoteUpdate) {
-  if (typeof window === 'undefined' || !window.firebase) {
-    console.info('Firebase SDK not loaded or offline; running in local storage mode.');
+  if (typeof window === 'undefined') return false;
+  if (!window.firebase) {
+    updateCloudStatusUI('connecting');
+    if (cloudInitRetries < 25) {
+      cloudInitRetries++;
+      setTimeout(() => initCloudSync(workspaceId, onRemoteUpdate), 400);
+    } else {
+      console.warn('Firebase SDK not loaded after retries; running in local storage mode.');
+      updateCloudStatusUI('error');
+    }
     return false;
   }
   const config = getStoredFirebaseConfig();
   if (!config || !config.projectId) {
     console.info('No Firebase cloud credentials configured; running in standalone local mode.');
+    updateCloudStatusUI('error');
     return false;
   }
 
@@ -232,6 +258,7 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
     firestoreDb = firebase.firestore();
     cloudSyncWorkspaceId = (workspaceId || 'tideerp_global_workspace').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
     cloudSyncActive = true;
+    updateCloudStatusUI('connected');
 
     // Attach real-time Firestore listener
     if (cloudSyncUnsubscribe) {
@@ -243,6 +270,7 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
       .collection('tide_erp_workspaces')
       .doc(cloudSyncWorkspaceId)
       .onSnapshot((snapshot) => {
+        updateCloudStatusUI('connected');
         if (!snapshot.exists) {
           // Cloud doc does not exist yet; populate cloud from this client
           if (typeof window.requestPushStateToCloud === 'function') {
@@ -267,6 +295,7 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
         }
       }, (err) => {
         console.warn('Real-time cloud sync listener encountered an error:', err);
+        updateCloudStatusUI('error', err);
       });
 
     console.info(`✓ Live cloud sync active for workspace: ${cloudSyncWorkspaceId}`);
@@ -274,6 +303,7 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
   } catch (err) {
     console.error('Failed to initialize live cloud sync:', err);
     cloudSyncActive = false;
+    updateCloudStatusUI('error', err);
     return false;
   }
 }
