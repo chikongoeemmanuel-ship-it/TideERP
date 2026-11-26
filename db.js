@@ -11,8 +11,37 @@ const DB_VERSION = 1;
 const STORE_NAME = 'workspaces';
 const STATE_DOC_ID = 'current_state';
 const LEGACY_STORAGE_KEY = 'tide-erp-demo-v1';
+const DEFAULT_WORKSPACE_ID = 'ws_primary';
+const ACTIVE_WORKSPACE_KEY = 'tide-erp-active-workspace';
+const TENANTS_COLLECTION = 'tide_erp_tenants';
+const ACCOUNTS_DIRECTORY_COLLECTION = 'tide_erp_accounts';
 
 let dbInstance = null;
+let activeTenantWorkspaceId = (() => {
+  try {
+    return localStorage.getItem(ACTIVE_WORKSPACE_KEY) || DEFAULT_WORKSPACE_ID;
+  } catch {
+    return DEFAULT_WORKSPACE_ID;
+  }
+})();
+
+function getActiveWorkspaceId() {
+  return activeTenantWorkspaceId || DEFAULT_WORKSPACE_ID;
+}
+
+function localDocKeyForWorkspace(wsId = activeTenantWorkspaceId) {
+  const clean = String(wsId || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
+  return clean === DEFAULT_WORKSPACE_ID ? STATE_DOC_ID : `workspace_${clean}`;
+}
+
+function createNewWorkspaceId(companyName = '') {
+  const slug = String(companyName || 'company')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 18) || 'company';
+  return `ws_${slug}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
 
 function openDatabase() {
   if (dbInstance) return Promise.resolve(dbInstance);
@@ -40,7 +69,8 @@ function openDatabase() {
   });
 }
 
-async function loadPersistedState(initialState) {
+async function loadPersistedState(initialState, wsId = activeTenantWorkspaceId) {
+  const docKey = localDocKeyForWorkspace(wsId);
   try {
     const db = await openDatabase();
     if (db) {
@@ -48,7 +78,7 @@ async function loadPersistedState(initialState) {
         try {
           const tx = db.transaction(STORE_NAME, 'readonly');
           const store = tx.objectStore(STORE_NAME);
-          const getReq = store.get(STATE_DOC_ID);
+          const getReq = store.get(docKey);
           getReq.onsuccess = () => resolve(getReq.result?.data || null);
           getReq.onerror = () => resolve(null);
         } catch {
@@ -64,25 +94,29 @@ async function loadPersistedState(initialState) {
     console.warn('Error reading from IndexedDB, checking legacy storage:', err);
   }
 
-  try {
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (legacy) {
-      const parsed = JSON.parse(legacy);
-      if (parsed && typeof parsed === 'object') {
-        const migrated = sanitizeState(parsed, initialState);
-        persistState(migrated).catch(() => { });
-        return migrated;
+  // Only check legacy single-tenant localStorage for the original primary workspace
+  if (docKey === STATE_DOC_ID) {
+    try {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        if (parsed && typeof parsed === 'object') {
+          const migrated = sanitizeState(parsed, initialState);
+          persistState(migrated, wsId).catch(() => { });
+          return migrated;
+        }
       }
+    } catch (err) {
+      console.warn('Error checking legacy localStorage:', err);
     }
-  } catch (err) {
-    console.warn('Error checking legacy localStorage:', err);
   }
 
   return structuredClone(initialState);
 }
 
-async function persistState(state) {
+async function persistState(state, wsId = activeTenantWorkspaceId) {
   if (!state) return;
+  const docKey = localDocKeyForWorkspace(wsId);
 
   let savedInIndexedDB = false;
   try {
@@ -91,7 +125,7 @@ async function persistState(state) {
       await new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const req = store.put({ id: STATE_DOC_ID, data: state, updatedAt: new Date().toISOString() });
+        const req = store.put({ id: docKey, data: state, updatedAt: new Date().toISOString() });
         req.onsuccess = () => resolve();
         req.onerror = (e) => reject(e.target.error);
       });
@@ -101,7 +135,7 @@ async function persistState(state) {
     console.error('IndexedDB write failure:', err);
   }
 
-  if (!savedInIndexedDB) {
+  if (!savedInIndexedDB && docKey === STATE_DOC_ID) {
     try {
       localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(state));
     } catch (err) {
@@ -111,6 +145,7 @@ async function persistState(state) {
 
   try {
     const lightweight = {
+      workspaceId: wsId || DEFAULT_WORKSPACE_ID,
       version: state.version,
       companyName: state.companyName,
       branch: state.branch,
@@ -209,6 +244,204 @@ let cloudSyncWorkspaceId = 'tideerp_global_workspace';
 let cloudSyncUnsubscribe = null;
 let isReceivingCloudBroadcast = false;
 let lastSyncedModuleHashes = {};
+
+function modulesCollectionRef(db, wsId = activeTenantWorkspaceId) {
+  const cleanWs = String(wsId || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
+  if (cleanWs === DEFAULT_WORKSPACE_ID) {
+    return db.collection(MODULES_COLLECTION);
+  }
+  return db.collection(TENANTS_COLLECTION).doc(cleanWs).collection('modules');
+}
+
+function setActiveWorkspaceId(workspaceId) {
+  const nextWs = String(workspaceId || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
+  if (cloudSyncUnsubscribe) {
+    try { cloudSyncUnsubscribe(); } catch {}
+    cloudSyncUnsubscribe = null;
+  }
+  if (cloudSaveDebounce) {
+    clearTimeout(cloudSaveDebounce);
+    cloudSaveDebounce = null;
+  }
+  activeTenantWorkspaceId = nextWs;
+  lastSyncedModuleHashes = {};
+  cloudHydrated = false;
+  try { localStorage.setItem(ACTIVE_WORKSPACE_KEY, nextWs); } catch {}
+  if (typeof window !== 'undefined' && typeof window.TideFirebase?.setWorkspace === 'function') {
+    window.TideFirebase.setWorkspace(nextWs);
+  }
+  return nextWs;
+}
+
+function encodeAccountKey(prefix, rawVal) {
+  const norm = String(rawVal || '').trim().toLowerCase();
+  if (!norm) return '';
+  return `${prefix}_${norm.replace(/[^a-z0-9._-]/g, c => '_x' + c.charCodeAt(0).toString(16) + '_')}`.slice(0, 220);
+}
+
+/**
+ * Look up a user account across ALL registered companies in Firestore `tide_erp_accounts`
+ * so logging in from ANY device routes directly to the user's own isolated company workspace.
+ */
+async function lookupAccountInDirectory(identifier) {
+  const norm = String(identifier || '').trim().toLowerCase();
+  if (!norm) return null;
+  const db = await ensureFirestoreReady();
+  if (!db) return null;
+
+  const keys = [
+    encodeAccountKey('user', norm),
+    encodeAccountKey('email', norm)
+  ].filter(Boolean);
+
+  for (const docId of keys) {
+    try {
+      let snap;
+      try {
+        snap = await db.collection(ACCOUNTS_DIRECTORY_COLLECTION).doc(docId).get({ source: 'server' });
+      } catch {
+        snap = await db.collection(ACCOUNTS_DIRECTORY_COLLECTION).doc(docId).get();
+      }
+      if (snap && snap.exists) {
+        return snap.data();
+      }
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Check if a username or email is already claimed by another user/company globally.
+ */
+async function checkCredentialsAvailableGlobally(username, email, exceptUserId = '', exceptWorkspaceId = '') {
+  const db = await ensureFirestoreReady();
+  if (!db) return true; // Offline fallback allows local check to decide
+
+  const checks = [];
+  if (username) checks.push(encodeAccountKey('user', username));
+  if (email) checks.push(encodeAccountKey('email', email));
+
+  for (const docId of checks.filter(Boolean)) {
+    try {
+      let snap;
+      try {
+        snap = await db.collection(ACCOUNTS_DIRECTORY_COLLECTION).doc(docId).get({ source: 'server' });
+      } catch {
+        snap = await db.collection(ACCOUNTS_DIRECTORY_COLLECTION).doc(docId).get();
+      }
+      if (snap && snap.exists) {
+        const rec = snap.data();
+        if (rec && !(rec.userId === exceptUserId && rec.workspaceId === exceptWorkspaceId)) {
+          return false;
+        }
+      }
+    } catch {}
+  }
+  return true;
+}
+
+/**
+ * Register or update a user's login entry in `tide_erp_accounts` directory.
+ */
+async function registerAccountInDirectory(user, workspaceId = activeTenantWorkspaceId, companyName = '', previousUser = null) {
+  if (!user) return false;
+  const db = await ensureFirestoreReady();
+  if (!db) return false;
+
+  try {
+    const batch = db.batch();
+    const col = db.collection(ACCOUNTS_DIRECTORY_COLLECTION);
+
+    // Clean up old keys if username or email changed
+    if (previousUser) {
+      if (previousUser.username && String(previousUser.username).toLowerCase() !== String(user.username || '').toLowerCase()) {
+        const oldU = encodeAccountKey('user', previousUser.username);
+        if (oldU) batch.delete(col.doc(oldU));
+      }
+      if (previousUser.email && String(previousUser.email).toLowerCase() !== String(user.email || '').toLowerCase()) {
+        const oldE = encodeAccountKey('email', previousUser.email);
+        if (oldE) batch.delete(col.doc(oldE));
+      }
+    }
+
+    const payload = {
+      workspaceId: String(workspaceId || DEFAULT_WORKSPACE_ID),
+      companyName: String(companyName || ''),
+      userId: String(user.id || ''),
+      name: String(user.name || ''),
+      username: String(user.username || '').trim().toLowerCase(),
+      email: String(user.email || '').trim().toLowerCase(),
+      passwordHash: String(user.passwordHash || ''),
+      passwordSalt: String(user.passwordSalt || ''),
+      status: String(user.status || 'Active'),
+      updatedAtMs: Date.now()
+    };
+
+    const userKey = encodeAccountKey('user', user.username);
+    const emailKey = encodeAccountKey('email', user.email);
+    if (userKey) batch.set(col.doc(userKey), payload);
+    if (emailKey) batch.set(col.doc(emailKey), payload);
+
+    await batch.commit();
+    return true;
+  } catch (err) {
+    console.warn('Account directory registration failed:', err);
+    return false;
+  }
+}
+
+async function removeAccountFromDirectory(user) {
+  if (!user) return false;
+  const db = await ensureFirestoreReady();
+  if (!db) return false;
+
+  try {
+    const batch = db.batch();
+    const col = db.collection(ACCOUNTS_DIRECTORY_COLLECTION);
+    const userKey = encodeAccountKey('user', user.username);
+    const emailKey = encodeAccountKey('email', user.email);
+    if (userKey) batch.delete(col.doc(userKey));
+    if (emailKey) batch.delete(col.doc(emailKey));
+    await batch.commit();
+    return true;
+  } catch (err) {
+    console.warn('Account directory removal failed:', err);
+    return false;
+  }
+}
+
+async function syncWorkspaceUsersToDirectory(users = [], workspaceId = activeTenantWorkspaceId, companyName = '') {
+  if (!Array.isArray(users) || !users.length) return;
+  const db = await ensureFirestoreReady();
+  if (!db) return;
+  try {
+    const batch = db.batch();
+    const col = db.collection(ACCOUNTS_DIRECTORY_COLLECTION);
+    let ops = 0;
+    for (const u of users) {
+      if (!u || (!u.username && !u.email) || !u.passwordHash) continue;
+      const payload = {
+        workspaceId: String(workspaceId || DEFAULT_WORKSPACE_ID),
+        companyName: String(companyName || ''),
+        userId: String(u.id || ''),
+        name: String(u.name || ''),
+        username: String(u.username || '').trim().toLowerCase(),
+        email: String(u.email || '').trim().toLowerCase(),
+        passwordHash: String(u.passwordHash || ''),
+        passwordSalt: String(u.passwordSalt || ''),
+        status: String(u.status || 'Active'),
+        updatedAtMs: Date.now()
+      };
+      const userKey = encodeAccountKey('user', u.username);
+      const emailKey = encodeAccountKey('email', u.email);
+      if (userKey) { batch.set(col.doc(userKey), payload); ops++; }
+      if (emailKey) { batch.set(col.doc(emailKey), payload); ops++; }
+    }
+    if (ops > 0) await batch.commit();
+  } catch (err) {
+    console.warn('Workspace directory sync skipped:', err);
+  }
+}
 
 function getDeviceLabel() {
   return /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent || '') ? 'Phone' : 'PC';
@@ -379,15 +612,16 @@ async function hydrateFromCloud(localState, initialState, preferServer = true) {
   }
 
   try {
+    const modCol = modulesCollectionRef(db, activeTenantWorkspaceId);
     let snap;
     if (preferServer) {
       try {
-        snap = await db.collection(MODULES_COLLECTION).get({ source: 'server' });
+        snap = await modCol.get({ source: 'server' });
       } catch {
-        snap = await db.collection(MODULES_COLLECTION).get();
+        snap = await modCol.get();
       }
     } else {
-      snap = await db.collection(MODULES_COLLECTION).get();
+      snap = await modCol.get();
     }
 
     // Case 1: Unified modular ERP data exists in cloud — use as authoritative truth
@@ -432,19 +666,21 @@ async function hydrateFromCloud(localState, initialState, preferServer = true) {
       return { hydrated: true, state: clean, source: 'cloud-modules' };
     }
 
-    // Case 2: First-time migration from legacy `tide_erp_workspaces` document
+    // Case 2: First-time migration from legacy `tide_erp_workspaces` document (ONLY for primary workspace!)
     let baseState = structuredClone(localState || initialState);
-    try {
-      const legacyDoc = await db.collection(LEGACY_WORKSPACES_COLLECTION).doc(cloudSyncWorkspaceId).get();
-      if (legacyDoc.exists) {
-        const legacyPayload = legacyDoc.data()?.payload;
-        if (legacyPayload && typeof legacyPayload === 'object') {
-          baseState = mergeLegacyForMigration(baseState, legacyPayload);
-          console.info('✓ Migrated legacy workspace data into modular cloud ERP');
+    if (activeTenantWorkspaceId === DEFAULT_WORKSPACE_ID) {
+      try {
+        const legacyDoc = await db.collection(LEGACY_WORKSPACES_COLLECTION).doc(cloudSyncWorkspaceId).get();
+        if (legacyDoc.exists) {
+          const legacyPayload = legacyDoc.data()?.payload;
+          if (legacyPayload && typeof legacyPayload === 'object') {
+            baseState = mergeLegacyForMigration(baseState, legacyPayload);
+            console.info('✓ Migrated legacy workspace data into modular cloud ERP');
+          }
         }
+      } catch (migErr) {
+        console.warn('Legacy migration check skipped:', migErr);
       }
-    } catch (migErr) {
-      console.warn('Legacy migration check skipped:', migErr);
     }
 
     const cleanSeed = sanitizeState(baseState, initialState);
@@ -549,10 +785,11 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
       cloudSyncUnsubscribe = null;
     }
 
-    // Real-time listener on ALL ERP modules in `tide_erp_modules`
-    cloudSyncUnsubscribe = firestoreDb
-      .collection(MODULES_COLLECTION)
+    // Real-time listener on ALL ERP modules for the ACTIVE tenant workspace
+    const boundWsId = activeTenantWorkspaceId;
+    cloudSyncUnsubscribe = modulesCollectionRef(firestoreDb, boundWsId)
       .onSnapshot((snapshot) => {
+        if (boundWsId !== activeTenantWorkspaceId) return;
         updateCloudStatusUI('connected');
         if (snapshot.empty) return;
 
@@ -660,8 +897,9 @@ async function pushStateToCloud(state, immediate = false, forceAll = false) {
       if (dirtyModules.length === 0) return;
 
       const batch = firestoreDb.batch();
+      const modCol = modulesCollectionRef(firestoreDb, activeTenantWorkspaceId);
       for (const item of dirtyModules) {
-        const ref = firestoreDb.collection(MODULES_COLLECTION).doc(item.modName);
+        const ref = modCol.doc(item.modName);
         batch.set(ref, {
           data: item.data,
           updatedAtMs: nowMs,
@@ -673,7 +911,8 @@ async function pushStateToCloud(state, immediate = false, forceAll = false) {
       }
 
       await batch.commit();
-      console.info(`✓ Synced ${dirtyModules.length} ERP module(s) to cloud: ${dirtyModules.map(m => m.modName).join(', ')}`);
+      if (forceAll) cloudHydrated = true;
+      console.info(`✓ Synced ${dirtyModules.length} ERP module(s) for ${activeTenantWorkspaceId}: ${dirtyModules.map(m => m.modName).join(', ')}`);
     } catch (err) {
       console.warn('Live cloud ERP push failed (changes remain safely cached in IndexedDB):', err);
     }

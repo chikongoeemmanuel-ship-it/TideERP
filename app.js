@@ -865,6 +865,100 @@ function switchAuthTab(tab) {
   }
 }
 
+function createBlankWorkspaceState({ companyName, branchName = 'Main branch', currency = 'TZS', adminUser = null } = {}) {
+  const mainBranch = { id: 'BR-MAIN', name: branchName || 'Main branch', status: 'Active' };
+  return {
+    version: 3,
+    companyName: companyName || 'My Company',
+    companyLogo: '',
+    companyAddress: '',
+    companyPhone: '',
+    companyEmail: adminUser?.email || '',
+    companyPaymentDetails: '',
+    branch: mainBranch.name,
+    activeBranchId: mainBranch.id,
+    branches: [mainBranch],
+    branchData: {},
+    products: [],
+    customers: [],
+    suppliers: [],
+    orders: [],
+    sales: [],
+    returns: [],
+    purchaseReturns: [],
+    purchases: [],
+    expenses: [],
+    entries: [],
+    queue: [],
+    stockMovements: [],
+    users: adminUser ? [adminUser] : structuredClone(initialState.users),
+    currentUserId: adminUser ? adminUser.id : '',
+    companyAdminId: adminUser ? adminUser.id : '',
+    currency: currency || 'TZS',
+    vatEnabled: true,
+    vatRate: 18,
+    productCategories: ['General'],
+    measurementUnits: ['Piece', 'Pack', 'Box', 'Kg', 'Litre'],
+    productPackages: ['Single', 'Pack', 'Box', 'Carton'],
+    notificationSettings: {
+      enabled: true,
+      lowStock: true,
+      newSales: true,
+      duePayments: true,
+      syncFailures: true
+    },
+    trashBin: [],
+    activityLog: [],
+    stocktakeDraft: null,
+    stocktakes: [],
+    isRegistered: true
+  };
+}
+
+function attachActiveWorkspaceStreams() {
+  const wsId = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
+  const seedKey = wsId === 'ws_primary' ? 'tide_products_seeded_v2' : `tide_products_seeded_${wsId}`;
+
+  if (typeof initCloudSync === 'function') {
+    initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
+  }
+
+  if (typeof window.TideFirebase?.initFirebase === 'function') {
+    window.TideFirebase.initFirebase().then(() => {
+      if (typeof window.TideFirebase?.setWorkspace === 'function') {
+        window.TideFirebase.setWorkspace(wsId);
+      }
+      window.TideFirebase.streamProducts((remoteProducts) => {
+        if (!Array.isArray(remoteProducts)) return;
+        const currentWs = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
+        if (currentWs !== wsId) return;
+        if (typeof window.TideFirebase?.isBulkOpActive === 'function' && window.TideFirebase.isBulkOpActive()) return;
+
+        // Only legacy primary workspace may do a one-time seed from local cache if cloud is empty.
+        // Newly created isolated company workspaces always treat 0 products in cloud as authoritative.
+        const isPrimary = wsId === 'ws_primary';
+        const hasSeeded = !isPrimary || Boolean(localStorage.getItem(seedKey));
+        if (isPrimary && remoteProducts.length === 0 && !hasSeeded && (state.products || []).length > 0) {
+          localStorage.setItem(seedKey, 'true');
+          window.TideFirebase.batchSyncProducts(state.products);
+          return;
+        }
+
+        if (remoteProducts.length > 0) {
+          if (isPrimary) localStorage.setItem(seedKey, 'true');
+          state.products = remoteProducts;
+          persistState(state, wsId);
+          render();
+        } else if (hasSeeded) {
+          state.products = [];
+          persistState(state, wsId);
+          render();
+        }
+      });
+    }).catch(err => console.warn('Product stream setup error:', err));
+  }
+}
+
 async function handleRegister(form) {
   const companyName = (form.elements['reg-company-name']?.value || '').trim();
   const branchName = (form.elements['reg-branch-name']?.value || '').trim() || 'Main branch';
@@ -897,71 +991,88 @@ async function handleRegister(form) {
     return;
   }
 
-  // Check if username or email is already taken
-  const existing = (state.users || []).find(u => {
-    return (u.username && normalizedLogin(u.username) === username) || (email && u.email && normalizedLogin(u.email) === email);
-  });
-  if (existing) {
+  // Check if username or email is already taken globally across all companies or locally
+  const localTaken = (state.users || []).some(u =>
+    (u.username && normalizedLogin(u.username) === username) ||
+    (email && u.email && normalizedLogin(u.email) === email)
+  );
+  let globallyAvailable = true;
+  if (typeof checkCredentialsAvailableGlobally === 'function') {
+    try {
+      globallyAvailable = await checkCredentialsAvailableGlobally(username, email);
+    } catch {}
+  }
+  if (localTaken || !globallyAvailable) {
     renderAuthGate('An account with this username or email already exists. Please sign in or choose another.', 'register');
     return;
   }
 
   try {
-    // 1. Configure company
-    state.companyName = companyName;
-    state.currency = currency;
-    state.isRegistered = true;
-
-    // 2. Primary branch
+    // 1. Create a brand-new, 100% isolated company workspace (ZERO data retained from any other company)
+    const newWorkspaceId = typeof createNewWorkspaceId === 'function'
+      ? createNewWorkspaceId(companyName)
+      : `ws_${Date.now().toString(36)}`;
     const branchId = 'BR-MAIN';
-    state.branches = Array.isArray(state.branches) ? state.branches : [];
-    let mainBranch = state.branches.find(b => b.id === branchId);
-    if (mainBranch) {
-      mainBranch.name = branchName;
-    } else {
-      mainBranch = { id: branchId, name: branchName, status: 'Active' };
-      state.branches.unshift(mainBranch);
-    }
-    state.activeBranchId = branchId;
-    activeBranch = mainBranch;
-    state.branch = branchName;
 
-    // 3. Create administrator / owner user
     const adminUser = {
-      id: idFor('USR', state.users || []),
+      id: `USR-OWNER-${Date.now().toString(36).slice(-5).toUpperCase()}`,
       name: fullName,
-      username: username,
-      email: email,
-      phone: phone,
+      username,
+      email,
+      phone,
       role: 'Owner / Administrator',
       modules: ['*'],
       permissions: { '*': ['*'] },
-      branchId: branchId,
+      branchId,
       status: 'Active',
       isBootstrap: true,
       initialAdminLoginSeeded: true
     };
-
     await setUserPassword(adminUser, password);
 
-    // If there is an existing unconfigured bootstrap user, update it, otherwise add new
-    state.users = Array.isArray(state.users) ? state.users : [];
-    const bootstrapIdx = state.users.findIndex(u => u.isBootstrap);
-    if (bootstrapIdx >= 0) {
-      state.users[bootstrapIdx] = adminUser;
-    } else {
-      state.users.unshift(adminUser);
-    }
+    const freshState = createBlankWorkspaceState({
+      companyName,
+      branchName,
+      currency,
+      adminUser
+    });
 
-    // 4. Auto-login
-    state.currentUserId = adminUser.id;
-    state.posCart = [];
+    // 2. Detach previous workspace streams & switch to the new isolated workspace
+    if (typeof setActiveWorkspaceId === 'function') {
+      setActiveWorkspaceId(newWorkspaceId);
+    }
+    state = freshState;
+    activeBranch = state.branches[0];
+    posCart = [];
+    posDraftOrderId = '';
+    posCustomer = 'Walk-in customer';
+    posMethod = 'Cash';
+    posCategory = '';
     tableQuery = '';
     selectedProductIds.clear();
-    safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: adminUser.id, passwordHash: adminUser.passwordHash }));
-    saveState();
 
+    // 3. Persist isolated local store & seed clean empty modules + account directory in Firestore
+    await persistState(state, newWorkspaceId);
+    if (typeof window.TideFirebase?.initFirebase === 'function') {
+      await window.TideFirebase.initFirebase();
+      window.TideFirebase.setWorkspace?.(newWorkspaceId);
+    }
+    if (typeof registerAccountInDirectory === 'function') {
+      await registerAccountInDirectory(adminUser, newWorkspaceId, companyName);
+    }
+    attachActiveWorkspaceStreams();
+    if (typeof pushStateToCloud === 'function') {
+      await pushStateToCloud(state, true, true);
+    }
+
+    // 4. Auto-login into the brand-new blank company workspace
+    safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({
+      id: adminUser.id,
+      passwordHash: adminUser.passwordHash,
+      workspaceId: newWorkspaceId
+    }));
     recordActivity('Company workspace registered', `${companyName} by ${fullName}`);
+    saveState();
 
     authErrorMessage = '';
     page = 'home';
@@ -969,7 +1080,7 @@ async function handleRegister(form) {
     document.getElementById('auth-gate').hidden = true;
     document.querySelector('.app-shell').hidden = false;
     render();
-    toast(`🎉 Welcome to Tide ERP! Company "${companyName}" registered successfully.`);
+    toast(`🎉 Welcome to Tide ERP! Fresh company workspace "${companyName}" created.`);
   } catch (err) {
     renderAuthGate(err.message || 'Company registration could not be completed.', 'register');
   }
@@ -991,13 +1102,68 @@ async function ensureAdministratorLogin() {
 async function handleLogin(form) {
   const identifier = normalizedLogin(form.elements['login-identifier'].value);
   const password = form.elements['login-password'].value;
-  const user = state.users.find(item => normalizedLogin(item.username) === identifier || normalizedLogin(item.email) === identifier);
+  const currentWsId = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
+
+  // 1. Check global multi-tenant account directory first so any user can sign into
+  //    their exact isolated company workspace from ANY device (PC or Phone)
+  let targetWsId = currentWsId;
+  let dirRecord = null;
+  if (typeof lookupAccountInDirectory === 'function') {
+    try {
+      dirRecord = await lookupAccountInDirectory(identifier);
+    } catch {}
+  }
+
+  if (dirRecord && dirRecord.workspaceId) {
+    let dirValid = false;
+    try {
+      dirValid = Boolean(dirRecord.status !== 'Inactive' && await verifyUserPassword(dirRecord, password));
+    } catch {}
+    if (!dirValid) {
+      renderAuthGate('The username/email or password is incorrect, or this account is inactive.');
+      return;
+    }
+
+    targetWsId = dirRecord.workspaceId;
+    if (targetWsId !== currentWsId) {
+      // Switch cleanly into this user's isolated company workspace
+      if (typeof setActiveWorkspaceId === 'function') {
+        setActiveWorkspaceId(targetWsId);
+      }
+      const blankFallback = createBlankWorkspaceState({ companyName: dirRecord.companyName || 'My Company' });
+      state = await loadPersistedState(blankFallback, targetWsId);
+      state.currentUserId = '';
+      try {
+        if (typeof window.TideFirebase?.initFirebase === 'function') {
+          await window.TideFirebase.initFirebase();
+          window.TideFirebase.setWorkspace?.(targetWsId);
+        }
+        const [modRes, cloudProds] = await Promise.all([
+          typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, blankFallback, true) : Promise.resolve(null),
+          typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
+        ]);
+        if (modRes?.hydrated && modRes.state) state = modRes.state;
+        if (Array.isArray(cloudProds)) state.products = cloudProds;
+      } catch (err) {
+        console.warn('Tenant hydration on login fell back to local cache:', err);
+      }
+      activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
+      state.activeBranchId = activeBranch.id;
+      state.branch = activeBranch.name;
+      attachActiveWorkspaceStreams();
+    }
+  }
+
+  const user = (state.users || []).find(item => normalizedLogin(item.username) === identifier || normalizedLogin(item.email) === identifier);
   let valid = false;
   try { valid = Boolean(user && user.status !== 'Inactive' && await verifyUserPassword(user, password)); }
   catch (error) { renderAuthGate(error.message || 'Sign-in could not be completed.'); return; }
   if (!valid) { renderAuthGate('The username/email or password is incorrect, or this account is inactive.'); return; }
+
   state.currentUserId = user.id;
   state.posCart = [];
+  posCart = [];
+  posDraftOrderId = '';
   tableQuery = '';
   selectedProductIds.clear();
   if (!activateAssignedBranch(user)) {
@@ -1005,8 +1171,18 @@ async function handleLogin(form) {
     renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
     return;
   }
-  safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
-  saveState();
+  const activeWs = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : targetWsId;
+  safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({
+    id: user.id,
+    passwordHash: user.passwordHash,
+    workspaceId: activeWs
+  }));
+  // Ensure this account is indexed in global directory for seamless cross-device login
+  if (!dirRecord && typeof registerAccountInDirectory === 'function') {
+    registerAccountInDirectory(user, activeWs, state.companyName).catch(() => {});
+  }
+  snapshotCurrentBranch();
+  persistState(state, activeWs);
   authErrorMessage = '';
   page = 'home';
   history.replaceState({ erpPage: 'home' }, '', '#home');
@@ -1019,10 +1195,12 @@ function logout() {
   safeSessionRemove(AUTH_SESSION_KEY);
   state.currentUserId = '';
   state.posCart = [];
+  posCart = [];
+  posDraftOrderId = '';
   tableQuery = '';
   selectedProductIds.clear();
   page = 'home';
-  saveState();
+  persistState(state);
   document.getElementById('app-modal')?.close();
   renderAuthGate();
 }
@@ -6766,6 +6944,9 @@ async function handleDialogSubmit(form) {
     const user = { id: idFor('USR', state.users), name, username, email, phone: val('user-phone'), role, modules: [...modules], permissions: rolePermissionMap(role, modules), branchId, status: 'Active' };
     await setUserPassword(user, password);
     state.users.push(user);
+    if (typeof registerAccountInDirectory === 'function') {
+      registerAccountInDirectory(user, getActiveWorkspaceId(), state.companyName).catch(() => {});
+    }
     recordActivity('User added', `${name} · ${role}`);
     saveState(); document.getElementById('app-modal').close(); render(); toast('User added'); return;
   }
@@ -6773,6 +6954,7 @@ async function handleDialogSubmit(form) {
     if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can edit user accounts'); return; }
     const user = state.users.find(item => item.id === form.dataset.recordId);
     if (!user) { toast('This user account could not be found'); return; }
+    const previousUser = { username: user.username, email: user.email };
     const name = val('edit-user-name'), username = val('edit-user-username'), email = val('edit-user-email'), phone = val('edit-user-phone'), role = val('edit-user-role'), branchId = val('edit-user-branch');
     const password = String(data.get('edit-user-password') || ''), passwordConfirm = String(data.get('edit-user-password-confirm') || '');
     if (!name) { toast('Enter the user name'); return; }
@@ -6785,9 +6967,12 @@ async function handleDialogSubmit(form) {
     Object.assign(user, { name, username, email, phone, role, branchId });
     if (roleChanged) { const modules = userRoleDefaults[role] || userRoleDefaults.Salesman; user.modules = [...modules]; user.permissions = rolePermissionMap(role, modules); }
     if (password) await setUserPassword(user, password);
+    if (typeof registerAccountInDirectory === 'function') {
+      registerAccountInDirectory(user, getActiveWorkspaceId(), state.companyName, previousUser).catch(() => {});
+    }
     if (state.currentUserId === user.id) {
       if (!activateAssignedBranch(user)) { toast('This account must remain assigned to an active branch'); return; }
-      safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
+      safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash, workspaceId: getActiveWorkspaceId() }));
     }
     recordActivity('User account updated', `${name} · ${role}`, user.id);
     saveState(); document.getElementById('app-modal').close(); render(); toast(`User ${name} updated`); return;
@@ -6807,6 +6992,7 @@ async function handleDialogSubmit(form) {
     if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can set user login credentials'); return; }
     const user = state.users.find(item => item.id === form.dataset.recordId), name = val('credential-name'), username = val('credential-username'), email = val('credential-email'), password = String(data.get('credential-password') || ''), passwordConfirm = String(data.get('credential-password-confirm') || '');
     if (!user) { toast('This user account could not be found'); return; }
+    const previousUser = { username: user.username, email: user.email };
     if (!name) { toast('Enter the user full name'); return; }
     if (!credentialsAvailable(username, email, user.id)) { toast('That username or email is already assigned to another user'); return; }
     if (password || !user.passwordHash) {
@@ -6814,13 +7000,17 @@ async function handleDialogSubmit(form) {
       await setUserPassword(user, password);
     }
     Object.assign(user, { name, username, email });
+    if (typeof registerAccountInDirectory === 'function') {
+      registerAccountInDirectory(user, getActiveWorkspaceId(), state.companyName, previousUser).catch(() => {});
+    }
     if (state.currentUserId === user.id) {
-      safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
+      safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash, workspaceId: getActiveWorkspaceId() }));
     }
     saveState(); document.getElementById('app-modal').close(); render(); toast(`Login credentials saved for ${user.name}`); return;
   }
   if (kind === 'own-credentials') {
     const user = currentWorkspaceUser(), name = val('own-name'), username = val('own-username'), email = val('own-email'), currentPassword = String(data.get('own-current-password') || ''), newPassword = String(data.get('own-new-password') || ''), newPasswordConfirm = String(data.get('own-new-password-confirm') || '');
+    const previousUser = { username: user.username, email: user.email };
     if (!name) { toast('Enter your full name'); return; }
     if (!credentialsAvailable(username, email, user.id)) { toast('That username or email is already assigned to another user'); return; }
     if (newPassword) {
@@ -6829,7 +7019,10 @@ async function handleDialogSubmit(form) {
       await setUserPassword(user, newPassword);
     }
     Object.assign(user, { name, username, email });
-    safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
+    if (typeof registerAccountInDirectory === 'function') {
+      registerAccountInDirectory(user, getActiveWorkspaceId(), state.companyName, previousUser).catch(() => {});
+    }
+    safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash, workspaceId: getActiveWorkspaceId() }));
     recordActivity('Account profile and credentials updated', user.name, user.id);
     saveState(); document.getElementById('app-modal').close(); render(); toast('Account profile updated'); return;
   }
@@ -7085,7 +7278,9 @@ function handleAction(button) {
     case 'edit-user-permissions': { const user = state.users.find(item => item.id === id); openUserPermissionsForm(user); break; }
     case 'toggle-user': {
       const user = state.users.find(u => u.id === id); if (!user || user.isBootstrap) { toast('The owner account cannot be deactivated'); break; }
-      user.status = user.status === 'Active' ? 'Inactive' : 'Active'; recordActivity(`User ${user.status.toLowerCase()}`, user.name, user.id); saveState(); render(); toast(`User ${user.status.toLowerCase()}`); break;
+      user.status = user.status === 'Active' ? 'Inactive' : 'Active';
+      if (typeof registerAccountInDirectory === 'function') registerAccountInDirectory(user, getActiveWorkspaceId(), state.companyName).catch(() => {});
+      recordActivity(`User ${user.status.toLowerCase()}`, user.name, user.id); saveState(); render(); toast(`User ${user.status.toLowerCase()}`); break;
     }
     case 'delete-user': {
       if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can permanently delete users'); break; }
@@ -7093,6 +7288,7 @@ function handleAction(button) {
       if (!user || user.isBootstrap || isAdministratorUser(user)) { toast('Owner / Administrator accounts cannot be deleted'); break; }
       if (!button.dataset.deleteMode) { openDeleteChoice(button, `Delete user ${user.name}?`, 'Keep the user’s activity and stock history, or erase the user account and its audit trail.', 'Delete user, keep records', 'Erase user and audit trail'); break; }
       state.users = state.users.filter(item => item.id !== user.id);
+      if (typeof removeAccountFromDirectory === 'function') removeAccountFromDirectory(user).catch(() => {});
       if (state.currentUserId === user.id) {
         const builtInOwner = state.users.find(item => item.isBootstrap && item.status === 'Active');
         const nextAdmin = state.users.find(item => item.role === 'Owner / Administrator' && item.status === 'Active');
@@ -8836,39 +9032,50 @@ sidebar?.addEventListener('click', event => {
 
 window.addEventListener('resize', updateSidebarUI);
 updateSidebarUI();
-// App Initialization (Dual Mode: Cloud-First Live Unified ERP + Instant Offline IndexedDB Cache)
+// App Initialization (Multi-Tenant Dual Mode: Cloud-First Unified ERP + Isolated Offline Cache)
 async function initApp() {
   applyTheme(safeStorageGet(THEME_KEY) === 'dark' ? 'dark' : 'light');
 
-  // 1. Load local IndexedDB cache first (enables instant offline dual-mode operation)
-  state = await loadPersistedState(initialState);
+  // 0. Resolve active tenant workspace from saved session (or last active workspace) BEFORE loading data
+  let savedSession = null;
+  try { savedSession = JSON.parse(safeSessionGet(AUTH_SESSION_KEY) || 'null'); } catch { }
+  const bootWorkspaceId = savedSession?.workspaceId || (typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary');
+  if (typeof setActiveWorkspaceId === 'function') {
+    setActiveWorkspaceId(bootWorkspaceId);
+  }
+  const bootTemplate = bootWorkspaceId === 'ws_primary' ? initialState : createBlankWorkspaceState();
+
+  // 1. Load isolated local IndexedDB cache first (enables instant offline dual-mode operation)
+  state = await loadPersistedState(bootTemplate, bootWorkspaceId);
   state.currentUserId = '';
 
   // 2. Cloud-First Hydration BEFORE any startup saveState() so refreshing ANY device
-  //    immediately gets the complete live ERP (all modules + all products) without ever
-  //    overwriting the cloud with stale local data! (Timeout-guarded for offline mode)
+  //    immediately gets the complete live ERP for THIS company only (Timeout-guarded for offline mode)
   try {
     const cloudBoot = (async () => {
       if (typeof window.TideFirebase?.initFirebase === 'function') {
         await window.TideFirebase.initFirebase();
+        window.TideFirebase.setWorkspace?.(bootWorkspaceId);
       }
       const [modResult, cloudProducts] = await Promise.all([
-        typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, initialState, true) : Promise.resolve(null),
+        typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, bootTemplate, true) : Promise.resolve(null),
         typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
       ]);
       if (modResult?.hydrated && modResult.state) {
         state = modResult.state;
       }
       if (Array.isArray(cloudProducts)) {
-        const hasSeeded = localStorage.getItem('tide_products_seeded_v2');
+        const isPrimary = bootWorkspaceId === 'ws_primary';
+        const seedKey = isPrimary ? 'tide_products_seeded_v2' : `tide_products_seeded_${bootWorkspaceId}`;
+        const hasSeeded = !isPrimary || Boolean(localStorage.getItem(seedKey));
         if (cloudProducts.length > 0) {
-          localStorage.setItem('tide_products_seeded_v2', 'true');
+          if (isPrimary) localStorage.setItem(seedKey, 'true');
           state.products = cloudProducts;
         } else if (hasSeeded) {
           state.products = [];
         }
       }
-      await persistState(state);
+      await persistState(state, bootWorkspaceId);
     })();
     const timeoutGuard = new Promise(resolve => setTimeout(resolve, 6500));
     await Promise.race([cloudBoot, timeoutGuard]);
@@ -8891,41 +9098,16 @@ async function initApp() {
     state.companyName = 'My Company';
   }
 
-  // 3. Attach Real-Time Multi-Device Listeners across the ENTIRE ERP
+  // 3. Attach Real-Time Multi-Device Listeners strictly scoped to this company workspace
   window.requestPushStateToCloud = () => {
     if (typeof pushStateToCloud === 'function' && state) pushStateToCloud(state);
   };
 
-  if (typeof initCloudSync === 'function') {
-    initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
-  }
+  attachActiveWorkspaceStreams();
 
-  // Real-Time Firestore Collection Stream for "products"
-  if (typeof window.TideFirebase?.initFirebase === 'function') {
-    window.TideFirebase.initFirebase().then(() => {
-      window.TideFirebase.streamProducts((remoteProducts) => {
-        if (!Array.isArray(remoteProducts)) return;
-        if (typeof window.TideFirebase?.isBulkOpActive === 'function' && window.TideFirebase.isBulkOpActive()) return;
-
-        const hasSeeded = localStorage.getItem('tide_products_seeded_v2');
-        if (remoteProducts.length === 0 && !hasSeeded && (state.products || []).length > 0) {
-          localStorage.setItem('tide_products_seeded_v2', 'true');
-          window.TideFirebase.batchSyncProducts(state.products);
-          return;
-        }
-
-        if (remoteProducts.length > 0) {
-          localStorage.setItem('tide_products_seeded_v2', 'true');
-          state.products = remoteProducts;
-          persistState(state);
-          render();
-        } else if (hasSeeded) {
-          state.products = [];
-          persistState(state);
-          render();
-        }
-      });
-    }).catch(err => console.warn('Product stream setup error:', err));
+  // Keep global login directory up to date for this workspace's users
+  if (typeof syncWorkspaceUsersToDirectory === 'function') {
+    syncWorkspaceUsersToDirectory(state.users, bootWorkspaceId, state.companyName).catch(() => {});
   }
 
   // Auto-reconcile with cloud whenever a device comes back online

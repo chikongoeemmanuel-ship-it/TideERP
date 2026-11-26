@@ -31,11 +31,37 @@
   let persistenceAttempted = false;
   let productsUnsubscribe = null;
   let activeConfig = null;
+  let activeWorkspaceId = 'ws_primary';
   let bulkMutationCount = 0;
   let pendingStreamCallback = null;
   let pendingStreamProducts = null;
   let pendingStreamSnapshot = null;
   let productBatchQueue = Promise.resolve();
+
+  function setWorkspace(workspaceId) {
+    const nextId = String(workspaceId || 'ws_primary').trim() || 'ws_primary';
+    if (nextId !== activeWorkspaceId) {
+      if (productsUnsubscribe) {
+        try { productsUnsubscribe(); } catch {}
+        productsUnsubscribe = null;
+      }
+      pendingStreamProducts = null;
+      pendingStreamSnapshot = null;
+      activeWorkspaceId = nextId;
+    }
+    return activeWorkspaceId;
+  }
+
+  function getWorkspace() {
+    return activeWorkspaceId;
+  }
+
+  function productsCollectionRef(db) {
+    if (!activeWorkspaceId || activeWorkspaceId === 'ws_primary') {
+      return db.collection('products');
+    }
+    return db.collection('tide_erp_tenants').doc(activeWorkspaceId).collection('products');
+  }
 
   /**
    * Convert any SKU / product ID into a valid Firestore document ID
@@ -246,7 +272,7 @@
     try {
       const { docId, data } = normalizeProductForCloud(product);
       product._docId = docId;
-      await db.collection('products').doc(docId).set(data, { merge: true });
+      await productsCollectionRef(db).doc(docId).set(data, { merge: true });
       return true;
     } catch (err) {
       console.error(`Failed to save product ${product?.id} to Firestore:`, err);
@@ -266,7 +292,7 @@
         updatedAt: new Date().toISOString(),
         updatedAtMs: Date.now()
       };
-      await db.collection('products').doc(docId).set(cleanUpdates, { merge: true });
+      await productsCollectionRef(db).doc(docId).set(cleanUpdates, { merge: true });
       return true;
     } catch (err) {
       console.error(`Failed to update product ${productId} in Firestore:`, err);
@@ -281,7 +307,7 @@
 
     try {
       const docId = resolveProductDocId(productOrId);
-      await db.collection('products').doc(docId).delete();
+      await productsCollectionRef(db).doc(docId).delete();
       return true;
     } catch (err) {
       console.error(`Failed to delete product ${productOrId?.id || productOrId} from Firestore:`, err);
@@ -290,7 +316,7 @@
   }
 
   /**
-   * Fetch all products once from the "products" collection (preferring fresh server data)
+   * Fetch all products once from the active tenant's products collection
    */
   async function getProducts(preferServer = false) {
     let db = getDb();
@@ -298,15 +324,16 @@
     if (!db) return null;
 
     try {
+      const colRef = productsCollectionRef(db);
       let snapshot;
       if (preferServer) {
         try {
-          snapshot = await db.collection('products').get({ source: 'server' });
+          snapshot = await colRef.get({ source: 'server' });
         } catch {
-          snapshot = await db.collection('products').get();
+          snapshot = await colRef.get();
         }
       } else {
-        snapshot = await db.collection('products').get();
+        snapshot = await colRef.get();
       }
       const products = [];
       snapshot.forEach(doc => {
@@ -323,7 +350,7 @@
   }
 
   /**
-   * Stream products in real-time using onSnapshot listener on the "products" collection
+   * Stream products in real-time using onSnapshot listener on the active tenant's products collection
    */
   function streamProducts(onUpdate, onError) {
     const db = getDb();
@@ -334,10 +361,12 @@
       productsUnsubscribe = null;
     }
     pendingStreamCallback = onUpdate;
+    const boundWorkspaceId = activeWorkspaceId;
 
     try {
-      productsUnsubscribe = db.collection('products').onSnapshot(
+      productsUnsubscribe = productsCollectionRef(db).onSnapshot(
         snapshot => {
+          if (boundWorkspaceId !== activeWorkspaceId) return;
           const products = [];
           snapshot.forEach(doc => {
             const data = doc.data();
@@ -360,7 +389,7 @@
           if (typeof onError === 'function') onError(err);
         }
       );
-      console.info('✓ Real-time products collection stream active');
+      console.info(`✓ Real-time products stream active for workspace: ${boundWorkspaceId}`);
       return productsUnsubscribe;
     } catch (err) {
       console.error('Failed to attach products onSnapshot listener:', err);
@@ -398,6 +427,7 @@
       let synced = 0;
       let failed = 0;
 
+      const colRef = productsCollectionRef(db);
       beginBulkOp();
       try {
         for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -406,7 +436,7 @@
             await commitBatchWithRetry(() => {
               const batch = db.batch();
               for (const item of chunk) {
-                const ref = db.collection('products').doc(item.docId);
+                const ref = colRef.doc(item.docId);
                 batch.set(ref, item.data, { merge: true });
               }
               return batch;
@@ -416,7 +446,7 @@
             console.error(`Batch upload chunk ${i}-${i + chunk.length} failed; falling back to per-item save:`, chunkErr);
             for (const item of chunk) {
               try {
-                await db.collection('products').doc(item.docId).set(item.data, { merge: true });
+                await colRef.doc(item.docId).set(item.data, { merge: true });
                 synced++;
               } catch (itemErr) {
                 failed++;
@@ -464,6 +494,7 @@
       let deleted = 0;
       let failed = 0;
 
+      const colRef = productsCollectionRef(db);
       beginBulkOp();
       try {
         for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -472,7 +503,7 @@
             await commitBatchWithRetry(() => {
               const batch = db.batch();
               for (const docId of chunk) {
-                batch.delete(db.collection('products').doc(docId));
+                batch.delete(colRef.doc(docId));
               }
               return batch;
             }, 3);
@@ -481,7 +512,7 @@
             console.error(`Batch delete chunk ${i}-${i + chunk.length} failed; falling back to per-item delete:`, chunkErr);
             for (const docId of chunk) {
               try {
-                await db.collection('products').doc(docId).delete();
+                await colRef.doc(docId).delete();
                 deleted++;
               } catch (itemErr) {
                 failed++;
@@ -505,6 +536,8 @@
     initFirebase,
     loadConfig,
     getDb,
+    setWorkspace,
+    getWorkspace,
     toDocId,
     isBulkOpActive,
     saveProduct,
