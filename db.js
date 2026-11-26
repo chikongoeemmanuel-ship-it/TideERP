@@ -319,22 +319,9 @@ function mergeWorkspaceState(localState, remoteState) {
 
   const merged = { ...remoteState };
 
-  // 1. Merge products: Union by ID (SKU), local edits take priority if local has items
-  const productMap = new Map();
-  (remoteState.products || []).forEach(p => {
-    if (p && p.id) productMap.set(p.id, p);
-  });
-  (localState.products || []).forEach(p => {
-    if (p && p.id) {
-      if (!productMap.has(p.id)) {
-        productMap.set(p.id, p);
-      } else {
-        const existing = productMap.get(p.id);
-        productMap.set(p.id, { ...existing, ...p });
-      }
-    }
-  });
-  merged.products = Array.from(productMap.values());
+  // Products are managed exclusively in the dedicated Firestore 'products' collection.
+  // Never resurrect or overwrite products from the old workspace document.
+  merged.products = Array.isArray(localState.products) ? localState.products : [];
 
   // 2. Merge sales & orders: Union by ID
   const salesMap = new Map();
@@ -401,6 +388,7 @@ async function pushStateToCloud(state, immediate = false) {
       lastCloudSaveTime = Date.now();
       const cleanClone = JSON.parse(JSON.stringify(state));
       delete cleanClone.currentUserId;
+      delete cleanClone.products; // Stored separately in the dedicated 'products' Firestore collection
 
       await firestoreDb.collection('tide_erp_workspaces').doc(cloudSyncWorkspaceId).set({
         payload: cleanClone,
@@ -408,7 +396,7 @@ async function pushStateToCloud(state, immediate = false) {
         updatedAt: new Date().toISOString(),
         device: /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Phone' : 'PC'
       }, { merge: true });
-      console.info(`✓ Cloud state synced successfully (${cleanClone.products?.length || 0} products)`);
+      console.info(`✓ Cloud state synced successfully (workspace records)`);
     } catch (err) {
       console.warn('Live cloud sync push failed:', err);
     }

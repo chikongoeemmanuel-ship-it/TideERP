@@ -5,11 +5,11 @@ const ADMIN_LOGIN_EMAIL = 'chikongoeemmanuel@gmail.com';
 const ADMIN_LOGIN_USERNAME = 'Admin';
 const ADMIN_INITIAL_PASSWORD = 'Admin123';
 function safeStorageGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
-function safeStorageSet(key, value) { try { localStorage.setItem(key, value); } catch {} }
-function safeStorageRemove(key) { try { localStorage.removeItem(key); } catch {} }
+function safeStorageSet(key, value) { try { localStorage.setItem(key, value); } catch { } }
+function safeStorageRemove(key) { try { localStorage.removeItem(key); } catch { } }
 function safeSessionGet(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
-function safeSessionSet(key, value) { try { sessionStorage.setItem(key, value); } catch {} }
-function safeSessionRemove(key) { try { sessionStorage.removeItem(key); } catch {} }
+function safeSessionSet(key, value) { try { sessionStorage.setItem(key, value); } catch { } }
+function safeSessionRemove(key) { try { sessionStorage.removeItem(key); } catch { } }
 
 const initialState = {
   version: 3,
@@ -987,8 +987,8 @@ async function handleLogin(form) {
   state.posCart = [];
   tableQuery = '';
   selectedProductIds.clear();
-  if(!activateAssignedBranch(user)){
-    state.currentUserId='';
+  if (!activateAssignedBranch(user)) {
+    state.currentUserId = '';
     renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
     return;
   }
@@ -1044,7 +1044,7 @@ function toast(message) {
     if (region.showPopover && !region.matches(':popover-open')) {
       region.showPopover();
     }
-  } catch {}
+  } catch { }
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = message;
@@ -1055,7 +1055,7 @@ function toast(message) {
       if (region.children.length === 0 && region.hidePopover) {
         region.hidePopover();
       }
-    } catch {}
+    } catch { }
   }, 3200);
 }
 
@@ -1088,18 +1088,18 @@ function accessibleBranches() {
   return assigned ? [assigned] : [];
 }
 
-function activateAssignedBranch(user=currentWorkspaceUser()) {
-  if(isAdministratorUser(user))return true;
-  const branch=state.branches.find(item=>item.id===user?.branchId&&item.status!=='Inactive');
-  if(!branch)return false;
-  if(activeBranch?.id!==branch.id){
+function activateAssignedBranch(user = currentWorkspaceUser()) {
+  if (isAdministratorUser(user)) return true;
+  const branch = state.branches.find(item => item.id === user?.branchId && item.status !== 'Inactive');
+  if (!branch) return false;
+  if (activeBranch?.id !== branch.id) {
     snapshotCurrentBranch();
-    activeBranch=branch;
-    const saved=state.branchData?.[branch.id]||{};
-    branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]!==undefined?saved[key]:(key==='stocktakeDraft'?null:[]));});
+    activeBranch = branch;
+    const saved = state.branchData?.[branch.id] || {};
+    branchCollections.forEach(key => { state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : [])); });
   }
-  state.activeBranchId=branch.id;
-  state.branch=branch.name;
+  state.activeBranchId = branch.id;
+  state.branch = branch.name;
   return true;
 }
 
@@ -1107,7 +1107,7 @@ function snapshotCurrentBranch() {
   if (!activeBranch) return;
   const data = {};
   branchCollections.forEach(k => {
-    data[k] = structuredClone(state[k]!==undefined?state[k]:(k==='stocktakeDraft'?null:[]));
+    data[k] = structuredClone(state[k] !== undefined ? state[k] : (k === 'stocktakeDraft' ? null : []));
   });
   if (!state.branchData) state.branchData = {};
   state.branchData[activeBranch.id] = data;
@@ -1210,10 +1210,10 @@ function refreshActivityVisibility() {
 }
 
 function recordActivity(action, details, reference = '') {
-  if (!Array.isArray(state.activityLog)) state.activityLog=[];
-  const actor=currentWorkspaceUser();
-  state.activityLog.unshift({id:idFor('ACT',state.activityLog),date:new Date().toISOString(),actorId:actor.id||'',actor:actor.name||'User',branchId:activeBranch?.id||'',action,details,reference});
-  state.activityLog=state.activityLog.slice(0,300);
+  if (!Array.isArray(state.activityLog)) state.activityLog = [];
+  const actor = currentWorkspaceUser();
+  state.activityLog.unshift({ id: idFor('ACT', state.activityLog), date: new Date().toISOString(), actorId: actor.id || '', actor: actor.name || 'User', branchId: activeBranch?.id || '', action, details, reference });
+  state.activityLog = state.activityLog.slice(0, 300);
 }
 
 function notificationItems() {
@@ -1239,24 +1239,24 @@ function notificationItems() {
 }
 
 function refreshNotificationIndicator() {
-  const button=document.getElementById('notifications-button');
-  if(!button)return;
-  const count=notificationItems().length;
-  button.classList.toggle('has-notifications',count>0);
-  button.setAttribute('aria-label',count?`Notifications, ${count} item${count===1?'':'s'}`:'Notifications');
-  let badge=button.querySelector('.notification-count');
-  if(!badge){badge=document.createElement('span');badge.className='notification-count';button.append(badge);}
-  if(badge)badge.textContent=count?String(count):'';
+  const button = document.getElementById('notifications-button');
+  if (!button) return;
+  const count = notificationItems().length;
+  button.classList.toggle('has-notifications', count > 0);
+  button.setAttribute('aria-label', count ? `Notifications, ${count} item${count === 1 ? '' : 's'}` : 'Notifications');
+  let badge = button.querySelector('.notification-count');
+  if (!badge) { badge = document.createElement('span'); badge.className = 'notification-count'; button.append(badge); }
+  if (badge) badge.textContent = count ? String(count) : '';
 }
 
 function openNotificationsPanel() {
-  const button=document.getElementById('notifications-button');
-  if(!button)return;
+  const button = document.getElementById('notifications-button');
+  if (!button) return;
   document.querySelector('.notifications-popover')?.remove();
   document.querySelector('.branch-popover')?.remove();
-  const items=notificationItems();
-  const panel=document.createElement('section');panel.className='notifications-popover';panel.setAttribute('aria-label','Notifications');
-  panel.innerHTML=`<div class="topbar-popover-head"><div><strong>Notifications</strong><small>${items.length?`${items.length} item${items.length===1?'':'s'} need attention`:'You’re all caught up'}</small></div><button type="button" class="topbar-popover-close" aria-label="Close notifications">×</button></div>${items.length?`<div class="notification-list">${items.map((item,index)=>`<button type="button" class="notification-row notification-${item.tone}" data-notification-page="${esc(item.page)}"><span class="notification-row-icon">${item.icon}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.detail)}</small></span><span class="notification-arrow">›</span></button>`).join('')}</div>`:'<div class="notification-empty"><span>✓</span><p>No current alerts.</p></div>'}`;
+  const items = notificationItems();
+  const panel = document.createElement('section'); panel.className = 'notifications-popover'; panel.setAttribute('aria-label', 'Notifications');
+  panel.innerHTML = `<div class="topbar-popover-head"><div><strong>Notifications</strong><small>${items.length ? `${items.length} item${items.length === 1 ? '' : 's'} need attention` : 'You’re all caught up'}</small></div><button type="button" class="topbar-popover-close" aria-label="Close notifications">×</button></div>${items.length ? `<div class="notification-list">${items.map((item, index) => `<button type="button" class="notification-row notification-${item.tone}" data-notification-page="${esc(item.page)}"><span class="notification-row-icon">${item.icon}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.detail)}</small></span><span class="notification-arrow">›</span></button>`).join('')}</div>` : '<div class="notification-empty"><span>✓</span><p>No current alerts.</p></div>'}`;
   document.body.append(panel);
   const rect = button.getBoundingClientRect();
   if (window.innerWidth <= 760) {
@@ -1272,8 +1272,8 @@ function openNotificationsPanel() {
       right: `${Math.max(8, window.innerWidth - rect.right)}px`
     });
   }
-  panel.querySelector('.topbar-popover-close').addEventListener('click',()=>panel.remove());
-  panel.querySelectorAll('[data-notification-page]').forEach(item=>item.addEventListener('click',()=>{const target=item.dataset.notificationPage;panel.remove();setPage(target);}));
+  panel.querySelector('.topbar-popover-close').addEventListener('click', () => panel.remove());
+  panel.querySelectorAll('[data-notification-page]').forEach(item => item.addEventListener('click', () => { const target = item.dataset.notificationPage; panel.remove(); setPage(target); }));
 }
 
 function openBranchSwitcherPanel() {
@@ -1299,8 +1299,8 @@ function openBranchSwitcherPanel() {
     </div>
     <div style="margin-top:10px">
       ${branches.length ? branches.map(b => {
-        const isActive = b.id === (activeBranch?.id || state.activeBranchId);
-        return `
+    const isActive = b.id === (activeBranch?.id || state.activeBranchId);
+    return `
           <button type="button" class="branch-option-row ${isActive ? 'active' : ''}" data-switch-branch-id="${esc(b.id)}">
             <div style="display:flex;align-items:center;gap:10px">
               <span style="font-size:18px">🏢</span>
@@ -1312,7 +1312,7 @@ function openBranchSwitcherPanel() {
             ${isActive ? '<span class="status-pill status-paid" style="font-size:10px;padding:2px 7px">✓ Active</span>' : '<span class="button small" style="font-size:10px;padding:2px 6px;pointer-events:none">Switch</span>'}
           </button>
         `;
-      }).join('') : '<div class="notification-empty"><p>No accessible branches found.</p></div>'}
+  }).join('') : '<div class="notification-empty"><p>No accessible branches found.</p></div>'}
     </div>
     ${canManage ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -1362,38 +1362,38 @@ function openBranchSwitcherPanel() {
 }
 
 function recentActivityItems(limit = 100) {
-  const saved=(state.activityLog||[]).map(item=>({id:item.id,date:item.date,actorId:item.actorId||'',actor:item.actor||'User',branchId:item.branchId||'',action:item.action||'Updated records',details:item.details||'',reference:item.reference||''}));
-  const fallback=[];
-  for(const sale of state.sales)fallback.push({id:`sale-${sale.id}`,date:sale.date,actor:'',branchId:activeBranch?.id||'',action:'Sale recorded',details:`${sale.customer||'Walk-in customer'} · ${money(sale.total||0)}`,reference:sale.id});
-  for(const purchase of state.purchases)fallback.push({id:`purchase-${purchase.id}`,date:purchase.date,actor:'',branchId:activeBranch?.id||'',action:'Purchase order recorded',details:`${purchase.supplier||'Supplier'} · ${money(purchase.total||0)}`,reference:purchase.id});
-  for(const entry of state.entries)fallback.push({id:`entry-${entry.id}`,date:entry.date,actor:'',branchId:activeBranch?.id||'',action:entry.sourceType?.includes('payment')?'Payment recorded':'Account entry recorded',details:`${entry.partyType||''} · ${entry.party||''} · ${money(entry.amount||0)} · ${entry.memo||''}`,reference:entry.id});
-  for(const movement of state.stockMovements)fallback.push({id:`stock-${movement.id}`,date:movement.date,actor:movement.user||'',branchId:activeBranch?.id||'',action:'Stock updated',details:`${movement.product||movement.productId} · ${movement.delta>0?'+':''}${movement.delta}`,reference:movement.id});
-  const known=new Set(saved.map(item=>item.reference).filter(Boolean));
-  const combined=[...saved,...fallback.filter(item=>!known.has(item.reference))];
-  return combined.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0)).slice(0,limit);
+  const saved = (state.activityLog || []).map(item => ({ id: item.id, date: item.date, actorId: item.actorId || '', actor: item.actor || 'User', branchId: item.branchId || '', action: item.action || 'Updated records', details: item.details || '', reference: item.reference || '' }));
+  const fallback = [];
+  for (const sale of state.sales) fallback.push({ id: `sale-${sale.id}`, date: sale.date, actor: '', branchId: activeBranch?.id || '', action: 'Sale recorded', details: `${sale.customer || 'Walk-in customer'} · ${money(sale.total || 0)}`, reference: sale.id });
+  for (const purchase of state.purchases) fallback.push({ id: `purchase-${purchase.id}`, date: purchase.date, actor: '', branchId: activeBranch?.id || '', action: 'Purchase order recorded', details: `${purchase.supplier || 'Supplier'} · ${money(purchase.total || 0)}`, reference: purchase.id });
+  for (const entry of state.entries) fallback.push({ id: `entry-${entry.id}`, date: entry.date, actor: '', branchId: activeBranch?.id || '', action: entry.sourceType?.includes('payment') ? 'Payment recorded' : 'Account entry recorded', details: `${entry.partyType || ''} · ${entry.party || ''} · ${money(entry.amount || 0)} · ${entry.memo || ''}`, reference: entry.id });
+  for (const movement of state.stockMovements) fallback.push({ id: `stock-${movement.id}`, date: movement.date, actor: movement.user || '', branchId: activeBranch?.id || '', action: 'Stock updated', details: `${movement.product || movement.productId} · ${movement.delta > 0 ? '+' : ''}${movement.delta}`, reference: movement.id });
+  const known = new Set(saved.map(item => item.reference).filter(Boolean));
+  const combined = [...saved, ...fallback.filter(item => !known.has(item.reference))];
+  return combined.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, limit);
 }
 
 function openUserActivityHistory(user) {
-  if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can view user activity');return;}
-  if(!user){toast('This user account could not be found');return;}
-  const items=recentActivityItems(300).filter(item=>item.actorId===user.id||(!item.actorId&&item.actor===user.name));
-  const rows=items.map(item=>{
-    const timestamp=item.date&&Number.isFinite(new Date(item.date).getTime())?new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short'}).format(new Date(item.date)):dateLabel(String(item.date||'').slice(0,10));
-    return `<div class="activity-entry"><span class="activity-entry-icon">◷</span><div><strong>${esc(item.action)}</strong><small>${esc(item.details)}${item.reference?` · ${esc(item.reference)}`:''}</small></div><time>${esc(timestamp)}</time></div>`;
+  if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can view user activity'); return; }
+  if (!user) { toast('This user account could not be found'); return; }
+  const items = recentActivityItems(300).filter(item => item.actorId === user.id || (!item.actorId && item.actor === user.name));
+  const rows = items.map(item => {
+    const timestamp = item.date && Number.isFinite(new Date(item.date).getTime()) ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.date)) : dateLabel(String(item.date || '').slice(0, 10));
+    return `<div class="activity-entry"><span class="activity-entry-icon">◷</span><div><strong>${esc(item.action)}</strong><small>${esc(item.details)}${item.reference ? ` · ${esc(item.reference)}` : ''}</small></div><time>${esc(timestamp)}</time></div>`;
   }).join('');
-  openModal(`${esc(user.name)} · Activity`,`${items.length} recorded action${items.length===1?'':'s'} in this workspace`,items.length?`<div class="activity-list">${rows}</div>`:'<div class="notification-empty"><p>No activity has been recorded for this user yet.</p></div>','Close');
+  openModal(`${esc(user.name)} · Activity`, `${items.length} recorded action${items.length === 1 ? '' : 's'} in this workspace`, items.length ? `<div class="activity-list">${rows}</div>` : '<div class="notification-empty"><p>No activity has been recorded for this user yet.</p></div>', 'Close');
 }
 
 function openActivityHistory() {
-  if(!canViewActivity()){toast('You do not have permission to view the activity history');return;}
-  const items=recentActivityItems().filter(item=>isWorkspaceAdministrator()||item.branchId===activeBranch?.id);
-  const rows=items.map(item=>`<div class="activity-entry"><span class="activity-entry-icon">◷</span><div><strong>${esc(item.action)}</strong><small>${esc(item.details)}${item.reference?` · ${esc(item.reference)}`:''}</small>${item.actor?`<small>By ${esc(item.actor)}</small>`:''}</div><time>${dateLabel(String(item.date||'').slice(0,10))}</time></div>`).join('');
-  openModal('Activity history',`${items.length} recent item${items.length===1?'':'s'} · saved actions and transaction history`,items.length?`<div class="activity-list">${rows}</div>`:'<div class="notification-empty"><p>No activity has been recorded yet.</p></div>','Close');
+  if (!canViewActivity()) { toast('You do not have permission to view the activity history'); return; }
+  const items = recentActivityItems().filter(item => isWorkspaceAdministrator() || item.branchId === activeBranch?.id);
+  const rows = items.map(item => `<div class="activity-entry"><span class="activity-entry-icon">◷</span><div><strong>${esc(item.action)}</strong><small>${esc(item.details)}${item.reference ? ` · ${esc(item.reference)}` : ''}</small>${item.actor ? `<small>By ${esc(item.actor)}</small>` : ''}</div><time>${dateLabel(String(item.date || '').slice(0, 10))}</time></div>`).join('');
+  openModal('Activity history', `${items.length} recent item${items.length === 1 ? '' : 's'} · saved actions and transaction history`, items.length ? `<div class="activity-list">${rows}</div>` : '<div class="notification-empty"><p>No activity has been recorded yet.</p></div>', 'Close');
 }
 
-document.getElementById('notifications-button')?.addEventListener('click',event=>{
+document.getElementById('notifications-button')?.addEventListener('click', event => {
   event.stopPropagation();
-  if(document.querySelector('.notifications-popover'))document.querySelector('.notifications-popover').remove();
+  if (document.querySelector('.notifications-popover')) document.querySelector('.notifications-popover').remove();
   else openNotificationsPanel();
 });
 document.getElementById('branch-switch-button')?.addEventListener('click', event => {
@@ -1401,10 +1401,10 @@ document.getElementById('branch-switch-button')?.addEventListener('click', event
   if (document.querySelector('.branch-popover')) document.querySelector('.branch-popover').remove();
   else openBranchSwitcherPanel();
 });
-document.getElementById('activity-button')?.addEventListener('click',openActivityHistory);
-document.addEventListener('click',event=>{
-  if(!event.target.closest('.notifications-popover')&&!event.target.closest('#notifications-button'))document.querySelector('.notifications-popover')?.remove();
-  if(!event.target.closest('.branch-popover')&&!event.target.closest('#branch-switch-button'))document.querySelector('.branch-popover')?.remove();
+document.getElementById('activity-button')?.addEventListener('click', openActivityHistory);
+document.addEventListener('click', event => {
+  if (!event.target.closest('.notifications-popover') && !event.target.closest('#notifications-button')) document.querySelector('.notifications-popover')?.remove();
+  if (!event.target.closest('.branch-popover') && !event.target.closest('#branch-switch-button')) document.querySelector('.branch-popover')?.remove();
 });
 
 function syncBackButton() {
@@ -1665,7 +1665,7 @@ function openModal(title, subtitle, content, confirmLabel = 'Save', extraAction 
     <div class="modal-actions">${extraAction}<button type="button" class="button" data-action="close-modal">Cancel</button><button class="button primary" type="submit">${confirmLabel}</button></div>
   `;
   modal.classList.toggle('transaction-modal', /sales order|purchase order|pos sale|stock take|stocktake/i.test(title));
-  form.querySelectorAll('[data-action]').forEach(button=>{button.hidden=!canPerformAction(button.dataset.action,button);});
+  form.querySelectorAll('[data-action]').forEach(button => { button.hidden = !canPerformAction(button.dataset.action, button); });
   modal.showModal();
 }
 
@@ -1876,8 +1876,8 @@ function selectField(name, label, options = [], selected = '') {
   return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}">${options.map(opt => `<option ${opt === selected ? 'selected' : ''}>${esc(opt)}</option>`).join('')}</select></div>`;
 }
 
-function branchSelectField(name,label,selectedId='',branches=state.branches.filter(branch=>branch.status!=='Inactive')) {
-  return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}" required>${branches.map(branch=>`<option value="${esc(branch.id)}" ${branch.id===selectedId?'selected':''}>${esc(branch.name)}</option>`).join('')}</select></div>`;
+function branchSelectField(name, label, selectedId = '', branches = state.branches.filter(branch => branch.status !== 'Inactive')) {
+  return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}" required>${branches.map(branch => `<option value="${esc(branch.id)}" ${branch.id === selectedId ? 'selected' : ''}>${esc(branch.name)}</option>`).join('')}</select></div>`;
 }
 
 // Home Quick-Actions Hub Page
@@ -2384,7 +2384,7 @@ function savePOSDraft() {
     state.orders.unshift(order);
   }
   posDraftOrderId = draftId;
-  recordActivity(existing?'POS draft updated':'POS draft saved',`${order.customer} · ${money(total)}`,draftId);
+  recordActivity(existing ? 'POS draft updated' : 'POS draft saved', `${order.customer} · ${money(total)}`, draftId);
   saveState();
   toast(`Draft ${draftId} saved`);
   render();
@@ -2400,8 +2400,8 @@ function completePOS() {
   }
   const total = posCart.reduce((sum, line) => sum + line.qty * line.price, 0);
   const existing = state.orders.find(order => order.id === posDraftOrderId && order.source === 'POS' && order.status === 'Draft');
-  const creditCustomer=state.customers.find(item=>item.name===customer),creditLimit=Number(creditCustomer?.creditLimit)||0;
-  if(method==='Credit'&&creditLimit>0&&(Number(creditCustomer.balance)||0)+total>creditLimit){toast(`Credit limit exceeded for ${customer}`);return;}
+  const creditCustomer = state.customers.find(item => item.name === customer), creditLimit = Number(creditCustomer?.creditLimit) || 0;
+  if (method === 'Credit' && creditLimit > 0 && (Number(creditCustomer.balance) || 0) + total > creditLimit) { toast(`Credit limit exceeded for ${customer}`); return; }
 
   for (const line of posCart) {
     const product = state.products.find(p => p.id === line.id);
@@ -2458,7 +2458,7 @@ function completePOS() {
   }
 
   if (!navigator.onLine) state.queue.push(sale.id);
-  recordActivity('POS sale completed',`${customer} · ${money(total)} · ${method}`,sale.id);
+  recordActivity('POS sale completed', `${customer} · ${money(total)} · ${method}`, sale.id);
   posCart = [];
   posDraftOrderId = '';
   posCustomer = 'Walk-in customer';
@@ -2694,7 +2694,7 @@ function salesRows(rows) {
               <button data-action="add-order-payment" data-id="${esc(order.id)}" ${draft ? 'disabled title="Save the order first"' : ''}>Add payment</button>
               <button data-action="manage-order-returns" data-id="${esc(order.id)}" ${draft ? 'disabled title="Save the order first"' : ''}>Manage returns</button>
               <span class="menu-divider"></span>
-              <button class="danger-action" data-action="delete-order" data-id="${esc(order.id)}">Delete ${pos ? 'sale' : 'order'}${isWorkspaceAdministrator()&&order.status!=='Draft'?' · admin override':''}</button>
+              <button class="danger-action" data-action="delete-order" data-id="${esc(order.id)}">Delete ${pos ? 'sale' : 'order'}${isWorkspaceAdministrator() && order.status !== 'Draft' ? ' · admin override' : ''}</button>
             </div>
           </details>
         </td>
@@ -2762,8 +2762,8 @@ function finalizeSalesOrder(order) {
     order.status = 'Final';
     order.finalAt = new Date().toISOString();
     if (state.customers.some(customer => customer.name === order.customer)) {
-      postAccountEntry({ partyType:'Customer', party:order.customer, date:order.date, type:'Debit', amount:order.total, memo:`Sales order · ${order.id}`, sourceType:'order', sourceId:order.id });
-      if ((order.paid || 0) > 0) postAccountEntry({ partyType:'Customer', party:order.customer, date:order.date, type:'Credit', amount:order.paid, memo:`Payment · ${order.paymentMethod || 'Cash'} · ${order.id}`, sourceType:'order-payment', sourceId:order.id });
+      postAccountEntry({ partyType: 'Customer', party: order.customer, date: order.date, type: 'Debit', amount: order.total, memo: `Sales order · ${order.id}`, sourceType: 'order', sourceId: order.id });
+      if ((order.paid || 0) > 0) postAccountEntry({ partyType: 'Customer', party: order.customer, date: order.date, type: 'Credit', amount: order.paid, memo: `Payment · ${order.paymentMethod || 'Cash'} · ${order.id}`, sourceType: 'order-payment', sourceId: order.id });
     }
     recordActivity('Sales order finalized', `${order.customer} · ${money(order.total)}`, order.id);
   } else if (order.status === 'Edited') {
@@ -3539,10 +3539,10 @@ function renderInventoryManagement() {
           </thead>
           <tbody>
             ${stocktakes.length ? stocktakes.map(st => {
-              const netSign = st.netQtyDelta > 0 ? `+${st.netQtyDelta}` : `${st.netQtyDelta}`;
-              const deltaClass = st.netQtyDelta === 0 ? 'stocktake-diff-pill match' : st.netQtyDelta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
-              const isRevoked = st.status === 'Revoked';
-              return `
+    const netSign = st.netQtyDelta > 0 ? `+${st.netQtyDelta}` : `${st.netQtyDelta}`;
+    const deltaClass = st.netQtyDelta === 0 ? 'stocktake-diff-pill match' : st.netQtyDelta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+    const isRevoked = st.status === 'Revoked';
+    return `
                 <tr class="${isRevoked ? 'row-revoked' : ''}">
                   <td><strong>${dateLabel(st.dateStr || st.date?.slice(0, 10))}</strong><br><small class="muted">${st.date ? new Date(st.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</small></td>
                   <td>
@@ -3559,9 +3559,9 @@ function renderInventoryManagement() {
                   <td><span class="${deltaClass}">${netSign} units</span></td>
                   <td>${esc(st.user || 'Administrator')}</td>
                   <td>
-                    ${isRevoked 
-                      ? `<span class="stocktake-diff-pill shortage" title="Revoked on ${dateLabel(st.revokedAt?.slice(0, 10))}">Revoked</span>` 
-                      : `<span class="stocktake-diff-pill match">Active</span>`}
+                    ${isRevoked
+        ? `<span class="stocktake-diff-pill shortage" title="Revoked on ${dateLabel(st.revokedAt?.slice(0, 10))}">Revoked</span>`
+        : `<span class="stocktake-diff-pill match">Active</span>`}
                   </td>
                   <td>
                     <div style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap">
@@ -3581,7 +3581,7 @@ function renderInventoryManagement() {
                   </td>
                 </tr>
               `;
-            }).join('') : emptyRow(9, 'No physical stock takes recorded yet. Click "New stock take" to conduct an audit.')}
+  }).join('') : emptyRow(9, 'No physical stock takes recorded yet. Click "New stock take" to conduct an audit.')}
           </tbody>
         </table>
       </div>
@@ -3618,11 +3618,11 @@ function renderInventoryManagement() {
           </thead>
           <tbody>
             ${filteredMovements.length ? filteredMovements.map(m => {
-              const delta = Number(m.delta || (m.after - m.before) || 0);
-              const sign = delta > 0 ? `+${delta}` : `${delta}`;
-              const deltaClass = delta === 0 ? 'stocktake-diff-pill match' : delta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
-              const isRevoked = m.status === 'Revoked';
-              return `
+    const delta = Number(m.delta || (m.after - m.before) || 0);
+    const sign = delta > 0 ? `+${delta}` : `${delta}`;
+    const deltaClass = delta === 0 ? 'stocktake-diff-pill match' : delta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+    const isRevoked = m.status === 'Revoked';
+    return `
                 <tr class="${isRevoked ? 'row-revoked' : ''}">
                   <td><strong>${dateLabel(m.date)}</strong></td>
                   <td><strong>${esc(m.product || m.productId)}</strong></td>
@@ -3633,9 +3633,9 @@ function renderInventoryManagement() {
                   <td>${esc(m.reason || 'Stock adjustment')}</td>
                   <td>${esc(m.user || '—')}</td>
                   <td>
-                    ${isRevoked 
-                      ? `<span class="stocktake-diff-pill shortage">Revoked</span>` 
-                      : `<span class="stocktake-diff-pill match">Applied</span>`}
+                    ${isRevoked
+        ? `<span class="stocktake-diff-pill shortage">Revoked</span>`
+        : `<span class="stocktake-diff-pill match">Applied</span>`}
                   </td>
                   ${isAdmin ? `
                     <td>
@@ -3652,7 +3652,7 @@ function renderInventoryManagement() {
                   ` : ''}
                 </tr>
               `;
-            }).join('') : emptyRow(isAdmin ? 10 : 9, 'No stock movements recorded.')}
+  }).join('') : emptyRow(isAdmin ? 10 : 9, 'No stock movements recorded.')}
           </tbody>
         </table>
       </div>
@@ -3985,7 +3985,7 @@ function eraseProductHistory(productId) {
   state.purchases = state.purchases.filter(purchase => !purchaseIds.has(purchase.id));
   state.purchaseReturns = (state.purchaseReturns || []).filter(record => !purchaseReturns.includes(record));
   const directRefs = new Set([...removedOrderIds, ...removedSaleIds, ...purchaseIds]);
-  removeAccountEntries(entry => directRefs.has(entry.sourceId) && ['order','order-payment','sales','sales-payment','purchase','purchase-payment'].includes(entry.sourceType));
+  removeAccountEntries(entry => directRefs.has(entry.sourceId) && ['order', 'order-payment', 'sales', 'sales-payment', 'purchase', 'purchase-payment'].includes(entry.sourceType));
   state.entries = state.entries.filter(entry => {
     if (entry.sourceType === 'account-payment' && Array.isArray(entry.allocations)) {
       const removedAmount = entry.allocations.filter(allocation => removedOrderIds.has(allocation.orderId)).reduce((sum, allocation) => sum + (Number(allocation.amount) || 0), 0);
@@ -4025,7 +4025,7 @@ function renderPurchases() {
               ${p.status === 'Pending' ? `<button data-action="receive-purchase" data-id="${esc(p.id)}">Receive stock</button>` : ''}
               ${p.status === 'Received' && (p.paid || 0) < net ? `<button data-action="purchase-payment" data-id="${esc(p.id)}">Add payment</button>` : ''}
               ${p.status === 'Received' ? `<button data-action="return-purchase" data-id="${esc(p.id)}">Supplier return</button>` : ''}
-              <button class="danger-action" data-action="delete-purchase" data-id="${esc(p.id)}">Delete purchase${isWorkspaceAdministrator()&&p.status==='Received'?' · admin override':''}</button>
+              <button class="danger-action" data-action="delete-purchase" data-id="${esc(p.id)}">Delete purchase${isWorkspaceAdministrator() && p.status === 'Received' ? ' · admin override' : ''}</button>
             </div>
           </details>
         </td>
@@ -4072,7 +4072,7 @@ function renderParties(type) {
       <td><strong>${esc(item.name)}</strong><small>${esc(item.id)}</small></td>
       <td>${esc(item.phone || item.contactPerson || '—')}</td>
       <td>${esc(item.email || '—')}</td>
-      ${isSupplier ? '' : `<td>${Number(item.creditLimit)>0?money(item.creditLimit):'—'}</td>`}
+      ${isSupplier ? '' : `<td>${Number(item.creditLimit) > 0 ? money(item.creditLimit) : '—'}</td>`}
       <td>
         <strong>${money(Math.abs(balance))}</strong>
       </td>
@@ -4105,37 +4105,37 @@ function renderParties(type) {
       <div class="summary-mini"><small>Active accounts</small><strong>${list.filter(i => i.status !== 'Inactive').length}</strong></div>
     </section>
     <section class="table-panel">
-      <div class="table-scroll"><table class="data-table"><thead><tr><th>Account Name</th><th>Phone / Contact</th><th>Email</th>${isSupplier?'':'<th>Credit limit</th>'}<th>Balance</th><th>Payment status</th><th>Account status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-scroll"><table class="data-table"><thead><tr><th>Account Name</th><th>Phone / Contact</th><th>Email</th>${isSupplier ? '' : '<th>Credit limit</th>'}<th>Balance</th><th>Payment status</th><th>Account status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>
   `;
 }
 
 // Users Page
 function renderUsers() {
-  const visibleUsers = state.users.filter(u => isWorkspaceAdministrator() || u.branchId===activeBranch?.id);
+  const visibleUsers = state.users.filter(u => isWorkspaceAdministrator() || u.branchId === activeBranch?.id);
   const rows = visibleUsers.map(user => {
     const isRoot = Boolean(user.isBootstrap);
-    const permissions=effectiveUserPermissions(user);
-    const granted=userActionPermissions.filter(group=>(permissions[group.module]||[]).includes('view')).map(group=>pageLabels[group.module]||group.module);
-    const accessLabel=isRoot?'Root Administrator (Universal Access)':granted.length?granted.join(', '):'No sections enabled';
+    const permissions = effectiveUserPermissions(user);
+    const granted = userActionPermissions.filter(group => (permissions[group.module] || []).includes('view')).map(group => pageLabels[group.module] || group.module);
+    const accessLabel = isRoot ? 'Root Administrator (Universal Access)' : granted.length ? granted.join(', ') : 'No sections enabled';
     return `
       <tr>
         <td><strong>${esc(user.name)}</strong><small>${esc(user.id)}</small></td>
         <td>${esc(user.email || '—')}<small>@${esc(user.username || 'credentials needed')}</small><small>${esc(user.phone || '')}</small></td>
         <td><strong>${esc(user.role)}</strong></td>
-        <td>${esc(state.branches.find(branch=>branch.id===user.branchId)?.name||'Unassigned')}</td>
-        <td class="user-access-summary">${esc(accessLabel)}<small>${isRoot?'Permissions are always enabled for the root Owner / Administrator':`${Object.values(permissions).reduce((sum,actions)=>sum+actions.length,0)} actions granted`}</small></td>
+        <td>${esc(state.branches.find(branch => branch.id === user.branchId)?.name || 'Unassigned')}</td>
+        <td class="user-access-summary">${esc(accessLabel)}<small>${isRoot ? 'Permissions are always enabled for the root Owner / Administrator' : `${Object.values(permissions).reduce((sum, actions) => sum + actions.length, 0)} actions granted`}</small></td>
         <td><span class="status-pill ${user.status === 'Active' ? 'paid' : 'pending'}">${esc(user.status || 'Active')}</span></td>
         <td>
           <details class="order-actions user-actions">
             <summary aria-label="Actions for ${esc(user.name)}">•••</summary>
             <div class="order-actions-menu user-actions-menu">
-              ${isWorkspaceAdministrator()?`<button data-action="edit-user" data-id="${esc(user.id)}">Edit user</button>`:''}
-              ${isWorkspaceAdministrator()?`<button data-action="set-user-credentials" data-id="${esc(user.id)}">Set password & credentials</button>`:''}
-              ${isWorkspaceAdministrator()?`<button data-action="view-user-activity" data-id="${esc(user.id)}">View activity</button>`:''}
-              ${!isRoot&&isWorkspaceAdministrator()?`<button data-action="edit-user-permissions" data-id="${esc(user.id)}">Permissions</button>`:''}
-              ${!user.isBootstrap&&canPerformAction('toggle-user')?`<button data-action="toggle-user" data-id="${esc(user.id)}">${user.status === 'Active' ? 'Deactivate' : 'Activate'}</button>`:''}
-              ${!user.isBootstrap&&isWorkspaceAdministrator()?`<button class="danger-action" data-action="delete-user" data-id="${esc(user.id)}">Delete user</button>`:''}
+              ${isWorkspaceAdministrator() ? `<button data-action="edit-user" data-id="${esc(user.id)}">Edit user</button>` : ''}
+              ${isWorkspaceAdministrator() ? `<button data-action="set-user-credentials" data-id="${esc(user.id)}">Set password & credentials</button>` : ''}
+              ${isWorkspaceAdministrator() ? `<button data-action="view-user-activity" data-id="${esc(user.id)}">View activity</button>` : ''}
+              ${!isRoot && isWorkspaceAdministrator() ? `<button data-action="edit-user-permissions" data-id="${esc(user.id)}">Permissions</button>` : ''}
+              ${!user.isBootstrap && canPerformAction('toggle-user') ? `<button data-action="toggle-user" data-id="${esc(user.id)}">${user.status === 'Active' ? 'Deactivate' : 'Activate'}</button>` : ''}
+              ${!user.isBootstrap && isWorkspaceAdministrator() ? `<button class="danger-action" data-action="delete-user" data-id="${esc(user.id)}">Delete user</button>` : ''}
             </div>
           </details>
         </td>
@@ -4145,7 +4145,7 @@ function renderUsers() {
 
   return `
     ${heading('Users', 'Manage workspace team members, roles, and access credentials.', `
-      ${canPerformAction('new-user')?'<button class="button primary" data-action="new-user">＋ Add user</button>':''}
+      ${canPerformAction('new-user') ? '<button class="button primary" data-action="new-user">＋ Add user</button>' : ''}
     `)}
     <section class="table-panel">
       <div class="table-scroll"><table class="data-table"><thead><tr><th>User</th><th>Email / Phone</th><th>Role</th><th>Branch</th><th>Access</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -4154,39 +4154,39 @@ function renderUsers() {
 }
 
 function openUserPermissionsForm(user) {
-  if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can override user permissions');return;}
-  if(!user||user.isBootstrap){toast('The root Owner / Administrator always has full access');return;}
-  const selected=effectiveUserPermissions(user);
-  const groups=userActionPermissions.map(group=>{
-    const granted=selected[group.module]||[];
-    const all=group.actions.length>0&&granted.length===group.actions.length;
-    return `<fieldset class="user-permission-group"><legend><label class="user-permission"><input type="checkbox" data-permission-module="${esc(group.module)}" ${all?'checked':''}><span>${esc(pageLabels[group.module]||group.module)} · enable all</span></label></legend><div class="user-subpermission-grid">${group.actions.map(([action,label])=>`<label class="user-subpermission"><input type="checkbox" name="user-permission" value="${esc(group.module)}|${esc(action)}" ${granted.includes(action)?'checked':''}><span>${esc(label)}</span></label>`).join('')}</div></fieldset>`;
+  if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can override user permissions'); return; }
+  if (!user || user.isBootstrap) { toast('The root Owner / Administrator always has full access'); return; }
+  const selected = effectiveUserPermissions(user);
+  const groups = userActionPermissions.map(group => {
+    const granted = selected[group.module] || [];
+    const all = group.actions.length > 0 && granted.length === group.actions.length;
+    return `<fieldset class="user-permission-group"><legend><label class="user-permission"><input type="checkbox" data-permission-module="${esc(group.module)}" ${all ? 'checked' : ''}><span>${esc(pageLabels[group.module] || group.module)} · enable all</span></label></legend><div class="user-subpermission-grid">${group.actions.map(([action, label]) => `<label class="user-subpermission"><input type="checkbox" name="user-permission" value="${esc(group.module)}|${esc(action)}" ${granted.includes(action) ? 'checked' : ''}><span>${esc(label)}</span></label>`).join('')}</div></fieldset>`;
   }).join('');
-  openDialog('edit-user-permissions',`Access for ${esc(user.name)}`,'Choose exactly which sections and actions this user can access. Owner / Administrator accounts always retain full access.',`<div class="inline-note user-permission-note">Role: <strong>${esc(user.role)}</strong>. These choices apply only to this user and can be changed again at any time.</div><div class="user-permission-grid">${groups}</div>`,'Save permissions');
-  const form=document.getElementById('modal-content');form.dataset.recordId=user.id;
-  form.querySelectorAll('[data-permission-module]').forEach(parent=>{
-    const children=[...parent.closest('fieldset').querySelectorAll('input[name="user-permission"]')];
-    const checked=children.filter(child=>child.checked).length;
-    parent.indeterminate=checked>0&&checked<children.length;
+  openDialog('edit-user-permissions', `Access for ${esc(user.name)}`, 'Choose exactly which sections and actions this user can access. Owner / Administrator accounts always retain full access.', `<div class="inline-note user-permission-note">Role: <strong>${esc(user.role)}</strong>. These choices apply only to this user and can be changed again at any time.</div><div class="user-permission-grid">${groups}</div>`, 'Save permissions');
+  const form = document.getElementById('modal-content'); form.dataset.recordId = user.id;
+  form.querySelectorAll('[data-permission-module]').forEach(parent => {
+    const children = [...parent.closest('fieldset').querySelectorAll('input[name="user-permission"]')];
+    const checked = children.filter(child => child.checked).length;
+    parent.indeterminate = checked > 0 && checked < children.length;
   });
 }
 
 function openUserCredentialsForm(user) {
   if (!user) return;
-  openDialog('set-user-credentials', 'Set login credentials', `Assign a full name, username, email, and password for ${esc(user.name)}.`, `<div class="form-grid">${inputField('credential-name','Full name','e.g. John Doe','text',true,user.name||'')}${inputField('credential-username','Username','e.g. chiko','text',true,user.username||'')}${inputField('credential-email','Email','name@example.com','email',true,user.email||'')}${inputField('credential-password',user.passwordHash?'New password':'Initial password',user.passwordHash?'Leave blank to keep current password':'At least 8 characters','password',!user.passwordHash)}${inputField('credential-password-confirm','Confirm password','Re-enter password','password',!user.passwordHash)}</div>`,'Save credentials');
+  openDialog('set-user-credentials', 'Set login credentials', `Assign a full name, username, email, and password for ${esc(user.name)}.`, `<div class="form-grid">${inputField('credential-name', 'Full name', 'e.g. John Doe', 'text', true, user.name || '')}${inputField('credential-username', 'Username', 'e.g. chiko', 'text', true, user.username || '')}${inputField('credential-email', 'Email', 'name@example.com', 'email', true, user.email || '')}${inputField('credential-password', user.passwordHash ? 'New password' : 'Initial password', user.passwordHash ? 'Leave blank to keep current password' : 'At least 8 characters', 'password', !user.passwordHash)}${inputField('credential-password-confirm', 'Confirm password', 'Re-enter password', 'password', !user.passwordHash)}</div>`, 'Save credentials');
   document.getElementById('modal-content').dataset.recordId = user.id;
 }
 
 function openUserEditForm(user) {
-  if(!user||!isWorkspaceAdministrator())return;
-  const roles=['Salesman','Storekeeper','Manager','Owner / Administrator'];
-  openDialog('edit-user',`Edit ${esc(user.name)}`,'Update this user’s profile, assigned branch, role, and login credentials. Leave the password blank to keep the current password.',`<div class="form-grid">${inputField('edit-user-name','Full name','', 'text',true,user.name||'')}${inputField('edit-user-username','Username','Choose a unique username','text',true,user.username||'')}${inputField('edit-user-email','Email','name@example.com','email',true,user.email||'')}${inputField('edit-user-phone','Phone','', 'tel',false,user.phone||'')}${branchSelectField('edit-user-branch','Assigned branch',user.branchId)}${inputField('edit-user-password','New password','Leave blank to keep current password','password')}${inputField('edit-user-password-confirm','Confirm new password','Re-enter new password','password')}${selectField('edit-user-role','Role',roles,user.role||'Salesman')}</div>`,'Save user');
-  document.getElementById('modal-content').dataset.recordId=user.id;
+  if (!user || !isWorkspaceAdministrator()) return;
+  const roles = ['Salesman', 'Storekeeper', 'Manager', 'Owner / Administrator'];
+  openDialog('edit-user', `Edit ${esc(user.name)}`, 'Update this user’s profile, assigned branch, role, and login credentials. Leave the password blank to keep the current password.', `<div class="form-grid">${inputField('edit-user-name', 'Full name', '', 'text', true, user.name || '')}${inputField('edit-user-username', 'Username', 'Choose a unique username', 'text', true, user.username || '')}${inputField('edit-user-email', 'Email', 'name@example.com', 'email', true, user.email || '')}${inputField('edit-user-phone', 'Phone', '', 'tel', false, user.phone || '')}${branchSelectField('edit-user-branch', 'Assigned branch', user.branchId)}${inputField('edit-user-password', 'New password', 'Leave blank to keep current password', 'password')}${inputField('edit-user-password-confirm', 'Confirm new password', 'Re-enter new password', 'password')}${selectField('edit-user-role', 'Role', roles, user.role || 'Salesman')}</div>`, 'Save user');
+  document.getElementById('modal-content').dataset.recordId = user.id;
 }
 
 function openOwnCredentialsForm() {
   const user = currentWorkspaceUser();
-  openModal('My account', 'Update your personal name and credentials for your signed-in account.', `<input type="hidden" name="dialog-kind" value="own-credentials"><div class="form-grid">${inputField('own-name','Your full name','e.g. Emmanuel','text',true,user.name||'')}${inputField('own-current-password','Current password (required only if changing password)','','password',false)}${inputField('own-username','Username','', 'text',true,user.username||'')}${inputField('own-email','Email','', 'email',true,user.email||'')}${inputField('own-new-password','New password','Leave blank to keep current password','password')}${inputField('own-new-password-confirm','Confirm new password','','password')}</div>`, 'Save changes', '<button type="button" class="button" data-action="logout">Sign out</button>');
+  openModal('My account', 'Update your personal name and credentials for your signed-in account.', `<input type="hidden" name="dialog-kind" value="own-credentials"><div class="form-grid">${inputField('own-name', 'Your full name', 'e.g. Emmanuel', 'text', true, user.name || '')}${inputField('own-current-password', 'Current password (required only if changing password)', '', 'password', false)}${inputField('own-username', 'Username', '', 'text', true, user.username || '')}${inputField('own-email', 'Email', '', 'email', true, user.email || '')}${inputField('own-new-password', 'New password', 'Leave blank to keep current password', 'password')}${inputField('own-new-password-confirm', 'Confirm new password', '', 'password')}</div>`, 'Save changes', '<button type="button" class="button" data-action="logout">Sign out</button>');
   document.getElementById('modal-content').dataset.dialogKind = 'own-credentials';
 }
 
@@ -4217,59 +4217,59 @@ function renderBranches() {
 
 // Accounting & Reports Page
 function renderAccounting() {
-  const receivables=accountOutstandingTotal('Customer');
-  const payables=accountOutstandingTotal('Supplier');
-  const renderAccounts=(partyType,accounts)=>accounts.length?accounts.map(account=>{
-    const balance=Number(account.balance)||0;
-    const amount=partyType==='Customer'?Math.abs(balance):Math.abs(balance);
-    const label=partyType==='Customer'?(balance<0?'Customer credit':'Receivable'):(balance<0?'Payable':'Supplier credit');
-    const status=balance===0?'Settled':partyType==='Customer'?(balance>0?'Receivable':'Credit balance'):(balance<0?'Payable':'Credit balance');
-    return `<article class="accounting-account-card"><div class="accounting-account-head"><div><span class="eyebrow">${esc(partyType)} account</span><h3>${esc(account.name)}</h3><small>${esc(account.id)}${account.phone?` · ${esc(account.phone)}`:''}</small></div><span class="status-pill ${balance===0?'paid':'pending'}">${status}</span></div><div class="accounting-account-balance"><small>${label}</small><strong>${money(amount)}</strong></div><div class="accounting-account-actions"><button class="button small" data-action="view-account-ledger" data-party-type="${partyType}" data-party-name="${esc(account.name)}">View transactions</button><button class="button small" data-action="record-payment" data-party-type="${partyType}" data-party-name="${esc(account.name)}">Add payment</button><button class="button small" data-action="reconcile-account" data-party-type="${partyType}" data-party-name="${esc(account.name)}">Reconcile</button></div></article>`;
-  }).join(''):`<div class="inline-note">No ${partyType.toLowerCase()} accounts yet.</div>`;
+  const receivables = accountOutstandingTotal('Customer');
+  const payables = accountOutstandingTotal('Supplier');
+  const renderAccounts = (partyType, accounts) => accounts.length ? accounts.map(account => {
+    const balance = Number(account.balance) || 0;
+    const amount = partyType === 'Customer' ? Math.abs(balance) : Math.abs(balance);
+    const label = partyType === 'Customer' ? (balance < 0 ? 'Customer credit' : 'Receivable') : (balance < 0 ? 'Payable' : 'Supplier credit');
+    const status = balance === 0 ? 'Settled' : partyType === 'Customer' ? (balance > 0 ? 'Receivable' : 'Credit balance') : (balance < 0 ? 'Payable' : 'Credit balance');
+    return `<article class="accounting-account-card"><div class="accounting-account-head"><div><span class="eyebrow">${esc(partyType)} account</span><h3>${esc(account.name)}</h3><small>${esc(account.id)}${account.phone ? ` · ${esc(account.phone)}` : ''}</small></div><span class="status-pill ${balance === 0 ? 'paid' : 'pending'}">${status}</span></div><div class="accounting-account-balance"><small>${label}</small><strong>${money(amount)}</strong></div><div class="accounting-account-actions"><button class="button small" data-action="view-account-ledger" data-party-type="${partyType}" data-party-name="${esc(account.name)}">View transactions</button><button class="button small" data-action="record-payment" data-party-type="${partyType}" data-party-name="${esc(account.name)}">Add payment</button><button class="button small" data-action="reconcile-account" data-party-type="${partyType}" data-party-name="${esc(account.name)}">Reconcile</button></div></article>`;
+  }).join('') : `<div class="inline-note">No ${partyType.toLowerCase()} accounts yet.</div>`;
 
   return `
     ${heading('Accounting & Ledger', 'Manage each customer and supplier account separately, review its activity, record payments, or reconcile its balance.', `<button class="button" data-action="export-ledger">↓ Export Ledger CSV</button>`)}
     <section class="summary-strip"><div class="summary-mini"><small>Customer receivables</small><strong>${money(receivables)}</strong></div><div class="summary-mini"><small>Supplier payables</small><strong>${money(payables)}</strong></div><div class="summary-mini"><small>Ledger entries</small><strong>${state.entries.length}</strong></div></section>
-    <section class="accounting-account-section"><div class="panel-header"><div><h2 class="panel-title">Customer accounts</h2><p class="panel-subtitle">Receivables, customer payments, and individual account histories.</p></div></div><div class="accounting-account-grid">${renderAccounts('Customer',state.customers)}</div></section>
-    <section class="accounting-account-section"><div class="panel-header"><div><h2 class="panel-title">Supplier accounts</h2><p class="panel-subtitle">Payables, supplier payments, and individual account histories.</p></div></div><div class="accounting-account-grid">${renderAccounts('Supplier',state.suppliers)}</div></section>
+    <section class="accounting-account-section"><div class="panel-header"><div><h2 class="panel-title">Customer accounts</h2><p class="panel-subtitle">Receivables, customer payments, and individual account histories.</p></div></div><div class="accounting-account-grid">${renderAccounts('Customer', state.customers)}</div></section>
+    <section class="accounting-account-section"><div class="panel-header"><div><h2 class="panel-title">Supplier accounts</h2><p class="panel-subtitle">Payables, supplier payments, and individual account histories.</p></div></div><div class="accounting-account-grid">${renderAccounts('Supplier', state.suppliers)}</div></section>
   `;
 }
 
-const reportColors = ['#087f9d','#ff8c42','#8b5cf6','#20a779','#e34f7a','#e8b323','#3b82f6','#17b8a6'];
+const reportColors = ['#087f9d', '#ff8c42', '#8b5cf6', '#20a779', '#e34f7a', '#e8b323', '#3b82f6', '#17b8a6'];
 
 function reportDateRange(period = reportPeriod) {
   const end = today(), cursor = new Date(`${end}T12:00:00Z`);
   let startDate, endDate, label;
   if (period === 'weekly') {
-    const mondayOffset=(cursor.getUTCDay()+6)%7;
-    startDate=new Date(cursor);startDate.setUTCDate(cursor.getUTCDate()-mondayOffset);
-    endDate=new Date(startDate);endDate.setUTCDate(startDate.getUTCDate()+6);
-    label='Weekly report';
+    const mondayOffset = (cursor.getUTCDay() + 6) % 7;
+    startDate = new Date(cursor); startDate.setUTCDate(cursor.getUTCDate() - mondayOffset);
+    endDate = new Date(startDate); endDate.setUTCDate(startDate.getUTCDate() + 6);
+    label = 'Weekly report';
   } else if (period === 'annual') {
-    startDate=new Date(Date.UTC(cursor.getUTCFullYear(),0,1,12));endDate=new Date(Date.UTC(cursor.getUTCFullYear(),11,31,12));
-    label=`Annual report · ${cursor.getUTCFullYear()}`;
+    startDate = new Date(Date.UTC(cursor.getUTCFullYear(), 0, 1, 12)); endDate = new Date(Date.UTC(cursor.getUTCFullYear(), 11, 31, 12));
+    label = `Annual report · ${cursor.getUTCFullYear()}`;
   } else {
-    startDate=new Date(Date.UTC(cursor.getUTCFullYear(),cursor.getUTCMonth(),1,12));endDate=new Date(Date.UTC(cursor.getUTCFullYear(),cursor.getUTCMonth()+1,0,12));
-    label='Monthly report';
+    startDate = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), 1, 12)); endDate = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0, 12));
+    label = 'Monthly report';
   }
-  const iso=date=>date.toISOString().slice(0,10);
-  return { start:iso(startDate), end:iso(endDate), label };
+  const iso = date => date.toISOString().slice(0, 10);
+  return { start: iso(startDate), end: iso(endDate), label };
 }
 
 function reportPeriodData() {
-  const range=reportDateRange();
-  const sales=state.sales.filter(sale=>sale.date>=range.start&&sale.date<=range.end);
-  const purchases=state.purchases.filter(purchase=>purchase.date>=range.start&&purchase.date<=range.end);
-  const salesTotal=sales.reduce((sum,sale)=>sum+(Number(sale.total)||0),0);
-  const purchaseTotal=purchases.reduce((sum,purchase)=>sum+(Number(purchase.total)||0),0);
-  const paymentSources=new Set(['account-payment','order-payment','sales-payment','purchase-payment']);
-  const periodPayments=state.entries.filter(entry=>paymentSources.has(entry.sourceType)&&entry.date>=range.start&&entry.date<=range.end);
-  const customerReceipts=periodPayments.filter(entry=>entry.partyType==='Customer'&&entry.type==='Credit');
-  const supplierPayments=periodPayments.filter(entry=>entry.partyType==='Supplier'&&entry.type==='Debit');
-  const collected=customerReceipts.length?customerReceipts.reduce((sum,entry)=>sum+(Number(entry.amount)||0),0):sales.reduce((sum,sale)=>sum+(Number.isFinite(Number(sale.paid))?Number(sale.paid):(sale.status==='Paid'?Number(sale.total)||0:0)),0);
-  const supplierPaid=supplierPayments.length?supplierPayments.reduce((sum,entry)=>sum+(Number(entry.amount)||0),0):purchases.reduce((sum,purchase)=>sum+(Number(purchase.paid)||0),0);
-  const hasTransactionHistory=state.sales.length>0||state.purchases.length>0;
-  const netCollected=hasTransactionHistory?collected-supplierPaid:0;
+  const range = reportDateRange();
+  const sales = state.sales.filter(sale => sale.date >= range.start && sale.date <= range.end);
+  const purchases = state.purchases.filter(purchase => purchase.date >= range.start && purchase.date <= range.end);
+  const salesTotal = sales.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
+  const purchaseTotal = purchases.reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0);
+  const paymentSources = new Set(['account-payment', 'order-payment', 'sales-payment', 'purchase-payment']);
+  const periodPayments = state.entries.filter(entry => paymentSources.has(entry.sourceType) && entry.date >= range.start && entry.date <= range.end);
+  const customerReceipts = periodPayments.filter(entry => entry.partyType === 'Customer' && entry.type === 'Credit');
+  const supplierPayments = periodPayments.filter(entry => entry.partyType === 'Supplier' && entry.type === 'Debit');
+  const collected = customerReceipts.length ? customerReceipts.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0) : sales.reduce((sum, sale) => sum + (Number.isFinite(Number(sale.paid)) ? Number(sale.paid) : (sale.status === 'Paid' ? Number(sale.total) || 0 : 0)), 0);
+  const supplierPaid = supplierPayments.length ? supplierPayments.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0) : purchases.reduce((sum, purchase) => sum + (Number(purchase.paid) || 0), 0);
+  const hasTransactionHistory = state.sales.length > 0 || state.purchases.length > 0;
+  const netCollected = hasTransactionHistory ? collected - supplierPaid : 0;
   let cogsTotal = 0;
   for (const sale of sales) {
     for (const item of sale.items || []) {
@@ -4279,40 +4279,40 @@ function reportPeriodData() {
     }
   }
   const grossProfit = salesTotal - cogsTotal;
-  return {...range,sales,purchases,salesTotal,purchaseTotal,collected,supplierPaid,netCollected,cogsTotal,grossProfit};
+  return { ...range, sales, purchases, salesTotal, purchaseTotal, collected, supplierPaid, netCollected, cogsTotal, grossProfit };
 }
 
 function reportBuckets(data) {
-  if(reportPeriod==='weekly'){
-    const start=new Date(`${data.start}T12:00:00Z`);
-    return Array.from({length:7},(_,index)=>{const date=new Date(start);date.setUTCDate(start.getUTCDate()+index);return {key:date.toISOString().slice(0,10),label:new Intl.DateTimeFormat('en-TZ',{weekday:'short',timeZone:'Africa/Dar_es_Salaam'}).format(date)}});
+  if (reportPeriod === 'weekly') {
+    const start = new Date(`${data.start}T12:00:00Z`);
+    return Array.from({ length: 7 }, (_, index) => { const date = new Date(start); date.setUTCDate(start.getUTCDate() + index); return { key: date.toISOString().slice(0, 10), label: new Intl.DateTimeFormat('en-TZ', { weekday: 'short', timeZone: 'Africa/Dar_es_Salaam' }).format(date) } });
   }
-  if(reportPeriod==='annual')return Array.from({length:12},(_,month)=>({key:String(month+1).padStart(2,'0'),label:new Intl.DateTimeFormat('en-TZ',{month:'short',timeZone:'Africa/Dar_es_Salaam'}).format(new Date(Date.UTC(2025,month,15,12)))}));
-  return Array.from({length:5},(_,week)=>({key:String(week),label:`Week ${week+1}`}));
+  if (reportPeriod === 'annual') return Array.from({ length: 12 }, (_, month) => ({ key: String(month + 1).padStart(2, '0'), label: new Intl.DateTimeFormat('en-TZ', { month: 'short', timeZone: 'Africa/Dar_es_Salaam' }).format(new Date(Date.UTC(2025, month, 15, 12))) }));
+  return Array.from({ length: 5 }, (_, week) => ({ key: String(week), label: `Week ${week + 1}` }));
 }
 
 function renderFinancialBarChart(data) {
-  const buckets=reportBuckets(data),values=buckets.map(bucket=>{
-    const getIndex=date=>reportPeriod==='weekly'?date:reportPeriod==='annual'?date.slice(5,7):String(Math.floor((Number(date.slice(8,10))-1)/7));
-    return {...bucket,sales:data.sales.filter(sale=>getIndex(sale.date)===bucket.key).reduce((sum,sale)=>sum+(Number(sale.total)||0),0),purchases:data.purchases.filter(purchase=>getIndex(purchase.date)===bucket.key).reduce((sum,purchase)=>sum+(Number(purchase.total)||0),0)};
+  const buckets = reportBuckets(data), values = buckets.map(bucket => {
+    const getIndex = date => reportPeriod === 'weekly' ? date : reportPeriod === 'annual' ? date.slice(5, 7) : String(Math.floor((Number(date.slice(8, 10)) - 1) / 7));
+    return { ...bucket, sales: data.sales.filter(sale => getIndex(sale.date) === bucket.key).reduce((sum, sale) => sum + (Number(sale.total) || 0), 0), purchases: data.purchases.filter(purchase => getIndex(purchase.date) === bucket.key).reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0) };
   });
-  const max=Math.max(1,...values.flatMap(item=>[item.sales,item.purchases]));
-  const ceiling=Math.ceil(max/1000)*1000||1000,plotTop=22,plotBottom=204,plotHeight=plotBottom-plotTop,left=58,width=650,gap=width/values.length,barWidth=Math.min(22,gap*.27);
-  const guides=[0,.25,.5,.75,1].map(f=>{const y=plotBottom-plotHeight*f;return `<line x1="${left}" y1="${y}" x2="${left+width}" y2="${y}" class="report-gridline"/><text x="${left-8}" y="${y+4}" text-anchor="end" class="report-axis-label">${Math.round(ceiling*f/1000)}k</text>`}).join('');
-  const bars=values.map((item,index)=>{const center=left+gap*index+gap/2,salesHeight=item.sales/max*plotHeight,purchaseHeight=item.purchases/max*plotHeight;return `<rect x="${center-barWidth-2}" y="${plotBottom-salesHeight}" width="${barWidth}" height="${Math.max(item.sales?2:0,salesHeight)}" rx="4" fill="#087f9d"><title>${esc(item.label)} sales · ${money(item.sales)}</title></rect><rect x="${center+2}" y="${plotBottom-purchaseHeight}" width="${barWidth}" height="${Math.max(item.purchases?2:0,purchaseHeight)}" rx="4" fill="#ff8c42"><title>${esc(item.label)} purchases · ${money(item.purchases)}</title></rect><text x="${center}" y="228" text-anchor="middle" class="report-axis-label">${esc(item.label)}</text>`}).join('');
+  const max = Math.max(1, ...values.flatMap(item => [item.sales, item.purchases]));
+  const ceiling = Math.ceil(max / 1000) * 1000 || 1000, plotTop = 22, plotBottom = 204, plotHeight = plotBottom - plotTop, left = 58, width = 650, gap = width / values.length, barWidth = Math.min(22, gap * .27);
+  const guides = [0, .25, .5, .75, 1].map(f => { const y = plotBottom - plotHeight * f; return `<line x1="${left}" y1="${y}" x2="${left + width}" y2="${y}" class="report-gridline"/><text x="${left - 8}" y="${y + 4}" text-anchor="end" class="report-axis-label">${Math.round(ceiling * f / 1000)}k</text>` }).join('');
+  const bars = values.map((item, index) => { const center = left + gap * index + gap / 2, salesHeight = item.sales / max * plotHeight, purchaseHeight = item.purchases / max * plotHeight; return `<rect x="${center - barWidth - 2}" y="${plotBottom - salesHeight}" width="${barWidth}" height="${Math.max(item.sales ? 2 : 0, salesHeight)}" rx="4" fill="#087f9d"><title>${esc(item.label)} sales · ${money(item.sales)}</title></rect><rect x="${center + 2}" y="${plotBottom - purchaseHeight}" width="${barWidth}" height="${Math.max(item.purchases ? 2 : 0, purchaseHeight)}" rx="4" fill="#ff8c42"><title>${esc(item.label)} purchases · ${money(item.purchases)}</title></rect><text x="${center}" y="228" text-anchor="middle" class="report-axis-label">${esc(item.label)}</text>` }).join('');
   return `<div class="report-chart-scroll"><svg class="financial-bar-chart" viewBox="0 0 740 245" role="img" aria-label="Sales and purchases comparison">${guides}${bars}</svg></div>`;
 }
 
-function reportPieCard(title,subtitle,entries,centerLabel) {
-  const sorted=entries.filter(([,amount])=>Number(amount)>0).sort((a,b)=>b[1]-a[1]);
-  const shown=sorted.slice(0,6),other=sorted.slice(6).reduce((sum,item)=>sum+item[1],0);
-  if(other>0)shown.push(['Other',other]);
-  const total=shown.reduce((sum,item)=>sum+item[1],0);
-  let angle=0;
-  const stops=shown.map(([name,amount],index)=>{const start=angle;angle+=amount/Math.max(total,1)*100;return `${reportColors[index%reportColors.length]} ${start}% ${angle}%`}).join(',');
-  const legend=shown.map(([name,amount],index)=>`<div class="report-pie-legend-item"><i style="--slice-color:${reportColors[index%reportColors.length]}"></i><span>${esc(name)}</span><strong>${money(amount)}</strong></div>`).join('')||'<div class="muted">No transactions in this period</div>';
-  const compactTotal=new Intl.NumberFormat('en-TZ',{notation:'compact',maximumFractionDigits:1}).format(total);
-  return `<article class="report-pie-card"><div><h3>${esc(title)}</h3><p>${esc(subtitle)}</p></div><div class="report-pie-layout"><div class="report-pie" style="background:conic-gradient(${stops||'#e7edf0 0 100%'})"><div><strong>${esc(compactTotal)}</strong><small>${esc(centerLabel)}</small></div></div><div class="report-pie-legend">${legend}</div></div></article>`;
+function reportPieCard(title, subtitle, entries, centerLabel) {
+  const sorted = entries.filter(([, amount]) => Number(amount) > 0).sort((a, b) => b[1] - a[1]);
+  const shown = sorted.slice(0, 6), other = sorted.slice(6).reduce((sum, item) => sum + item[1], 0);
+  if (other > 0) shown.push(['Other', other]);
+  const total = shown.reduce((sum, item) => sum + item[1], 0);
+  let angle = 0;
+  const stops = shown.map(([name, amount], index) => { const start = angle; angle += amount / Math.max(total, 1) * 100; return `${reportColors[index % reportColors.length]} ${start}% ${angle}%` }).join(',');
+  const legend = shown.map(([name, amount], index) => `<div class="report-pie-legend-item"><i style="--slice-color:${reportColors[index % reportColors.length]}"></i><span>${esc(name)}</span><strong>${money(amount)}</strong></div>`).join('') || '<div class="muted">No transactions in this period</div>';
+  const compactTotal = new Intl.NumberFormat('en-TZ', { notation: 'compact', maximumFractionDigits: 1 }).format(total);
+  return `<article class="report-pie-card"><div><h3>${esc(title)}</h3><p>${esc(subtitle)}</p></div><div class="report-pie-layout"><div class="report-pie" style="background:conic-gradient(${stops || '#e7edf0 0 100%'})"><div><strong>${esc(compactTotal)}</strong><small>${esc(centerLabel)}</small></div></div><div class="report-pie-legend">${legend}</div></div></article>`;
 }
 
 function viewStocktakeSession(sessionId) {
@@ -4369,10 +4369,10 @@ function viewStocktakeSession(sessionId) {
         </thead>
         <tbody>
           ${items.map(item => {
-            const delta = Number(item.delta || 0);
-            const sign = delta > 0 ? `+${delta}` : `${delta}`;
-            const deltaClass = delta === 0 ? 'stocktake-diff-pill match' : delta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
-            return `
+    const delta = Number(item.delta || 0);
+    const sign = delta > 0 ? `+${delta}` : `${delta}`;
+    const deltaClass = delta === 0 ? 'stocktake-diff-pill match' : delta > 0 ? 'stocktake-diff-pill surplus' : 'stocktake-diff-pill shortage';
+    return `
               <tr>
                 <td><strong>${esc(item.productName)}</strong></td>
                 <td><small>${esc(item.sku || '—')}</small></td>
@@ -4383,7 +4383,7 @@ function viewStocktakeSession(sessionId) {
                 <td>${item.expiryDate ? `<small>${esc(item.expiryDate)}</small>` : '<span class="muted">—</span>'}</td>
               </tr>
             `;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>
     </div>
@@ -4533,7 +4533,7 @@ function viewProductSalesHistory(productId) {
 
   const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.orders || []);
   const validOrders = allOrders.filter(o => o.status !== 'Draft' && o.status !== 'Cancelled');
-  
+
   const lines = [];
   for (const order of validOrders) {
     const match = (order.items || []).find(line => line.productId === product.id || line.product === product.name);
@@ -4710,7 +4710,7 @@ function extractPaymentMethodFromMemo(memo = '') {
 function collectAllPaymentRecords() {
   const records = [];
   const entries = Array.isArray(state.entries) ? state.entries : [];
-  
+
   // From ledger entries
   for (const e of entries) {
     if (e.sourceType === 'order-payment' || (e.partyType === 'Customer' && e.type === 'Credit' && Number(e.amount) > 0)) {
@@ -4768,7 +4768,7 @@ function collectAllPaymentRecords() {
 function renderProductSalesReport() {
   const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.orders || []);
   const validOrders = allOrders.filter(o => o.status !== 'Draft' && o.status !== 'Cancelled');
-  
+
   const productStats = state.products.map(product => {
     let unitsSold = 0;
     let revenue = 0;
@@ -5025,8 +5025,8 @@ function renderPaymentReport() {
           </thead>
           <tbody>
             ${filtered.length ? filtered.map(r => {
-              const isInflow = r.direction === 'INFLOW';
-              return `
+    const isInflow = r.direction === 'INFLOW';
+    return `
                 <tr>
                   <td><strong>${dateLabel(r.date)}</strong></td>
                   <td>
@@ -5048,7 +5048,7 @@ function renderPaymentReport() {
                   <td><small>${esc(r.memo)}</small></td>
                 </tr>
               `;
-            }).join('') : emptyRow(7, 'No payment records found matching criteria.')}
+  }).join('') : emptyRow(7, 'No payment records found matching criteria.')}
           </tbody>
         </table>
       </div>
@@ -5116,10 +5116,10 @@ function renderReports() {
   return `
     ${heading('Financial Reports', 'Visual financial summaries with weekly, monthly, and annual reporting periods.', `<button class="button" data-action="export-financial-report">↓ Export ${periodLabel.toLowerCase()} report</button>`)}
     ${navHtml}
-    <div class="report-period-toolbar"><div><span class="report-period-label">Report period</span><div class="report-period-tabs">${[['weekly','Weekly'],['monthly','Monthly'],['annual','Annual']].map(([key,label])=>`<button type="button" class="report-period-tab ${reportPeriod===key?'active':''}" data-action="set-report-period" data-period="${key}">${label}</button>`).join('')}</div></div><p>${esc(data.label)} · ${dateLabel(data.start)} – ${dateLabel(data.end)}</p></div>
-    <section class="metric-grid report-metrics">${metric('Sales revenue',money(data.salesTotal),'↗',`${periodLabel} · ${data.sales.length} transactions`)}${metric('Purchases',money(data.purchaseTotal),'▤',`${periodLabel} · ${data.purchases.length} orders`)}${metric('Net cash movement',`${data.netCollected<0?'− ':''}${money(data.netCollected)}`,'⇄',`Collected less paid · ${periodLabel}`,data.netCollected<0?'down':'up')}${metric('Open receivables',money(receivable),'◷','All customer accounts')}</section>
-    <section class="panel financial-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Sales and purchases</h2><p class="panel-subtitle">${esc(periodLabel)} comparison by ${reportPeriod==='weekly'?'day':reportPeriod==='annual'?'month':'week'}.</p></div><div class="report-chart-legend"><span><i style="background:#087f9d"></i>Sales</span><span><i style="background:#ff8c42"></i>Purchases</span></div></div>${renderFinancialBarChart(data)}</section>
-    <section class="report-pie-grid">${reportPieCard('Sales by payment method',`${periodLabel} sales value`,[...paymentGroups],'Sales')}${reportPieCard('Revenue and purchases',`${periodLabel} transaction mix`,revenueMix,'Total value')}</section>
+    <div class="report-period-toolbar"><div><span class="report-period-label">Report period</span><div class="report-period-tabs">${[['weekly', 'Weekly'], ['monthly', 'Monthly'], ['annual', 'Annual']].map(([key, label]) => `<button type="button" class="report-period-tab ${reportPeriod === key ? 'active' : ''}" data-action="set-report-period" data-period="${key}">${label}</button>`).join('')}</div></div><p>${esc(data.label)} · ${dateLabel(data.start)} – ${dateLabel(data.end)}</p></div>
+    <section class="metric-grid report-metrics">${metric('Sales revenue', money(data.salesTotal), '↗', `${periodLabel} · ${data.sales.length} transactions`)}${metric('Purchases', money(data.purchaseTotal), '▤', `${periodLabel} · ${data.purchases.length} orders`)}${metric('Net cash movement', `${data.netCollected < 0 ? '− ' : ''}${money(data.netCollected)}`, '⇄', `Collected less paid · ${periodLabel}`, data.netCollected < 0 ? 'down' : 'up')}${metric('Open receivables', money(receivable), '◷', 'All customer accounts')}</section>
+    <section class="panel financial-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Sales and purchases</h2><p class="panel-subtitle">${esc(periodLabel)} comparison by ${reportPeriod === 'weekly' ? 'day' : reportPeriod === 'annual' ? 'month' : 'week'}.</p></div><div class="report-chart-legend"><span><i style="background:#087f9d"></i>Sales</span><span><i style="background:#ff8c42"></i>Purchases</span></div></div>${renderFinancialBarChart(data)}</section>
+    <section class="report-pie-grid">${reportPieCard('Sales by payment method', `${periodLabel} sales value`, [...paymentGroups], 'Sales')}${reportPieCard('Revenue and purchases', `${periodLabel} transaction mix`, revenueMix, 'Total value')}</section>
     <section class="table-panel financial-summary-table"><div class="table-heading"><div><h2>Financial summary</h2><p class="panel-subtitle">${esc(data.label)} and current account balances.</p></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Measure</th><th>Amount</th><th>Basis</th></tr></thead><tbody><tr><td><strong>Sales revenue</strong></td><td>${money(data.salesTotal)}</td><td>${periodLabel} transactions</td></tr><tr><td><strong>Cost of goods sold (COGS)</strong></td><td>${money(data.cogsTotal)}</td><td>${periodLabel} inventory cost</td></tr><tr><td><strong>Gross profit</strong></td><td>${money(data.grossProfit)}</td><td>Revenue less COGS</td></tr><tr><td><strong>Customer payments collected</strong></td><td>${money(data.collected)}</td><td>${periodLabel} receipts</td></tr><tr><td><strong>Purchases ordered</strong></td><td>${money(data.purchaseTotal)}</td><td>${periodLabel} purchase orders</td></tr><tr><td><strong>Supplier payments made</strong></td><td>${money(data.supplierPaid)}</td><td>${periodLabel} payments</td></tr><tr><td><strong>Supplier payables</strong></td><td>${money(payable)}</td><td>Current balance</td></tr></tbody></table></div></section>
     <div class="report-cards"><article class="report-card"><h3>Inventory Valuation</h3><p>Current on-hand stock valuation at cost.</p><button class="button" data-action="export-inventory">Export Inventory CSV</button></article><article class="report-card"><h3>General Activity Ledger</h3><p>Complete customer and supplier account transactions.</p><button class="button" data-action="export-ledger">Export Ledger CSV</button></article></div>
   `;
@@ -5164,8 +5164,8 @@ function renderSettings() {
         <div class="settings-section">
           <h2>Invoice payment details</h2>
           ${isWorkspaceAdministrator()
-            ? `<div class="field"><label for="company-payment-details">Details to print at the bottom of invoices</label><textarea id="company-payment-details" name="company-payment-details" rows="5" placeholder="Bank name and account, mobile money provider and number, payment reference, or other instructions">${esc(state.companyPaymentDetails || '')}</textarea><small class="field-hint">Enter the ways customers can pay. Line breaks are preserved on printed invoices.</small></div>`
-            : `<p class="field-hint">${state.companyPaymentDetails ? esc(state.companyPaymentDetails).replace(/\n/g, '<br>') : 'Payment details have not been set by an administrator.'}</p>`}
+      ? `<div class="field"><label for="company-payment-details">Details to print at the bottom of invoices</label><textarea id="company-payment-details" name="company-payment-details" rows="5" placeholder="Bank name and account, mobile money provider and number, payment reference, or other instructions">${esc(state.companyPaymentDetails || '')}</textarea><small class="field-hint">Enter the ways customers can pay. Line breaks are preserved on printed invoices.</small></div>`
+      : `<p class="field-hint">${state.companyPaymentDetails ? esc(state.companyPaymentDetails).replace(/\n/g, '<br>') : 'Payment details have not been set by an administrator.'}</p>`}
         </div>
 
         <div class="settings-section">
@@ -5211,9 +5211,9 @@ function renderSettings() {
           ` : ''}
         </div>
         <small class="field-hint" style="display:block;margin-top:8px">
-          ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() 
-            ? '✓ Active: Any product, sale, or payment recorded on your PC or phone updates both devices automatically.' 
-            : 'To enable automatic syncing between your PC and phone without transferring files, connect your free Google Firebase Firestore database.'}
+          ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected()
+      ? '✓ Active: Any product, sale, or payment recorded on your PC or phone updates both devices automatically.'
+      : 'To enable automatic syncing between your PC and phone without transferring files, connect your free Google Firebase Firestore database.'}
         </small>
       </div>
     </section>
@@ -5272,9 +5272,9 @@ function render() {
   const content = document.getElementById('page-content');
   const user = currentWorkspaceUser();
   if (!user.isBootstrap && !canViewPage(page, user)) {
-    const fallback=Object.keys(pageLabels).find(candidate=>canViewPage(candidate, user));
-    if(fallback){page=fallback;history.replaceState({erpPage:page},'',`#${page}`);}
-    else {content.innerHTML='<section class="panel access-denied-panel"><h2>No sections are enabled for your account</h2><p>Ask an Owner / Administrator to grant access.</p></section>';refreshCompanyLogo();refreshUserProfile();refreshPermissionVisibility();refreshActivityVisibility();refreshBranchNav();refreshBranchSwitcher();refreshNotificationIndicator();updateConnection();syncBackButton();return;}
+    const fallback = Object.keys(pageLabels).find(candidate => canViewPage(candidate, user));
+    if (fallback) { page = fallback; history.replaceState({ erpPage: page }, '', `#${page}`); }
+    else { content.innerHTML = '<section class="panel access-denied-panel"><h2>No sections are enabled for your account</h2><p>Ask an Owner / Administrator to grant access.</p></section>'; refreshCompanyLogo(); refreshUserProfile(); refreshPermissionVisibility(); refreshActivityVisibility(); refreshBranchNav(); refreshBranchSwitcher(); refreshNotificationIndicator(); updateConnection(); syncBackButton(); return; }
   }
   const crumb = document.getElementById('crumb-current');
   if (crumb) crumb.textContent = pageLabels[page] || 'Home';
@@ -5327,25 +5327,23 @@ function handleRemoteCloudSync(remotePayload, deviceName) {
 
   // Non-destructive intelligent merge: local products, sales, customers, etc. are never wiped out
   const merged = typeof mergeWorkspaceState === 'function' ? mergeWorkspaceState(state, remotePayload) : { ...remotePayload, ...state };
-  
-  const remoteProductCount = remotePayload.products?.length || 0;
+
   const remoteCustomerCount = remotePayload.customers?.length || 0;
   const remoteSalesCount = remotePayload.sales?.length || 0;
   const remoteOrderCount = remotePayload.orders?.length || 0;
   const remoteSupplierCount = remotePayload.suppliers?.length || 0;
 
-  const localHasUniqueData = 
-    (state.products?.length || 0) > remoteProductCount ||
+  const localHasUniqueData =
     (state.customers?.length || 0) > remoteCustomerCount ||
     (state.sales?.length || 0) > remoteSalesCount ||
     (state.orders?.length || 0) > remoteOrderCount ||
     (state.suppliers?.length || 0) > remoteSupplierCount ||
     (merged.customers?.length || 0) > remoteCustomerCount ||
-    (merged.products?.length || 0) > remoteProductCount ||
     (merged.sales?.length || 0) > remoteSalesCount ||
     (merged.orders?.length || 0) > remoteOrderCount;
 
   const sanitized = sanitizeState(merged, initialState);
+  sanitized.products = state.products; // Preserve products managed via dedicated 'products' collection
   sanitized.currentUserId = curId;
   if (curBranchId && (sanitized.branches || []).some(b => b.id === curBranchId)) {
     sanitized.activeBranchId = curBranchId;
@@ -5389,16 +5387,16 @@ function openCloudSyncDialog() {
 function openProductForm(product = null) {
   const p = product || { name: '', id: '', category: 'General', price: 0, cost: 0, stock: 0, low: 5, unit: 'Piece', status: 'Active', expiryDate: '', batchNumber: '' };
   const content = `<div class="form-grid">
-    ${inputField('product-name','Product name','e.g. Maize flour','text',true,p.name)}
-    ${inputField('product-sku','SKU / code','Leave blank to generate','text',false,p.id)}
-    ${inputField('product-category','Category','e.g. Grocery','text',true,p.category)}
-    ${inputField('product-price','Selling price (TZS)','','number',true,p.price)}
-    ${inputField('product-cost','Unit cost (TZS)','','number',true,p.cost)}
-    ${inputField('product-stock','Opening stock','','number',true,p.stock)}
-    ${inputField('product-low','Low stock alert at','','number',false,p.low)}
-    ${selectField('product-unit','Unit',state.measurementUnits,p.unit)}
-    ${inputField('product-expiry','Expiry date (optional)','','date',false,p.expiryDate||'')}
-    ${inputField('product-batch','Batch / Lot # (optional)','e.g. BATCH-2026-01','text',false,p.batchNumber||'')}
+    ${inputField('product-name', 'Product name', 'e.g. Maize flour', 'text', true, p.name)}
+    ${inputField('product-sku', 'SKU / code', 'Leave blank to generate', 'text', false, p.id)}
+    ${inputField('product-category', 'Category', 'e.g. Grocery', 'text', true, p.category)}
+    ${inputField('product-price', 'Selling price (TZS)', '', 'number', true, p.price)}
+    ${inputField('product-cost', 'Unit cost (TZS)', '', 'number', true, p.cost)}
+    ${inputField('product-stock', 'Opening stock', '', 'number', true, p.stock)}
+    ${inputField('product-low', 'Low stock alert at', '', 'number', false, p.low)}
+    ${selectField('product-unit', 'Unit', state.measurementUnits, p.unit)}
+    ${inputField('product-expiry', 'Expiry date (optional)', '', 'date', false, p.expiryDate || '')}
+    ${inputField('product-batch', 'Batch / Lot # (optional)', 'e.g. BATCH-2026-01', 'text', false, p.batchNumber || '')}
   </div>`;
   openDialog(product ? 'edit-product' : 'new-product', product ? 'Edit product' : 'Add a product', 'Set the product details, price, on-hand quantity, and shelf-life.', content, product ? 'Save changes' : 'Add product');
   document.getElementById('modal-content').dataset.recordId = product?.id || '';
@@ -5406,23 +5404,23 @@ function openProductForm(product = null) {
 
 function openPartyForm(type, existing = null) {
   const label = type === 'Supplier' ? 'supplier' : 'customer';
-  const fields = `${inputField('party-name','Name','', 'text',true,existing?.name||'')}${inputField('party-phone','Phone number','','tel',false,existing?.phone||'')}${inputField('party-email','Email address','','email',false,existing?.email||'')}${inputField('party-terms','Payment terms','e.g. 14 days','text',false,existing?.terms||'Due on receipt')}${type==='Customer'?inputField('party-credit-limit','Credit limit (TZS)','0','number',false,existing?.creditLimit||0):''}`;
-  openDialog(existing ? 'edit-party' : 'new-party', `${existing?'Edit':'Add'} ${label}`, `${existing?'Update':'Create'} a ${label} account for sales and payments.`, `<input type="hidden" name="party-type" value="${type}"><div class="form-grid">${fields}</div>`);
+  const fields = `${inputField('party-name', 'Name', '', 'text', true, existing?.name || '')}${inputField('party-phone', 'Phone number', '', 'tel', false, existing?.phone || '')}${inputField('party-email', 'Email address', '', 'email', false, existing?.email || '')}${inputField('party-terms', 'Payment terms', 'e.g. 14 days', 'text', false, existing?.terms || 'Due on receipt')}${type === 'Customer' ? inputField('party-credit-limit', 'Credit limit (TZS)', '0', 'number', false, existing?.creditLimit || 0) : ''}`;
+  openDialog(existing ? 'edit-party' : 'new-party', `${existing ? 'Edit' : 'Add'} ${label}`, `${existing ? 'Update' : 'Create'} a ${label} account for sales and payments.`, `<input type="hidden" name="party-type" value="${type}"><div class="form-grid">${fields}</div>`);
   if (existing) document.getElementById('modal-content').dataset.partyName = existing.name;
 }
 
 function openCustomerOrderHistory(name) {
-  if (!userHasPermission('customers','order-history')) { toast('You do not have permission to view customer order history'); return; }
-  const orders=state.orders.filter(order=>order.customer===name&&order.status!=='Draft').sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  const rows=orders.map(order=>`<tr><td><strong>${esc(order.id)}</strong></td><td>${dateLabel(order.date)}</td><td>${money(order.total)}</td><td>${esc(order.status)}</td><td>${orderPaymentStatus(order)}</td></tr>`).join('')||emptyRow(5,'No past orders for this customer');
-  openModal(`${esc(name)} · Past orders`,`${orders.length} saved order${orders.length===1?'':'s'}`,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Order</th><th>Date</th><th>Total</th><th>Status</th><th>Payment</th></tr></thead><tbody>${rows}</tbody></table></div>`,'Close');
+  if (!userHasPermission('customers', 'order-history')) { toast('You do not have permission to view customer order history'); return; }
+  const orders = state.orders.filter(order => order.customer === name && order.status !== 'Draft').sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const rows = orders.map(order => `<tr><td><strong>${esc(order.id)}</strong></td><td>${dateLabel(order.date)}</td><td>${money(order.total)}</td><td>${esc(order.status)}</td><td>${orderPaymentStatus(order)}</td></tr>`).join('') || emptyRow(5, 'No past orders for this customer');
+  openModal(`${esc(name)} · Past orders`, `${orders.length} saved order${orders.length === 1 ? '' : 's'}`, `<div class="table-scroll"><table class="data-table"><thead><tr><th>Order</th><th>Date</th><th>Total</th><th>Status</th><th>Payment</th></tr></thead><tbody>${rows}</tbody></table></div>`, 'Close');
 }
 
 function openSupplierOrderHistory(name) {
-  if (!userHasPermission('suppliers','order-history')) { toast('You do not have permission to view supplier purchase history'); return; }
-  const purchases=state.purchases.filter(purchase=>purchase.supplier===name).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  const rows=purchases.map(purchase=>`<tr><td><strong>${esc(purchase.id)}</strong></td><td>${dateLabel(purchase.date)}</td><td>${money(purchase.total)}</td><td>${purchase.paid>=purchase.total?'Paid':purchase.paid>0?'Part paid':'Due'}</td><td>${esc(purchase.status||'Pending')}</td></tr>`).join('')||emptyRow(5,'No past purchase orders for this supplier');
-  openModal(`${esc(name)} · Past purchase orders`,`${purchases.length} saved purchase order${purchases.length===1?'':'s'}`,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Purchase order</th><th>Date</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`,'Close');
+  if (!userHasPermission('suppliers', 'order-history')) { toast('You do not have permission to view supplier purchase history'); return; }
+  const purchases = state.purchases.filter(purchase => purchase.supplier === name).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const rows = purchases.map(purchase => `<tr><td><strong>${esc(purchase.id)}</strong></td><td>${dateLabel(purchase.date)}</td><td>${money(purchase.total)}</td><td>${purchase.paid >= purchase.total ? 'Paid' : purchase.paid > 0 ? 'Part paid' : 'Due'}</td><td>${esc(purchase.status || 'Pending')}</td></tr>`).join('') || emptyRow(5, 'No past purchase orders for this supplier');
+  openModal(`${esc(name)} · Past purchase orders`, `${purchases.length} saved purchase order${purchases.length === 1 ? '' : 's'}`, `<div class="table-scroll"><table class="data-table"><thead><tr><th>Purchase order</th><th>Date</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`, 'Close');
 }
 
 function openPartyOrderHistory(type, name) {
@@ -5436,31 +5434,31 @@ function openPaymentForm(partyType = '', partyName = '') {
   const accountIsFixed = Boolean(partyType && partyName);
   const accountFields = accountIsFixed
     ? `<input type="hidden" name="payment-party-type" value="${esc(partyType)}"><input type="hidden" name="payment-party" value="${esc(partyName)}"><div class="field full"><label>Payment account</label><div class="accounting-fixed-account">${esc(partyType)} · ${esc(partyName)}</div></div>`
-    : `${selectField('payment-party-type','Account type',['Customer','Supplier'],partyType || 'Customer')}${selectField('payment-party','Account',partyOptions,partyName || partyOptions[0])}`;
-  const content = `${accountFields}<div class="form-grid">${inputField('payment-amount','Amount (TZS)','','number',true)}${selectField('payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}${inputField('payment-date','Date','', 'date',true,today())}${inputField('payment-memo','Note','Optional reference')}</div>${renderAttachmentUploader([], 'record-payment')}`;
-  openDialog('record-payment','Record payment','Record money received from a customer or paid to a supplier.',content);
+    : `${selectField('payment-party-type', 'Account type', ['Customer', 'Supplier'], partyType || 'Customer')}${selectField('payment-party', 'Account', partyOptions, partyName || partyOptions[0])}`;
+  const content = `${accountFields}<div class="form-grid">${inputField('payment-amount', 'Amount (TZS)', '', 'number', true)}${selectField('payment-method', 'Method', ['Cash', 'M-Pesa', 'Bank transfer', 'Card'])}${inputField('payment-date', 'Date', '', 'date', true, today())}${inputField('payment-memo', 'Note', 'Optional reference')}</div>${renderAttachmentUploader([], 'record-payment')}`;
+  openDialog('record-payment', 'Record payment', 'Record money received from a customer or paid to a supplier.', content);
 }
 
 function openAccountLedger(partyType, partyName) {
-  const account=(partyType==='Supplier'?state.suppliers:state.customers).find(item=>item.name===partyName);
-  if(!account)return;
-  const entries=state.entries.filter(entry=>entry.partyType===partyType&&entry.party===partyName).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  const rows=entries.map(entry=>{
+  const account = (partyType === 'Supplier' ? state.suppliers : state.customers).find(item => item.name === partyName);
+  if (!account) return;
+  const entries = state.entries.filter(entry => entry.partyType === partyType && entry.party === partyName).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const rows = entries.map(entry => {
     const hasAtts = Array.isArray(entry.attachments) && entry.attachments.length > 0;
     const attBtn = hasAtts ? ` <button type="button" class="status-pill status-attachment" data-action="view-entry-attachments" data-id="${esc(entry.id)}" style="cursor:pointer;margin-left:6px" title="View ${entry.attachments.length} attachment(s)">📎 ${entry.attachments.length}</button>` : '';
-    return `<tr><td>${dateLabel(entry.date)}</td><td><span class="ledger-direction ${String(entry.type).toLowerCase()}">${esc(entry.type)}</span></td><td><strong>${money(entry.amount)}</strong></td><td>${esc(entry.memo||'—')}${attBtn}</td><td><small>${esc(entry.id)}</small></td></tr>`;
-  }).join('')||emptyRow(5,'No transactions recorded for this account yet');
-  const signed=Number(account.balance)||0,amount=Math.abs(signed),label=partyType==='Customer'?(signed<0?'Customer credit':'Receivable'):(signed<0?'Payable':'Supplier credit');
-  openModal(`${esc(partyName)} · ${partyType} ledger`,`${esc(account.id)} · ${entries.length} transaction${entries.length===1?'':'s'}`,`<div class="account-balance-card"><small>Current ${label.toLowerCase()}</small><strong>${money(amount)}</strong><span>${esc(account.phone||account.email||'Account balance')}</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Entry</th><th>Amount</th><th>Memo</th><th>Reference</th></tr></thead><tbody>${rows}</tbody></table></div>`,`Close`,`<button type="button" class="button" data-action="record-payment" data-party-type="${esc(partyType)}" data-party-name="${esc(partyName)}">Add payment</button><button type="button" class="button" data-action="reconcile-account" data-party-type="${esc(partyType)}" data-party-name="${esc(partyName)}">Reconcile</button>`);
+    return `<tr><td>${dateLabel(entry.date)}</td><td><span class="ledger-direction ${String(entry.type).toLowerCase()}">${esc(entry.type)}</span></td><td><strong>${money(entry.amount)}</strong></td><td>${esc(entry.memo || '—')}${attBtn}</td><td><small>${esc(entry.id)}</small></td></tr>`;
+  }).join('') || emptyRow(5, 'No transactions recorded for this account yet');
+  const signed = Number(account.balance) || 0, amount = Math.abs(signed), label = partyType === 'Customer' ? (signed < 0 ? 'Customer credit' : 'Receivable') : (signed < 0 ? 'Payable' : 'Supplier credit');
+  openModal(`${esc(partyName)} · ${partyType} ledger`, `${esc(account.id)} · ${entries.length} transaction${entries.length === 1 ? '' : 's'}`, `<div class="account-balance-card"><small>Current ${label.toLowerCase()}</small><strong>${money(amount)}</strong><span>${esc(account.phone || account.email || 'Account balance')}</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Entry</th><th>Amount</th><th>Memo</th><th>Reference</th></tr></thead><tbody>${rows}</tbody></table></div>`, `Close`, `<button type="button" class="button" data-action="record-payment" data-party-type="${esc(partyType)}" data-party-name="${esc(partyName)}">Add payment</button><button type="button" class="button" data-action="reconcile-account" data-party-type="${esc(partyType)}" data-party-name="${esc(partyName)}">Reconcile</button>`);
 }
 
 function openAccountReconcile(partyType, partyName) {
-  const account=(partyType==='Supplier'?state.suppliers:state.customers).find(item=>item.name===partyName);
-  if(!account)return;
-  const current=partyType==='Customer'?Math.max(0,Number(account.balance)||0):Math.max(0,-(Number(account.balance)||0));
-  const label=partyType==='Customer'?'Expected receivable balance':'Expected supplier payable';
-  openDialog('account-reconcile',`Reconcile ${partyName}`,`Enter the balance confirmed for this ${partyType.toLowerCase()} account. The difference will be recorded only on this account.`,`${inputField('reconcile-balance',`${label} (TZS)`,'','number',true,current)}${inputField('reconcile-date','Reconciliation date','','date',true,today())}${inputField('reconcile-note','Reference / note','e.g. Statement closing balance')}`,'Reconcile account');
-  const form=document.getElementById('modal-content');form.dataset.partyType=partyType;form.dataset.partyName=partyName;
+  const account = (partyType === 'Supplier' ? state.suppliers : state.customers).find(item => item.name === partyName);
+  if (!account) return;
+  const current = partyType === 'Customer' ? Math.max(0, Number(account.balance) || 0) : Math.max(0, -(Number(account.balance) || 0));
+  const label = partyType === 'Customer' ? 'Expected receivable balance' : 'Expected supplier payable';
+  openDialog('account-reconcile', `Reconcile ${partyName}`, `Enter the balance confirmed for this ${partyType.toLowerCase()} account. The difference will be recorded only on this account.`, `${inputField('reconcile-balance', `${label} (TZS)`, '', 'number', true, current)}${inputField('reconcile-date', 'Reconciliation date', '', 'date', true, today())}${inputField('reconcile-note', 'Reference / note', 'e.g. Statement closing balance')}`, 'Reconcile account');
+  const form = document.getElementById('modal-content'); form.dataset.partyType = partyType; form.dataset.partyName = partyName;
 }
 
 function openOrderForm(existing = null) {
@@ -5468,8 +5466,8 @@ function openOrderForm(existing = null) {
   if (!products.length && !existing) { toast('Add an active product to Inventory before creating a sales order'); return; }
   const names = [...new Set([...state.customers.filter(c => c.status !== 'Inactive').map(c => c.name), ...(existing?.customer ? [existing.customer] : [])])];
   const initialMethod = existing?.paymentMethod || existing?.posMethod || 'Cash';
-  const content = `<div class="form-grid">${selectField('order-customer','Customer',['Walk-in customer',...names],existing?.customer || 'Walk-in customer')}${inputField('order-date','Order date','', 'date',true,existing?.date || today())}${selectField('order-method','Payment method',salesPaymentMethods,initialMethod)}</div><div class="transaction-lines" id="order-product-lines"></div>${transactionProductPicker('order')}${transactionPaymentSummary('order')}${renderAttachmentUploader(existing?.attachments || [], 'order')}`;
-  openDialog(existing ? 'edit-order' : 'new-order',existing ? `${existing.source === 'POS' ? 'Edit POS sale' : 'Edit sales order'}` : 'Create sales order',existing ? `Update ${esc(existing.id)}. Finalized sales update inventory and the customer account.` : 'Choose the customer, order date, and payment method, then search to add products. The order will be saved as a draft.',content,existing ? 'Save changes' : 'Save draft');
+  const content = `<div class="form-grid">${selectField('order-customer', 'Customer', ['Walk-in customer', ...names], existing?.customer || 'Walk-in customer')}${inputField('order-date', 'Order date', '', 'date', true, existing?.date || today())}${selectField('order-method', 'Payment method', salesPaymentMethods, initialMethod)}</div><div class="transaction-lines" id="order-product-lines"></div>${transactionProductPicker('order')}${transactionPaymentSummary('order')}${renderAttachmentUploader(existing?.attachments || [], 'order')}`;
+  openDialog(existing ? 'edit-order' : 'new-order', existing ? `${existing.source === 'POS' ? 'Edit POS sale' : 'Edit sales order'}` : 'Create sales order', existing ? `Update ${esc(existing.id)}. Finalized sales update inventory and the customer account.` : 'Choose the customer, order date, and payment method, then search to add products. The order will be saved as a draft.', content, existing ? 'Save changes' : 'Save draft');
   const form = document.getElementById('modal-content');
   if (existing) {
     form.dataset.recordId = existing.id;
@@ -5487,8 +5485,8 @@ function openPurchaseForm(existing = null) {
   const activeSuppliers = state.suppliers.filter(supplier => supplier.status !== 'Inactive');
   if ((!products.length || !activeSuppliers.length) && !existing) { toast('Add an active product and supplier before creating a purchase order'); return; }
   const supplierNames = [...new Set([...activeSuppliers.map(p => p.name), ...(existing?.supplier ? [existing.supplier] : [])])];
-  const content = `<div class="form-grid">${selectField('purchase-supplier','Supplier',supplierNames,existing?.supplier || supplierNames[0])}${inputField('purchase-date','Order date','','date',true,existing?.date || today())}</div><div class="transaction-lines" id="purchase-product-lines"></div>${transactionProductPicker('purchase')}${transactionPaymentSummary('purchase')}${renderAttachmentUploader(existing?.attachments || [], 'purchase')}`;
-  openDialog(existing ? 'edit-purchase' : 'new-purchase','Purchase order',existing ? `Update ${esc(existing.id)}. Received purchases adjust stock and the supplier account.` : 'Choose the supplier and date, then search to add as many products as needed. Receive the order to update stock.',content,existing ? 'Save changes' : 'Save purchase order');
+  const content = `<div class="form-grid">${selectField('purchase-supplier', 'Supplier', supplierNames, existing?.supplier || supplierNames[0])}${inputField('purchase-date', 'Order date', '', 'date', true, existing?.date || today())}</div><div class="transaction-lines" id="purchase-product-lines"></div>${transactionProductPicker('purchase')}${transactionPaymentSummary('purchase')}${renderAttachmentUploader(existing?.attachments || [], 'purchase')}`;
+  openDialog(existing ? 'edit-purchase' : 'new-purchase', 'Purchase order', existing ? `Update ${esc(existing.id)}. Received purchases adjust stock and the supplier account.` : 'Choose the supplier and date, then search to add as many products as needed. Receive the order to update stock.', content, existing ? 'Save changes' : 'Save purchase order');
   const form = document.getElementById('modal-content');
   if (existing) {
     form.dataset.recordId = existing.id;
@@ -5505,8 +5503,8 @@ function transactionProductPicker(kind) {
 }
 
 function transactionPaymentSummary(kind) {
-  const purchaseMethodField = kind === 'purchase' ? selectField('purchase-method','Payment method',['Cash','M-Pesa','Bank transfer','Card'],'Cash') : '';
-  return `<section class="transaction-summary" data-transaction-summary="${kind}"><h3>Payment summary</h3><div class="transaction-summary-row"><span>Products subtotal</span><strong data-summary-subtotal>${money(0)}</strong></div><div class="form-grid transaction-adjustments">${inputField(`${kind}-discount`,'Discount (fixed amount)','0','number',false,0)}${inputField(`${kind}-additional`,'Additional charges (shipping, etc.)','0','number',false,0)}${inputField(`${kind}-paid`,'Amount paid','0','number',false,0)}${purchaseMethodField}<div class="field"><label>Payment status</label><div class="transaction-status" data-summary-status>Due</div></div></div><div class="transaction-summary-row"><span>Discount</span><strong data-summary-discount>${money(0)}</strong></div><div class="transaction-summary-row"><span>Additional charges</span><strong data-summary-additional>${money(0)}</strong></div><div class="transaction-summary-row transaction-total"><span>Total to pay</span><strong data-summary-total>${money(0)}</strong></div><div class="transaction-summary-row"><span>Amount paid</span><strong data-summary-paid>${money(0)}</strong></div><div class="transaction-summary-row"><span>Balance due</span><strong data-summary-balance>${money(0)}</strong></div></section>`;
+  const purchaseMethodField = kind === 'purchase' ? selectField('purchase-method', 'Payment method', ['Cash', 'M-Pesa', 'Bank transfer', 'Card'], 'Cash') : '';
+  return `<section class="transaction-summary" data-transaction-summary="${kind}"><h3>Payment summary</h3><div class="transaction-summary-row"><span>Products subtotal</span><strong data-summary-subtotal>${money(0)}</strong></div><div class="form-grid transaction-adjustments">${inputField(`${kind}-discount`, 'Discount (fixed amount)', '0', 'number', false, 0)}${inputField(`${kind}-additional`, 'Additional charges (shipping, etc.)', '0', 'number', false, 0)}${inputField(`${kind}-paid`, 'Amount paid', '0', 'number', false, 0)}${purchaseMethodField}<div class="field"><label>Payment status</label><div class="transaction-status" data-summary-status>Due</div></div></div><div class="transaction-summary-row"><span>Discount</span><strong data-summary-discount>${money(0)}</strong></div><div class="transaction-summary-row"><span>Additional charges</span><strong data-summary-additional>${money(0)}</strong></div><div class="transaction-summary-row transaction-total"><span>Total to pay</span><strong data-summary-total>${money(0)}</strong></div><div class="transaction-summary-row"><span>Amount paid</span><strong data-summary-paid>${money(0)}</strong></div><div class="transaction-summary-row"><span>Balance due</span><strong data-summary-balance>${money(0)}</strong></div></section>`;
 }
 
 function transactionLineTotals(kind) {
@@ -5544,10 +5542,10 @@ function addTransactionProduct(kind, productId, line = null) {
     const initialQty = Number(line?.qty) > 0 ? Number(line.qty) : 1;
     const linePrice = line?.[kind === 'order' ? 'unitPrice' : 'unitCost'];
     const initialPrice = Number.isFinite(Number(linePrice)) ? Number(linePrice) : price;
-    row.innerHTML = `<div class="transaction-product-copy"><strong>${esc(product.name)}</strong><small>${esc(product.id)} · Current ${kind === 'order' ? 'price' : 'cost'} ${money(price)} · Stock ${Number(product.stock)||0} ${esc(product.unit||'')}</small></div><label class="transaction-number"><span>Qty</span><input type="number" min="1" step="1" value="${initialQty}" data-line-qty aria-label="${esc(product.name)} quantity"></label><label class="transaction-number"><span>${kind === 'order' ? 'Unit price' : 'Unit cost'}</span><input type="number" min="0" step="any" value="${initialPrice}" data-line-price aria-label="${esc(product.name)} unit ${kind === 'order' ? 'price' : 'cost'}"></label><strong class="transaction-line-total" data-line-total>${money(initialQty * initialPrice)}</strong><button type="button" class="transaction-remove" data-action="remove-transaction-product" aria-label="Remove ${esc(product.name)}">×</button>`;
+    row.innerHTML = `<div class="transaction-product-copy"><strong>${esc(product.name)}</strong><small>${esc(product.id)} · Current ${kind === 'order' ? 'price' : 'cost'} ${money(price)} · Stock ${Number(product.stock) || 0} ${esc(product.unit || '')}</small></div><label class="transaction-number"><span>Qty</span><input type="number" min="1" step="1" value="${initialQty}" data-line-qty aria-label="${esc(product.name)} quantity"></label><label class="transaction-number"><span>${kind === 'order' ? 'Unit price' : 'Unit cost'}</span><input type="number" min="0" step="any" value="${initialPrice}" data-line-price aria-label="${esc(product.name)} unit ${kind === 'order' ? 'price' : 'cost'}"></label><strong class="transaction-line-total" data-line-total>${money(initialQty * initialPrice)}</strong><button type="button" class="transaction-remove" data-action="remove-transaction-product" aria-label="Remove ${esc(product.name)}">×</button>`;
     host.append(row);
     if (kind !== 'order') {
-      [...host.querySelectorAll('.transaction-product-line')].sort((a,b)=>compareProductNames(a.querySelector('.transaction-product-copy strong').textContent,b.querySelector('.transaction-product-copy strong').textContent)).forEach(line=>host.append(line));
+      [...host.querySelectorAll('.transaction-product-line')].sort((a, b) => compareProductNames(a.querySelector('.transaction-product-copy strong').textContent, b.querySelector('.transaction-product-copy strong').textContent)).forEach(line => host.append(line));
     }
   }
   const search = document.getElementById(`${kind}-product-search`), suggestions = document.getElementById(`${kind}-product-suggestions`);
@@ -5594,21 +5592,21 @@ function renderTransactionSuggestions(kind, term) {
   const query = term.trim().toLocaleLowerCase();
   if (!query) { target.hidden = true; target.innerHTML = ''; return; }
   const matches = activeProducts().filter(product => `${product.name} ${product.id} ${product.category}`.toLocaleLowerCase().includes(query)).slice(0, 8);
-  target.innerHTML = matches.length ? matches.map(product => `<button type="button" class="transaction-suggestion" data-action="select-transaction-product" data-kind="${kind}" data-id="${esc(product.id)}"><span><strong>${esc(product.name)}</strong><small>${esc(product.id)} · ${esc(product.category)} · Stock ${Number(product.stock)||0}</small></span><b>${money(kind === 'order' ? product.price : product.cost)}</b></button>`).join('') : '<div class="transaction-empty">No matching products</div>';
+  target.innerHTML = matches.length ? matches.map(product => `<button type="button" class="transaction-suggestion" data-action="select-transaction-product" data-kind="${kind}" data-id="${esc(product.id)}"><span><strong>${esc(product.name)}</strong><small>${esc(product.id)} · ${esc(product.category)} · Stock ${Number(product.stock) || 0}</small></span><b>${money(kind === 'order' ? product.price : product.cost)}</b></button>`).join('') : '<div class="transaction-empty">No matching products</div>';
   target.hidden = false;
 }
 
 function openOrderPayment(id) {
-  const order=state.orders.find(o=>o.id===id);if(!order)return;
-  openDialog('order-payment','Add customer payment',`Record a payment for ${esc(order.id)}.`,`${inputField('order-payment-amount','Amount (TZS)','','number',true,Math.max(0,order.total-(order.paid||0)))}${selectField('order-payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}${renderAttachmentUploader([], 'order-payment')}`,'Record payment');
-  document.getElementById('modal-content').dataset.recordId=id;
+  const order = state.orders.find(o => o.id === id); if (!order) return;
+  openDialog('order-payment', 'Add customer payment', `Record a payment for ${esc(order.id)}.`, `${inputField('order-payment-amount', 'Amount (TZS)', '', 'number', true, Math.max(0, order.total - (order.paid || 0)))}${selectField('order-payment-method', 'Method', ['Cash', 'M-Pesa', 'Bank transfer', 'Card'])}${renderAttachmentUploader([], 'order-payment')}`, 'Record payment');
+  document.getElementById('modal-content').dataset.recordId = id;
 }
 
 function openOrderReturn(id) {
-  const order=state.orders.find(o=>o.id===id);if(!order)return;
-  const lines=(order.items||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return p?`${p.id} · ${p.name}`:l.productId;});
-  openDialog('order-return','Manage return',`Record returned items for ${esc(order.id)}.`,`${selectField('return-product','Product',lines)}${inputField('return-qty','Quantity returned','','number',true,1)}${inputField('return-reason','Reason','Optional note')}<div class="field"><label><input type="checkbox" name="return-restock" checked> Restock returned items</label></div>`,'Save return');
-  document.getElementById('modal-content').dataset.recordId=id;
+  const order = state.orders.find(o => o.id === id); if (!order) return;
+  const lines = (order.items || []).map(l => { const p = state.products.find(x => x.id === l.productId); return p ? `${p.id} · ${p.name}` : l.productId; });
+  openDialog('order-return', 'Manage return', `Record returned items for ${esc(order.id)}.`, `${selectField('return-product', 'Product', lines)}${inputField('return-qty', 'Quantity returned', '', 'number', true, 1)}${inputField('return-reason', 'Reason', 'Optional note')}<div class="field"><label><input type="checkbox" name="return-restock" checked> Restock returned items</label></div>`, 'Save return');
+  document.getElementById('modal-content').dataset.recordId = id;
 }
 
 function openOrderDiscrepancies(id) {
@@ -5754,22 +5752,22 @@ function openOrderDiscrepancies(id) {
 }
 
 function openPurchaseReturn(id) {
-  const purchase=state.purchases.find(p=>p.id===id);if(!purchase)return;
-  const lines=(purchase.lines||[]).map(l=>{const p=state.products.find(x=>x.id===l.productId);return p?`${p.id} · ${p.name}`:l.productId;});
-  openDialog('purchase-return','Supplier return',`Record returned items to ${esc(purchase.supplier)} for ${esc(purchase.id)}.`,`${selectField('purchase-return-product','Product',lines)}${inputField('purchase-return-qty','Quantity returned','','number',true,1)}${inputField('purchase-return-reason','Reason','Optional note')}`,'Record return');
-  document.getElementById('modal-content').dataset.recordId=id;
+  const purchase = state.purchases.find(p => p.id === id); if (!purchase) return;
+  const lines = (purchase.lines || []).map(l => { const p = state.products.find(x => x.id === l.productId); return p ? `${p.id} · ${p.name}` : l.productId; });
+  openDialog('purchase-return', 'Supplier return', `Record returned items to ${esc(purchase.supplier)} for ${esc(purchase.id)}.`, `${selectField('purchase-return-product', 'Product', lines)}${inputField('purchase-return-qty', 'Quantity returned', '', 'number', true, 1)}${inputField('purchase-return-reason', 'Reason', 'Optional note')}`, 'Record return');
+  document.getElementById('modal-content').dataset.recordId = id;
 }
 
 function switchBranch(id) {
-  const branch=state.branches.find(b=>b.id===id&&b.status!=='Inactive');if(!branch)return;
-  if(!accessibleBranches().some(item=>item.id===branch.id)){toast('You can only open your assigned branch workspace');return;}
-  if(branch.id===activeBranch.id)return;
-  snapshotCurrentBranch();activeBranch=branch;
-  const saved=state.branchData?.[id]||{};
-  branchCollections.forEach(key=>{state[key]=structuredClone(saved[key]!==undefined?saved[key]:(key==='stocktakeDraft'?null:[]));});
-  state.activeBranchId=branch.id;state.branch=branch.name;saveState();
-  if(!canViewPage(page))page='dashboard';
-  pageHistory.length=0;history.pushState({erpPage:page},'',`#${page}`);render();toast(`Switched to ${branch.name}`);
+  const branch = state.branches.find(b => b.id === id && b.status !== 'Inactive'); if (!branch) return;
+  if (!accessibleBranches().some(item => item.id === branch.id)) { toast('You can only open your assigned branch workspace'); return; }
+  if (branch.id === activeBranch.id) return;
+  snapshotCurrentBranch(); activeBranch = branch;
+  const saved = state.branchData?.[id] || {};
+  branchCollections.forEach(key => { state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : [])); });
+  state.activeBranchId = branch.id; state.branch = branch.name; saveState();
+  if (!canViewPage(page)) page = 'dashboard';
+  pageHistory.length = 0; history.pushState({ erpPage: page }, '', `#${page}`); render(); toast(`Switched to ${branch.name}`);
 }
 
 async function handleDialogSubmit(form) {
@@ -5901,7 +5899,7 @@ async function handleDialogSubmit(form) {
     const old = state.products.find(p => p.id === id);
     if (old) Object.assign(old, product); else state.products.unshift(product);
     if (!state.productCategories.includes(product.category)) state.productCategories.push(product.category);
-    recordActivity(old?'Product updated':'Product added',product.name,product.id);
+    recordActivity(old ? 'Product updated' : 'Product added', product.name, product.id);
     saveState();
     if (typeof window.TideFirebase?.saveProduct === 'function') {
       window.TideFirebase.saveProduct(product);
@@ -5957,17 +5955,17 @@ async function handleDialogSubmit(form) {
     return;
   }
   if (kind === 'new-party' || kind === 'edit-party') {
-    const editing=kind==='edit-party', type = val('party-type'), list = type === 'Supplier' ? state.suppliers : state.customers;
-    const existing=editing?list.find(item=>item.name===form.dataset.partyName):null;
-    if(editing&&!existing){toast(`${type} account could not be found`);return;}
+    const editing = kind === 'edit-party', type = val('party-type'), list = type === 'Supplier' ? state.suppliers : state.customers;
+    const existing = editing ? list.find(item => item.name === form.dataset.partyName) : null;
+    if (editing && !existing) { toast(`${type} account could not be found`); return; }
     if (list.some(p => p.id !== existing?.id && p.name.toLowerCase() === val('party-name').toLowerCase())) { toast('That account already exists'); return; }
-    const record={id:existing?.id||idFor(type === 'Supplier' ? 'SUP' : 'CUS', list),name:val('party-name'),phone:val('party-phone'),email:val('party-email'),terms:val('party-terms')||'Due on receipt',balance:existing?.balance||0,status:existing?.status||'Active'};
-    if(type==='Customer')record.creditLimit=Math.max(0,Number(val('party-credit-limit'))||0);
-    if(existing){const previousName=existing.name;Object.assign(existing,record);if(previousName!==record.name){if(type==='Customer'){state.orders.forEach(order=>{if(order.customer===previousName)order.customer=record.name;});state.sales.forEach(sale=>{if(sale.customer===previousName)sale.customer=record.name;});}else state.purchases.forEach(purchase=>{if(purchase.supplier===previousName)purchase.supplier=record.name;});state.entries.forEach(entry=>{if(entry.partyType===type&&entry.party===previousName)entry.party=record.name;});}}else list.unshift(record);
-    recordActivity(`${type} ${editing?'updated':'added'}`,val('party-name'),record.id);
+    const record = { id: existing?.id || idFor(type === 'Supplier' ? 'SUP' : 'CUS', list), name: val('party-name'), phone: val('party-phone'), email: val('party-email'), terms: val('party-terms') || 'Due on receipt', balance: existing?.balance || 0, status: existing?.status || 'Active' };
+    if (type === 'Customer') record.creditLimit = Math.max(0, Number(val('party-credit-limit')) || 0);
+    if (existing) { const previousName = existing.name; Object.assign(existing, record); if (previousName !== record.name) { if (type === 'Customer') { state.orders.forEach(order => { if (order.customer === previousName) order.customer = record.name; }); state.sales.forEach(sale => { if (sale.customer === previousName) sale.customer = record.name; }); } else state.purchases.forEach(purchase => { if (purchase.supplier === previousName) purchase.supplier = record.name; }); state.entries.forEach(entry => { if (entry.partyType === type && entry.party === previousName) entry.party = record.name; }); } } else list.unshift(record);
+    recordActivity(`${type} ${editing ? 'updated' : 'added'}`, val('party-name'), record.id);
     saveState();
     if (typeof pushStateToCloud === 'function') pushStateToCloud(state, true);
-    document.getElementById('app-modal').close(); render(); toast(`${type} ${editing?'updated':'added'}`); return;
+    document.getElementById('app-modal').close(); render(); toast(`${type} ${editing ? 'updated' : 'added'}`); return;
   }
   if (kind === 'new-order' || kind === 'edit-order') {
     const editing = kind === 'edit-order';
@@ -5983,8 +5981,8 @@ async function handleDialogSubmit(form) {
       toast('Credit sales for due payment require a registered customer account');
       return;
     }
-    const creditCustomer=state.customers.find(item=>item.name===customer),creditLimit=Number(creditCustomer?.creditLimit)||0;
-    if(creditLimit>0){const previousDue=editing&&order.customer===customer?Math.max(0,(Number(order.total)||0)-(Number(order.paid)||0)):0;const newDue=Math.max(0,totals.total-totals.paid),projectedBalance=(Number(creditCustomer.balance)||0)-previousDue+newDue;if(newDue>previousDue&&projectedBalance>creditLimit){toast(`Credit limit exceeded for ${customer} · available ${money(Math.max(0,creditLimit-(Number(creditCustomer.balance)||0)+previousDue))}`);return;}}
+    const creditCustomer = state.customers.find(item => item.name === customer), creditLimit = Number(creditCustomer?.creditLimit) || 0;
+    if (creditLimit > 0) { const previousDue = editing && order.customer === customer ? Math.max(0, (Number(order.total) || 0) - (Number(order.paid) || 0)) : 0; const newDue = Math.max(0, totals.total - totals.paid), projectedBalance = (Number(creditCustomer.balance) || 0) - previousDue + newDue; if (newDue > previousDue && projectedBalance > creditLimit) { toast(`Credit limit exceeded for ${customer} · available ${money(Math.max(0, creditLimit - (Number(creditCustomer.balance) || 0) + previousDue))}`); return; } }
     const wasInvoicedOrder = editing && ['Final', 'Edited', 'Completed'].includes(order.status);
     const finalized = wasInvoicedOrder;
     const hasReturns = editing && state.returns.some(record => record.saleId === (order.invoiceId || order.id));
@@ -6016,16 +6014,16 @@ async function handleDialogSubmit(form) {
         state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date, before, after: product.stock, delta, reason: `Edited sale ${updated.id}`, user: currentWorkspaceUser().name });
       }
       const invoice = ensureOrderInvoice(updated);
-      removeAccountEntries(entry => ['order','order-payment','sales','sales-payment'].includes(entry.sourceType) && [updated.id, updated.invoiceId].includes(entry.sourceId));
+      removeAccountEntries(entry => ['order', 'order-payment', 'sales', 'sales-payment'].includes(entry.sourceType) && [updated.id, updated.invoiceId].includes(entry.sourceId));
       if (state.customers.some(item => item.name === customer)) {
         const pos = updated.source === 'POS';
-        postAccountEntry({ partyType:'Customer', party:customer, date, type:'Debit', amount:updated.total, memo:`${pos ? 'POS sale' : 'Sales order'} · ${updated.id}`, sourceType:pos ? 'sales' : 'order', sourceId:updated.id, relatedId:updated.invoiceId || updated.id });
+        postAccountEntry({ partyType: 'Customer', party: customer, date, type: 'Debit', amount: updated.total, memo: `${pos ? 'POS sale' : 'Sales order'} · ${updated.id}`, sourceType: pos ? 'sales' : 'order', sourceId: updated.id, relatedId: updated.invoiceId || updated.id });
         const directPaid = Math.max(0, updated.paid - allocated);
-        if (directPaid > 0) postAccountEntry({ partyType:'Customer', party:customer, date, type:'Credit', amount:directPaid, memo:`Payment · ${method} · ${updated.id}`, sourceType:pos ? 'sales-payment' : 'order-payment', sourceId:updated.id, relatedId:updated.invoiceId || updated.id });
+        if (directPaid > 0) postAccountEntry({ partyType: 'Customer', party: customer, date, type: 'Credit', amount: directPaid, memo: `Payment · ${method} · ${updated.id}`, sourceType: pos ? 'sales-payment' : 'order-payment', sourceId: updated.id, relatedId: updated.invoiceId || updated.id });
       }
-      Object.assign(invoice, { customer, date, total:updated.total, paid:updated.paid, method, status:orderPaymentStatus(updated), items:updated.items, discount:updated.discount, additionalCharges:updated.additionalCharges });
+      Object.assign(invoice, { customer, date, total: updated.total, paid: updated.paid, method, status: orderPaymentStatus(updated), items: updated.items, discount: updated.discount, additionalCharges: updated.additionalCharges });
     } else if (!editing) state.orders.unshift(updated);
-    recordActivity(editing?'Sale/order updated':'Sales order created',`${customer} · ${money(totals.total)}`,updated.id);
+    recordActivity(editing ? 'Sale/order updated' : 'Sales order created', `${customer} · ${money(totals.total)}`, updated.id);
     saveState(); document.getElementById('app-modal').close(); setPage('sales'); toast(editing ? (wasInvoicedOrder ? 'Order updated · status is Edited until the invoice is printed again' : 'Sale updated') : 'Sales order saved as a draft'); return;
   }
   if (kind === 'record-payment') {
@@ -6033,26 +6031,26 @@ async function handleDialogSubmit(form) {
     if (!(amount > 0)) { toast('Enter an amount greater than zero'); return; }
     const entry = postAccountEntry({ partyType: type, party: name, date: val('payment-date') || today(), type: type === 'Customer' ? 'Credit' : 'Debit', amount, memo: `${val('payment-method')} payment${val('payment-memo') ? ` · ${val('payment-memo')}` : ''}`, sourceType: 'account-payment' });
     if (currentDraftAttachments && currentDraftAttachments.length) entry.attachments = structuredClone(currentDraftAttachments);
-    recordActivity('Account payment recorded',`${type} · ${name} · ${money(amount)}`);
+    recordActivity('Account payment recorded', `${type} · ${name} · ${money(amount)}`);
     saveState(); document.getElementById('app-modal').close(); render(); toast('Payment recorded'); return;
   }
   if (kind === 'account-reconcile') {
-    const partyType=form.dataset.partyType,partyName=form.dataset.partyName;
-    const account=(partyType==='Supplier'?state.suppliers:state.customers).find(item=>item.name===partyName);
-    const expected=Number(val('reconcile-balance'));
-    if(!account||!Number.isFinite(expected)||expected<0){toast('Enter a valid non-negative account balance');return;}
-    const desiredSigned=partyType==='Customer'?expected:-expected;
-    const difference=desiredSigned-(Number(account.balance)||0);
-    if(Math.abs(difference)<0.005){document.getElementById('app-modal').close();toast('This account is already reconciled to that balance');return;}
-    postAccountEntry({partyType,party:partyName,date:val('reconcile-date')||today(),type:difference>0?'Debit':'Credit',amount:Math.abs(difference),memo:`Balance reconciliation${val('reconcile-note')?` · ${val('reconcile-note')}`:''}`,sourceType:'reconciliation',sourceId:account.id,relatedId:account.id});
-    recordActivity(`${partyType} account reconciled`,`${partyName} · ${money(expected)}`,account.id);
-    saveState();document.getElementById('app-modal').close();render();toast(`${partyType} account reconciled`);return;
+    const partyType = form.dataset.partyType, partyName = form.dataset.partyName;
+    const account = (partyType === 'Supplier' ? state.suppliers : state.customers).find(item => item.name === partyName);
+    const expected = Number(val('reconcile-balance'));
+    if (!account || !Number.isFinite(expected) || expected < 0) { toast('Enter a valid non-negative account balance'); return; }
+    const desiredSigned = partyType === 'Customer' ? expected : -expected;
+    const difference = desiredSigned - (Number(account.balance) || 0);
+    if (Math.abs(difference) < 0.005) { document.getElementById('app-modal').close(); toast('This account is already reconciled to that balance'); return; }
+    postAccountEntry({ partyType, party: partyName, date: val('reconcile-date') || today(), type: difference > 0 ? 'Debit' : 'Credit', amount: Math.abs(difference), memo: `Balance reconciliation${val('reconcile-note') ? ` · ${val('reconcile-note')}` : ''}`, sourceType: 'reconciliation', sourceId: account.id, relatedId: account.id });
+    recordActivity(`${partyType} account reconciled`, `${partyName} · ${money(expected)}`, account.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast(`${partyType} account reconciled`); return;
   }
   if (kind === 'adjust-stock') {
     const product = state.products.find(p => p.id === form.dataset.recordId); if (!product) return;
     const before = product.stock, next = Math.max(0, Number(val('stock-new-quantity')) || 0); product.stock = next;
-    state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: next, delta: next-before, reason: val('stock-reason') || 'Manual adjustment', user: currentWorkspaceUser().name });
-    recordActivity('Stock adjusted',`${product.name} · ${before} → ${next}`,product.id);
+    state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: next, delta: next - before, reason: val('stock-reason') || 'Manual adjustment', user: currentWorkspaceUser().name });
+    recordActivity('Stock adjusted', `${product.name} · ${before} → ${next}`, product.id);
     saveState(); document.getElementById('app-modal').close(); render(); toast('Stock adjusted'); return;
   }
   if (kind === 'finalize-stocktake') {
@@ -6152,12 +6150,12 @@ async function handleDialogSubmit(form) {
     return;
   }
   if (kind === 'bulk-adjust-stock') {
-    const productId=val('bulk-product').split(' · ')[0],product=state.products.find(p=>p.id===productId);
-    if(!product){toast('Choose an available product');return;}
-    const before=product.stock,next=Math.max(0,Number(val('bulk-quantity'))||0);product.stock=next;
-    state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId,product:product.name,date:today(),before,after:next,delta:next-before,reason:val('stock-reason')||'Stock take / adjustment',user:currentWorkspaceUser().name});
-    recordActivity('Stock count / adjustment saved',`${product.name} · ${before} → ${next}`,product.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Stock count saved');return;
+    const productId = val('bulk-product').split(' · ')[0], product = state.products.find(p => p.id === productId);
+    if (!product) { toast('Choose an available product'); return; }
+    const before = product.stock, next = Math.max(0, Number(val('bulk-quantity')) || 0); product.stock = next;
+    state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date: today(), before, after: next, delta: next - before, reason: val('stock-reason') || 'Stock take / adjustment', user: currentWorkspaceUser().name });
+    recordActivity('Stock count / adjustment saved', `${product.name} · ${before} → ${next}`, product.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast('Stock count saved'); return;
   }
   if (kind === 'save-edit-stocktake') {
     if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); return; }
@@ -6251,57 +6249,57 @@ async function handleDialogSubmit(form) {
     return;
   }
   if (kind === 'new-purchase' || kind === 'edit-purchase') {
-    const editing=kind==='edit-purchase';
-    const purchase=editing?state.purchases.find(item=>item.id===form.dataset.recordId):null;
-    if(editing&&!purchase){toast('This purchase order could not be found');return;}
-    const totals=transactionLineTotals('purchase');
-    const lines=totals.lines.map(row=>{const product=state.products.find(p=>p.id===row.dataset.productId);return {productId:row.dataset.productId,product:product?.name||row.dataset.productId,qty:Number(row.querySelector('[data-line-qty]').value)||0,unitCost:Number(row.querySelector('[data-line-price]').value)||0};});
-    if(!lines.length||lines.some(line=>line.qty<=0)){toast('Search for and add at least one product with a valid quantity');return;}
-    if(totals.discount>totals.subtotal){toast('Discount cannot be greater than the products subtotal');return;}
-    if(totals.paid>totals.total){toast('Amount paid cannot be greater than the order total');return;}
-    const supplier=val('purchase-supplier'),date=val('purchase-date')||today(),method=val('purchase-method')||'Cash';
-    const received=editing&&purchase.status==='Received';
-    const hasReturns=editing&&((Number(purchase.returned)||0)>0||(state.purchaseReturns||[]).some(record=>record.purchaseId===purchase.id||record.purchaseOrderId===purchase.id));
-    if(received&&hasReturns){toast('This purchase has returns recorded, so its original items cannot be edited');return;}
-    const oldQuantities=new Map();if(received)(purchase.lines||[]).forEach(line=>oldQuantities.set(line.productId,(oldQuantities.get(line.productId)||0)+(Number(line.qty)||0)));
-    const newQuantities=new Map();lines.forEach(line=>newQuantities.set(line.productId,(newQuantities.get(line.productId)||0)+line.qty));
-    if(received)for(const productId of new Set([...oldQuantities.keys(),...newQuantities.keys()])){const product=state.products.find(item=>item.id===productId);if(!product){toast('A product on this purchase no longer exists');return;}if(product.stock+(newQuantities.get(productId)||0)-(oldQuantities.get(productId)||0)<0){toast(`Cannot reduce ${product.name}; some received stock has already been sold or used`);return;}}
-    const updated=purchase||{id:idFor('PO',state.purchases),status:'Pending'};
-    Object.assign(updated,{supplier,date,lines,subtotal:totals.subtotal,discount:totals.discount,additionalCharges:totals.additional,total:totals.total,paid:totals.paid,paymentMethod:method,attachments:structuredClone(currentDraftAttachments)});
-    if(received)for(const productId of new Set([...oldQuantities.keys(),...newQuantities.keys()])){const product=state.products.find(item=>item.id===productId),before=product.stock,delta=(newQuantities.get(productId)||0)-(oldQuantities.get(productId)||0);if(!delta)continue;product.stock+=delta;state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId,product:product.name,date,before,after:product.stock,delta,reason:`Edited received purchase ${updated.id}`,user:currentWorkspaceUser().name});}
-    removeAccountEntries(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===updated.id);
-    postAccountEntry({partyType:'Supplier',party:supplier,date,type:'Credit',amount:updated.total,memo:`Purchase order · ${updated.id}`,sourceType:'purchase',sourceId:updated.id});
-    if(updated.paid>0)postAccountEntry({partyType:'Supplier',party:supplier,date,type:'Debit',amount:updated.paid,memo:`Payment · ${method} · ${updated.id}`,sourceType:'purchase-payment',sourceId:updated.id});
-    if(!editing)state.purchases.unshift(updated);
-    recordActivity(editing?'Purchase order updated':'Purchase order created',`${supplier} · ${money(totals.total)}`,updated.id);
-    saveState();document.getElementById('app-modal').close();setPage('purchases');toast(editing?'Purchase order updated':'Purchase order saved');return;
+    const editing = kind === 'edit-purchase';
+    const purchase = editing ? state.purchases.find(item => item.id === form.dataset.recordId) : null;
+    if (editing && !purchase) { toast('This purchase order could not be found'); return; }
+    const totals = transactionLineTotals('purchase');
+    const lines = totals.lines.map(row => { const product = state.products.find(p => p.id === row.dataset.productId); return { productId: row.dataset.productId, product: product?.name || row.dataset.productId, qty: Number(row.querySelector('[data-line-qty]').value) || 0, unitCost: Number(row.querySelector('[data-line-price]').value) || 0 }; });
+    if (!lines.length || lines.some(line => line.qty <= 0)) { toast('Search for and add at least one product with a valid quantity'); return; }
+    if (totals.discount > totals.subtotal) { toast('Discount cannot be greater than the products subtotal'); return; }
+    if (totals.paid > totals.total) { toast('Amount paid cannot be greater than the order total'); return; }
+    const supplier = val('purchase-supplier'), date = val('purchase-date') || today(), method = val('purchase-method') || 'Cash';
+    const received = editing && purchase.status === 'Received';
+    const hasReturns = editing && ((Number(purchase.returned) || 0) > 0 || (state.purchaseReturns || []).some(record => record.purchaseId === purchase.id || record.purchaseOrderId === purchase.id));
+    if (received && hasReturns) { toast('This purchase has returns recorded, so its original items cannot be edited'); return; }
+    const oldQuantities = new Map(); if (received) (purchase.lines || []).forEach(line => oldQuantities.set(line.productId, (oldQuantities.get(line.productId) || 0) + (Number(line.qty) || 0)));
+    const newQuantities = new Map(); lines.forEach(line => newQuantities.set(line.productId, (newQuantities.get(line.productId) || 0) + line.qty));
+    if (received) for (const productId of new Set([...oldQuantities.keys(), ...newQuantities.keys()])) { const product = state.products.find(item => item.id === productId); if (!product) { toast('A product on this purchase no longer exists'); return; } if (product.stock + (newQuantities.get(productId) || 0) - (oldQuantities.get(productId) || 0) < 0) { toast(`Cannot reduce ${product.name}; some received stock has already been sold or used`); return; } }
+    const updated = purchase || { id: idFor('PO', state.purchases), status: 'Pending' };
+    Object.assign(updated, { supplier, date, lines, subtotal: totals.subtotal, discount: totals.discount, additionalCharges: totals.additional, total: totals.total, paid: totals.paid, paymentMethod: method, attachments: structuredClone(currentDraftAttachments) });
+    if (received) for (const productId of new Set([...oldQuantities.keys(), ...newQuantities.keys()])) { const product = state.products.find(item => item.id === productId), before = product.stock, delta = (newQuantities.get(productId) || 0) - (oldQuantities.get(productId) || 0); if (!delta) continue; product.stock += delta; state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date, before, after: product.stock, delta, reason: `Edited received purchase ${updated.id}`, user: currentWorkspaceUser().name }); }
+    removeAccountEntries(entry => ['purchase', 'purchase-payment'].includes(entry.sourceType) && entry.sourceId === updated.id);
+    postAccountEntry({ partyType: 'Supplier', party: supplier, date, type: 'Credit', amount: updated.total, memo: `Purchase order · ${updated.id}`, sourceType: 'purchase', sourceId: updated.id });
+    if (updated.paid > 0) postAccountEntry({ partyType: 'Supplier', party: supplier, date, type: 'Debit', amount: updated.paid, memo: `Payment · ${method} · ${updated.id}`, sourceType: 'purchase-payment', sourceId: updated.id });
+    if (!editing) state.purchases.unshift(updated);
+    recordActivity(editing ? 'Purchase order updated' : 'Purchase order created', `${supplier} · ${money(totals.total)}`, updated.id);
+    saveState(); document.getElementById('app-modal').close(); setPage('purchases'); toast(editing ? 'Purchase order updated' : 'Purchase order saved'); return;
   }
   if (kind === 'purchase-payment') {
-    const purchase=state.purchases.find(p=>p.id===form.dataset.recordId),amount=Number(val('purchase-payment-amount'))||0;
-    if(!purchase||amount<=0){toast('Enter a payment amount greater than zero');return;}
-    const applied=Math.min(amount,Math.max(0,purchase.total-(purchase.returned||0)-(purchase.paid||0)));
-    if(!applied){toast('This purchase has no balance due');return;}
-    purchase.paid=(purchase.paid||0)+applied;
-    const entry=postAccountEntry({partyType:'Supplier',party:purchase.supplier,date:today(),type:'Debit',amount:applied,memo:`Payment · ${val('purchase-payment-method')} · ${purchase.id}`,sourceType:'purchase-payment',sourceId:purchase.id});
+    const purchase = state.purchases.find(p => p.id === form.dataset.recordId), amount = Number(val('purchase-payment-amount')) || 0;
+    if (!purchase || amount <= 0) { toast('Enter a payment amount greater than zero'); return; }
+    const applied = Math.min(amount, Math.max(0, purchase.total - (purchase.returned || 0) - (purchase.paid || 0)));
+    if (!applied) { toast('This purchase has no balance due'); return; }
+    purchase.paid = (purchase.paid || 0) + applied;
+    const entry = postAccountEntry({ partyType: 'Supplier', party: purchase.supplier, date: today(), type: 'Debit', amount: applied, memo: `Payment · ${val('purchase-payment-method')} · ${purchase.id}`, sourceType: 'purchase-payment', sourceId: purchase.id });
     if (currentDraftAttachments && currentDraftAttachments.length) {
       entry.attachments = structuredClone(currentDraftAttachments);
       purchase.attachments = purchase.attachments || [];
       purchase.attachments.push(...structuredClone(currentDraftAttachments));
     }
-    recordActivity('Supplier payment recorded',`${purchase.supplier} · ${money(applied)}`,purchase.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Supplier payment recorded');return;
+    recordActivity('Supplier payment recorded', `${purchase.supplier} · ${money(applied)}`, purchase.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast('Supplier payment recorded'); return;
   }
   if (kind === 'purchase-return') {
-    const purchase=state.purchases.find(p=>p.id===form.dataset.recordId);
+    const purchase = state.purchases.find(p => p.id === form.dataset.recordId);
     if (!purchase) { toast('Purchase order not found'); return; }
-    const productId=val('purchase-return-product').split(' · ')[0];
-    const line=purchase.lines?.find(l=>l.productId===productId);
-    const qty=Math.max(1,Number(val('purchase-return-qty'))||1);
-    if(!line||qty>line.qty){toast('Return quantity must be within the received quantity');return;}
-    const product=state.products.find(p=>p.id===productId);
-    if(product){
-      const before=product.stock;
-      product.stock=Math.max(0,product.stock-qty);
+    const productId = val('purchase-return-product').split(' · ')[0];
+    const line = purchase.lines?.find(l => l.productId === productId);
+    const qty = Math.max(1, Number(val('purchase-return-qty')) || 1);
+    if (!line || qty > line.qty) { toast('Return quantity must be within the received quantity'); return; }
+    const product = state.products.find(p => p.id === productId);
+    if (product) {
+      const before = product.stock;
+      product.stock = Math.max(0, product.stock - qty);
       state.stockMovements.unshift({
         id: idFor('STK', state.stockMovements),
         productId: product.id,
@@ -6309,14 +6307,14 @@ async function handleDialogSubmit(form) {
         date: today(),
         before,
         after: product.stock,
-        delta: product.stock-before,
+        delta: product.stock - before,
         reason: `Supplier return ${purchase.id}`,
         user: currentWorkspaceUser().name
       });
     }
     const unitCost = Number(line.unitCost) || Number(product?.cost) || 0;
     const returnAmount = qty * unitCost;
-    if(!Array.isArray(state.purchaseReturns)) state.purchaseReturns=[];
+    if (!Array.isArray(state.purchaseReturns)) state.purchaseReturns = [];
     state.purchaseReturns.unshift({
       id: idFor('PRET', state.purchaseReturns),
       purchaseId: purchase.id,
@@ -6340,29 +6338,29 @@ async function handleDialogSubmit(form) {
       sourceType: 'purchase-return',
       sourceId: purchase.id
     });
-    recordActivity('Supplier return recorded',`${purchase.supplier} · ${product?.name||productId} · ${qty}`,purchase.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Supplier return recorded');return;
+    recordActivity('Supplier return recorded', `${purchase.supplier} · ${product?.name || productId} · ${qty}`, purchase.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast('Supplier return recorded'); return;
   }
   if (kind === 'order-payment') {
-    const order=state.orders.find(o=>o.id===form.dataset.recordId),amount=Number(val('order-payment-amount'))||0;
-    if(!order||amount<=0){toast('Enter a payment amount greater than zero');return;}
-    const applied=Math.min(amount,Math.max(0,order.total-(order.paid||0)));order.paid=(order.paid||0)+applied;
-    const invoice=ensureOrderInvoice(order);invoice.paid=order.paid;invoice.method=val('order-payment-method')||'Cash';invoice.status=orderPaymentStatus(order)==='Fully paid'?'Paid':'Pending';
-    const entry = state.customers.some(c=>c.name===order.customer) ? postAccountEntry({partyType:'Customer',party:order.customer,type:'Credit',amount:applied,memo:`Payment · ${invoice.method} · ${order.id}`,sourceType:'order-payment',sourceId:order.id}) : null;
+    const order = state.orders.find(o => o.id === form.dataset.recordId), amount = Number(val('order-payment-amount')) || 0;
+    if (!order || amount <= 0) { toast('Enter a payment amount greater than zero'); return; }
+    const applied = Math.min(amount, Math.max(0, order.total - (order.paid || 0))); order.paid = (order.paid || 0) + applied;
+    const invoice = ensureOrderInvoice(order); invoice.paid = order.paid; invoice.method = val('order-payment-method') || 'Cash'; invoice.status = orderPaymentStatus(order) === 'Fully paid' ? 'Paid' : 'Pending';
+    const entry = state.customers.some(c => c.name === order.customer) ? postAccountEntry({ partyType: 'Customer', party: order.customer, type: 'Credit', amount: applied, memo: `Payment · ${invoice.method} · ${order.id}`, sourceType: 'order-payment', sourceId: order.id }) : null;
     if (currentDraftAttachments && currentDraftAttachments.length) {
       if (entry) entry.attachments = structuredClone(currentDraftAttachments);
       order.attachments = order.attachments || [];
       order.attachments.push(...structuredClone(currentDraftAttachments));
     }
-    recordActivity('Customer payment recorded',`${order.customer} · ${money(applied)}`,order.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Customer payment recorded');return;
+    recordActivity('Customer payment recorded', `${order.customer} · ${money(applied)}`, order.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast('Customer payment recorded'); return;
   }
   if (kind === 'order-return') {
-    const order=state.orders.find(o=>o.id===form.dataset.recordId),productId=val('return-product').split(' · ')[0],line=order?.items?.find(i=>i.productId===productId),qty=Math.max(1,Number(val('return-qty'))||1);
-    if(!order||!line||qty>line.qty){toast('Return quantity must be within the original sale quantity');return;}
-    const product=state.products.find(p=>p.id===productId);
+    const order = state.orders.find(o => o.id === form.dataset.recordId), productId = val('return-product').split(' · ')[0], line = order?.items?.find(i => i.productId === productId), qty = Math.max(1, Number(val('return-qty')) || 1);
+    if (!order || !line || qty > line.qty) { toast('Return quantity must be within the original sale quantity'); return; }
+    const product = state.products.find(p => p.id === productId);
     const restock = Boolean(data.get('return-restock'));
-    if(restock && product){
+    if (restock && product) {
       const before = product.stock;
       product.stock += qty;
       state.stockMovements.unshift({
@@ -6392,7 +6390,7 @@ async function handleDialogSubmit(form) {
       restocked: restock
     };
     state.returns.unshift(retRecord);
-    if(order.customer !== 'Walk-in customer' && state.customers.some(c=>c.name===order.customer)){
+    if (order.customer !== 'Walk-in customer' && state.customers.some(c => c.name === order.customer)) {
       postAccountEntry({
         partyType: 'Customer',
         party: order.customer,
@@ -6405,94 +6403,94 @@ async function handleDialogSubmit(form) {
         relatedId: order.id
       });
     }
-    recordActivity('Sales return recorded',`${order.customer} · ${product?.name||productId} · ${qty}`,order.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Return recorded and balance adjusted');return;
+    recordActivity('Sales return recorded', `${order.customer} · ${product?.name || productId} · ${qty}`, order.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast('Return recorded and balance adjusted'); return;
   }
   if (kind === 'new-user') {
-    if(!canPerformAction('new-user')){toast('You do not have permission to add users');return;}
-    const name=val('user-name');if(!name){toast('Enter the user name');return;}
-    const username=val('user-username'),email=val('user-email'),password=String(data.get('user-password')||''),passwordConfirm=String(data.get('user-password-confirm')||'');
-    if(!username||!email||!credentialsAvailable(username,email)){toast('Choose a username and email that are unique to this user');return;}
-    if(password.length<8||password!==passwordConfirm){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
-    const role=val('user-role')||'Salesman';
-    if(role==='Owner / Administrator'&&!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can assign the administrator role');return;}
-    const modules=userRoleDefaults[role]||userRoleDefaults.Salesman;
-    const branchId=val('user-branch');
-    if(!accessibleBranches().some(branch=>branch.id===branchId)){toast('Assign this user to a branch you are allowed to manage');return;}
-    const user={id:idFor('USR',state.users),name,username,email,phone:val('user-phone'),role,modules:[...modules],permissions:rolePermissionMap(role,modules),branchId,status:'Active'};
-    await setUserPassword(user,password);
+    if (!canPerformAction('new-user')) { toast('You do not have permission to add users'); return; }
+    const name = val('user-name'); if (!name) { toast('Enter the user name'); return; }
+    const username = val('user-username'), email = val('user-email'), password = String(data.get('user-password') || ''), passwordConfirm = String(data.get('user-password-confirm') || '');
+    if (!username || !email || !credentialsAvailable(username, email)) { toast('Choose a username and email that are unique to this user'); return; }
+    if (password.length < 8 || password !== passwordConfirm) { toast(password.length < 8 ? 'Passwords must be at least 8 characters' : 'Passwords do not match'); return; }
+    const role = val('user-role') || 'Salesman';
+    if (role === 'Owner / Administrator' && !isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can assign the administrator role'); return; }
+    const modules = userRoleDefaults[role] || userRoleDefaults.Salesman;
+    const branchId = val('user-branch');
+    if (!accessibleBranches().some(branch => branch.id === branchId)) { toast('Assign this user to a branch you are allowed to manage'); return; }
+    const user = { id: idFor('USR', state.users), name, username, email, phone: val('user-phone'), role, modules: [...modules], permissions: rolePermissionMap(role, modules), branchId, status: 'Active' };
+    await setUserPassword(user, password);
     state.users.push(user);
-    recordActivity('User added',`${name} · ${role}`);
-    saveState();document.getElementById('app-modal').close();render();toast('User added');return;
+    recordActivity('User added', `${name} · ${role}`);
+    saveState(); document.getElementById('app-modal').close(); render(); toast('User added'); return;
   }
-  if(kind==='edit-user'){
-    if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can edit user accounts');return;}
-    const user=state.users.find(item=>item.id===form.dataset.recordId);
-    if(!user){toast('This user account could not be found');return;}
-    const name=val('edit-user-name'),username=val('edit-user-username'),email=val('edit-user-email'),phone=val('edit-user-phone'),role=val('edit-user-role'),branchId=val('edit-user-branch');
-    const password=String(data.get('edit-user-password')||''),passwordConfirm=String(data.get('edit-user-password-confirm')||'');
-    if(!name){toast('Enter the user name');return;}
-    if(!username||!email||!credentialsAvailable(username,email,user.id)){toast('Choose a username and email that are unique to this user');return;}
-    if(!accessibleBranches().some(branch=>branch.id===branchId)){toast('Choose an active branch');return;}
-    if(password&&(password.length<8||password!==passwordConfirm)){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
-    if(user.isBootstrap && role !== 'Owner / Administrator'){toast('The primary workspace owner must keep the Owner / Administrator role');return;}
-    if(role==='Owner / Administrator'&&!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can assign the administrator role');return;}
-    const roleChanged=user.role!==role;
-    Object.assign(user,{name,username,email,phone,role,branchId});
-    if(roleChanged){const modules=userRoleDefaults[role]||userRoleDefaults.Salesman;user.modules=[...modules];user.permissions=rolePermissionMap(role,modules);}
-    if(password)await setUserPassword(user,password);
-    if(state.currentUserId===user.id){
-      if(!activateAssignedBranch(user)){toast('This account must remain assigned to an active branch');return;}
-      safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
+  if (kind === 'edit-user') {
+    if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can edit user accounts'); return; }
+    const user = state.users.find(item => item.id === form.dataset.recordId);
+    if (!user) { toast('This user account could not be found'); return; }
+    const name = val('edit-user-name'), username = val('edit-user-username'), email = val('edit-user-email'), phone = val('edit-user-phone'), role = val('edit-user-role'), branchId = val('edit-user-branch');
+    const password = String(data.get('edit-user-password') || ''), passwordConfirm = String(data.get('edit-user-password-confirm') || '');
+    if (!name) { toast('Enter the user name'); return; }
+    if (!username || !email || !credentialsAvailable(username, email, user.id)) { toast('Choose a username and email that are unique to this user'); return; }
+    if (!accessibleBranches().some(branch => branch.id === branchId)) { toast('Choose an active branch'); return; }
+    if (password && (password.length < 8 || password !== passwordConfirm)) { toast(password.length < 8 ? 'Passwords must be at least 8 characters' : 'Passwords do not match'); return; }
+    if (user.isBootstrap && role !== 'Owner / Administrator') { toast('The primary workspace owner must keep the Owner / Administrator role'); return; }
+    if (role === 'Owner / Administrator' && !isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can assign the administrator role'); return; }
+    const roleChanged = user.role !== role;
+    Object.assign(user, { name, username, email, phone, role, branchId });
+    if (roleChanged) { const modules = userRoleDefaults[role] || userRoleDefaults.Salesman; user.modules = [...modules]; user.permissions = rolePermissionMap(role, modules); }
+    if (password) await setUserPassword(user, password);
+    if (state.currentUserId === user.id) {
+      if (!activateAssignedBranch(user)) { toast('This account must remain assigned to an active branch'); return; }
+      safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
     }
-    recordActivity('User account updated',`${name} · ${role}`,user.id);
-    saveState();document.getElementById('app-modal').close();render();toast(`User ${name} updated`);return;
+    recordActivity('User account updated', `${name} · ${role}`, user.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast(`User ${name} updated`); return;
   }
-  if(kind==='edit-user-permissions'){
-    if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can override user permissions');return;}
-    const user=state.users.find(item=>item.id===form.dataset.recordId);
-    if(!user||user.isBootstrap){toast('The root Owner / Administrator always has full access');return;}
-    const permissions=Object.fromEntries(userActionPermissions.map(group=>[group.module,[]]));
-    for(const choice of data.getAll('user-permission')){const [module,permission]=String(choice).split('|');if(permissions[module]&&!permissions[module].includes(permission))permissions[module].push(permission);}
-    user.permissions=permissions;
-    user.modules=userActionPermissions.filter(group=>permissions[group.module].length>0).map(group=>group.module);
-    recordActivity('User permissions updated',user.name,user.id);
-    saveState();document.getElementById('app-modal').close();render();toast(`Permissions updated for ${user.name}`);return;
+  if (kind === 'edit-user-permissions') {
+    if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can override user permissions'); return; }
+    const user = state.users.find(item => item.id === form.dataset.recordId);
+    if (!user || user.isBootstrap) { toast('The root Owner / Administrator always has full access'); return; }
+    const permissions = Object.fromEntries(userActionPermissions.map(group => [group.module, []]));
+    for (const choice of data.getAll('user-permission')) { const [module, permission] = String(choice).split('|'); if (permissions[module] && !permissions[module].includes(permission)) permissions[module].push(permission); }
+    user.permissions = permissions;
+    user.modules = userActionPermissions.filter(group => permissions[group.module].length > 0).map(group => group.module);
+    recordActivity('User permissions updated', user.name, user.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast(`Permissions updated for ${user.name}`); return;
   }
-  if(kind==='set-user-credentials'){
-    if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can set user login credentials');return;}
-    const user=state.users.find(item=>item.id===form.dataset.recordId),name=val('credential-name'),username=val('credential-username'),email=val('credential-email'),password=String(data.get('credential-password')||''),passwordConfirm=String(data.get('credential-password-confirm')||'');
-    if(!user){toast('This user account could not be found');return;}
-    if(!name){toast('Enter the user full name');return;}
-    if(!credentialsAvailable(username,email,user.id)){toast('That username or email is already assigned to another user');return;}
-    if(password || !user.passwordHash){
-      if(password.length<8||password!==passwordConfirm){toast(password.length<8?'Passwords must be at least 8 characters':'Passwords do not match');return;}
-      await setUserPassword(user,password);
+  if (kind === 'set-user-credentials') {
+    if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can set user login credentials'); return; }
+    const user = state.users.find(item => item.id === form.dataset.recordId), name = val('credential-name'), username = val('credential-username'), email = val('credential-email'), password = String(data.get('credential-password') || ''), passwordConfirm = String(data.get('credential-password-confirm') || '');
+    if (!user) { toast('This user account could not be found'); return; }
+    if (!name) { toast('Enter the user full name'); return; }
+    if (!credentialsAvailable(username, email, user.id)) { toast('That username or email is already assigned to another user'); return; }
+    if (password || !user.passwordHash) {
+      if (password.length < 8 || password !== passwordConfirm) { toast(password.length < 8 ? 'Passwords must be at least 8 characters' : 'Passwords do not match'); return; }
+      await setUserPassword(user, password);
     }
-    Object.assign(user,{name,username,email});
-    if(state.currentUserId===user.id){
-      safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
+    Object.assign(user, { name, username, email });
+    if (state.currentUserId === user.id) {
+      safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
     }
-    saveState();document.getElementById('app-modal').close();render();toast(`Login credentials saved for ${user.name}`);return;
+    saveState(); document.getElementById('app-modal').close(); render(); toast(`Login credentials saved for ${user.name}`); return;
   }
-  if(kind==='own-credentials'){
-    const user=currentWorkspaceUser(),name=val('own-name'),username=val('own-username'),email=val('own-email'),currentPassword=String(data.get('own-current-password')||''),newPassword=String(data.get('own-new-password')||''),newPasswordConfirm=String(data.get('own-new-password-confirm')||'');
-    if(!name){toast('Enter your full name');return;}
-    if(!credentialsAvailable(username,email,user.id)){toast('That username or email is already assigned to another user');return;}
-    if(newPassword){
-      if(user.passwordHash && !await verifyUserPassword(user,currentPassword)){toast('Current password is incorrect');return;}
-      if(newPassword.length<8||newPassword!==newPasswordConfirm){toast(newPassword.length<8?'New passwords must be at least 8 characters':'New passwords do not match');return;}
-      await setUserPassword(user,newPassword);
+  if (kind === 'own-credentials') {
+    const user = currentWorkspaceUser(), name = val('own-name'), username = val('own-username'), email = val('own-email'), currentPassword = String(data.get('own-current-password') || ''), newPassword = String(data.get('own-new-password') || ''), newPasswordConfirm = String(data.get('own-new-password-confirm') || '');
+    if (!name) { toast('Enter your full name'); return; }
+    if (!credentialsAvailable(username, email, user.id)) { toast('That username or email is already assigned to another user'); return; }
+    if (newPassword) {
+      if (user.passwordHash && !await verifyUserPassword(user, currentPassword)) { toast('Current password is incorrect'); return; }
+      if (newPassword.length < 8 || newPassword !== newPasswordConfirm) { toast(newPassword.length < 8 ? 'New passwords must be at least 8 characters' : 'New passwords do not match'); return; }
+      await setUserPassword(user, newPassword);
     }
-    Object.assign(user,{name,username,email});
-    safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:user.id,passwordHash:user.passwordHash}));
-    recordActivity('Account profile and credentials updated',user.name,user.id);
-    saveState();document.getElementById('app-modal').close();render();toast('Account profile updated');return;
+    Object.assign(user, { name, username, email });
+    safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: user.id, passwordHash: user.passwordHash }));
+    recordActivity('Account profile and credentials updated', user.name, user.id);
+    saveState(); document.getElementById('app-modal').close(); render(); toast('Account profile updated'); return;
   }
   if (kind === 'new-branch') {
-    const name=val('branch-name');if(!name){toast('Enter a branch name');return;}
-    const branch={id:idFor('BR',state.branches),name,status:'Active'};state.branches.push(branch);state.branchData[branch.id]=Object.fromEntries(branchCollections.map(k=>[k,[]]));
-    saveState();document.getElementById('app-modal').close();render();toast('Branch added');return;
+    const name = val('branch-name'); if (!name) { toast('Enter a branch name'); return; }
+    const branch = { id: idFor('BR', state.branches), name, status: 'Active' }; state.branches.push(branch); state.branchData[branch.id] = Object.fromEntries(branchCollections.map(k => [k, []]));
+    saveState(); document.getElementById('app-modal').close(); render(); toast('Branch added'); return;
   }
   toast('This form is not available yet');
 }
@@ -6502,7 +6500,7 @@ function handleAction(button) {
   const id = button.dataset.id;
   const type = button.dataset.partyType;
 
-  if(!canPerformAction(action,button)){toast('Your account does not have permission to perform that action');return;}
+  if (!canPerformAction(action, button)) { toast('Your account does not have permission to perform that action'); return; }
 
   switch (action) {
     case 'apply-date-range':
@@ -6528,7 +6526,7 @@ function handleAction(button) {
     case 'new-product': openProductForm(); break;
     case 'edit-product': openProductForm(state.products.find(p => p.id === id)); break;
     case 'new-party': openPartyForm(type || 'Customer'); break;
-    case 'edit-party': { const partyType=type==='Supplier'?'Supplier':'Customer',list=partyType==='Supplier'?state.suppliers:state.customers,party=list.find(item=>item.name===button.dataset.partyName); if(party)openPartyForm(partyType,party); break; }
+    case 'edit-party': { const partyType = type === 'Supplier' ? 'Supplier' : 'Customer', list = partyType === 'Supplier' ? state.suppliers : state.customers, party = list.find(item => item.name === button.dataset.partyName); if (party) openPartyForm(partyType, party); break; }
     case 'delete-party': {
       if (!isWorkspaceAdministrator()) { toast('Only the Owner / Administrator can permanently delete customer or supplier accounts'); break; }
       const partyType = type === 'Supplier' ? 'Supplier' : 'Customer', partyName = button.dataset.partyName;
@@ -6554,22 +6552,22 @@ function handleAction(button) {
       saveState(); render(); toast(button.dataset.deleteMode === 'erase-all' ? `${partyType} profile and linked records permanently erased` : `${partyType} profile deleted; linked transaction history retained`); break;
     }
     case 'view-customer-orders': openCustomerOrderHistory(button.dataset.partyName); break;
-    case 'view-party-orders': openPartyOrderHistory(type,button.dataset.partyName); break;
+    case 'view-party-orders': openPartyOrderHistory(type, button.dataset.partyName); break;
     case 'toggle-party': {
-      const partyType=type==='Supplier'?'Supplier':'Customer',list=partyType==='Supplier'?state.suppliers:state.customers,party=list.find(item=>item.name===button.dataset.partyName);
-      if(!party)break;
-      if(!userHasPermission(partyType==='Supplier'?'suppliers':'customers','activate')){toast(`You do not have permission to activate or deactivate ${partyType.toLowerCase()} accounts`);break;}
-      party.status=party.status==='Inactive'?'Active':'Inactive';
-      recordActivity(`${partyType} ${party.status==='Active'?'activated':'deactivated'}`,party.name,party.id);
-      saveState();render();toast(`${partyType} ${party.name} ${party.status==='Active'?'activated':'deactivated'}`);break;
+      const partyType = type === 'Supplier' ? 'Supplier' : 'Customer', list = partyType === 'Supplier' ? state.suppliers : state.customers, party = list.find(item => item.name === button.dataset.partyName);
+      if (!party) break;
+      if (!userHasPermission(partyType === 'Supplier' ? 'suppliers' : 'customers', 'activate')) { toast(`You do not have permission to activate or deactivate ${partyType.toLowerCase()} accounts`); break; }
+      party.status = party.status === 'Inactive' ? 'Active' : 'Inactive';
+      recordActivity(`${partyType} ${party.status === 'Active' ? 'activated' : 'deactivated'}`, party.name, party.id);
+      saveState(); render(); toast(`${partyType} ${party.name} ${party.status === 'Active' ? 'activated' : 'deactivated'}`); break;
     }
     case 'new-order': openOrderForm(); break;
-    case 'edit-order': { const order=state.orders.find(item=>item.id===id); if(order)openOrderForm(order); break; }
-    case 'record-payment': if(document.getElementById('app-modal')?.open)document.getElementById('app-modal').close();openPaymentForm(type || '', button.dataset.partyName || ''); break;
-    case 'reconcile-account': if(document.getElementById('app-modal')?.open)document.getElementById('app-modal').close();openAccountReconcile(type,button.dataset.partyName||''); break;
-    case 'view-account-ledger': if(document.getElementById('app-modal')?.open)document.getElementById('app-modal').close();openAccountLedger(type,button.dataset.partyName||''); break;
+    case 'edit-order': { const order = state.orders.find(item => item.id === id); if (order) openOrderForm(order); break; }
+    case 'record-payment': if (document.getElementById('app-modal')?.open) document.getElementById('app-modal').close(); openPaymentForm(type || '', button.dataset.partyName || ''); break;
+    case 'reconcile-account': if (document.getElementById('app-modal')?.open) document.getElementById('app-modal').close(); openAccountReconcile(type, button.dataset.partyName || ''); break;
+    case 'view-account-ledger': if (document.getElementById('app-modal')?.open) document.getElementById('app-modal').close(); openAccountLedger(type, button.dataset.partyName || ''); break;
     case 'new-purchase': openPurchaseForm(); break;
-    case 'edit-purchase': { const purchase=state.purchases.find(item=>item.id===id); if(purchase)openPurchaseForm(purchase); break; }
+    case 'edit-purchase': { const purchase = state.purchases.find(item => item.id === id); if (purchase) openPurchaseForm(purchase); break; }
     case 'select-transaction-product': addTransactionProduct(button.dataset.kind, button.dataset.id); break;
     case 'remove-transaction-product': {
       const host = button.closest('.transaction-product-line')?.parentElement;
@@ -6579,9 +6577,9 @@ function handleAction(button) {
       updateTransactionLines(kind); break;
     }
     case 'purchase-payment': {
-      const purchase=state.purchases.find(p=>p.id===id);if(!purchase)break;
-      openDialog('purchase-payment','Add supplier payment',`Record a payment for ${esc(purchase.id)} to ${esc(purchase.supplier)}.`,`${inputField('purchase-payment-amount','Amount (TZS)','','number',true,Math.max(0,purchase.total-(purchase.paid||0)-(purchase.returned||0)))}${selectField('purchase-payment-method','Method',['Cash','M-Pesa','Bank transfer','Card'])}${renderAttachmentUploader([], 'purchase-payment')}`,'Record payment');
-      document.getElementById('modal-content').dataset.recordId=id;break;
+      const purchase = state.purchases.find(p => p.id === id); if (!purchase) break;
+      openDialog('purchase-payment', 'Add supplier payment', `Record a payment for ${esc(purchase.id)} to ${esc(purchase.supplier)}.`, `${inputField('purchase-payment-amount', 'Amount (TZS)', '', 'number', true, Math.max(0, purchase.total - (purchase.paid || 0) - (purchase.returned || 0)))}${selectField('purchase-payment-method', 'Method', ['Cash', 'M-Pesa', 'Bank transfer', 'Card'])}${renderAttachmentUploader([], 'purchase-payment')}`, 'Record payment');
+      document.getElementById('modal-content').dataset.recordId = id; break;
     }
     case 'view-purchase': {
       const purchase = state.purchases.find(p => p.id === id);
@@ -6615,48 +6613,48 @@ function handleAction(button) {
     }
     case 'return-purchase': openPurchaseReturn(id); break;
     case 'new-user':
-      openDialog('new-user','Add user','Create the user profile, assigned branch, and personal login together.',`<div class="form-grid">${inputField('user-name','Full name','', 'text',true)}${branchSelectField('user-branch','Assigned branch',activeBranch.id,accessibleBranches())}${inputField('user-username','Username','Choose a unique username','text',true)}${inputField('user-email','Email','name@example.com','email',true)}${inputField('user-phone','Phone','', 'tel')}${inputField('user-password','Password','At least 8 characters','password',true)}${inputField('user-password-confirm','Confirm password','Re-enter password','password',true)}${selectField('user-role','Role',['Salesman','Storekeeper','Manager','Owner / Administrator'],'Salesman')}</div>`,'Create account');break;
-    case 'edit-user': { const user=state.users.find(item=>item.id===id);openUserEditForm(user);break; }
-    case 'view-user-activity': { const user=state.users.find(item=>item.id===id);openUserActivityHistory(user);break; }
-    case 'set-user-credentials': { const user=state.users.find(item=>item.id===id);openUserCredentialsForm(user);break; }
-    case 'my-account': openOwnCredentialsForm();break;
-    case 'logout': logout();break;
-    case 'edit-user-permissions': { const user=state.users.find(item=>item.id===id);openUserPermissionsForm(user);break; }
+      openDialog('new-user', 'Add user', 'Create the user profile, assigned branch, and personal login together.', `<div class="form-grid">${inputField('user-name', 'Full name', '', 'text', true)}${branchSelectField('user-branch', 'Assigned branch', activeBranch.id, accessibleBranches())}${inputField('user-username', 'Username', 'Choose a unique username', 'text', true)}${inputField('user-email', 'Email', 'name@example.com', 'email', true)}${inputField('user-phone', 'Phone', '', 'tel')}${inputField('user-password', 'Password', 'At least 8 characters', 'password', true)}${inputField('user-password-confirm', 'Confirm password', 'Re-enter password', 'password', true)}${selectField('user-role', 'Role', ['Salesman', 'Storekeeper', 'Manager', 'Owner / Administrator'], 'Salesman')}</div>`, 'Create account'); break;
+    case 'edit-user': { const user = state.users.find(item => item.id === id); openUserEditForm(user); break; }
+    case 'view-user-activity': { const user = state.users.find(item => item.id === id); openUserActivityHistory(user); break; }
+    case 'set-user-credentials': { const user = state.users.find(item => item.id === id); openUserCredentialsForm(user); break; }
+    case 'my-account': openOwnCredentialsForm(); break;
+    case 'logout': logout(); break;
+    case 'edit-user-permissions': { const user = state.users.find(item => item.id === id); openUserPermissionsForm(user); break; }
     case 'toggle-user': {
-      const user=state.users.find(u=>u.id===id);if(!user||user.isBootstrap){toast('The owner account cannot be deactivated');break;}
-      user.status=user.status==='Active'?'Inactive':'Active';recordActivity(`User ${user.status.toLowerCase()}`,user.name,user.id);saveState();render();toast(`User ${user.status.toLowerCase()}`);break;
+      const user = state.users.find(u => u.id === id); if (!user || user.isBootstrap) { toast('The owner account cannot be deactivated'); break; }
+      user.status = user.status === 'Active' ? 'Inactive' : 'Active'; recordActivity(`User ${user.status.toLowerCase()}`, user.name, user.id); saveState(); render(); toast(`User ${user.status.toLowerCase()}`); break;
     }
     case 'delete-user': {
-      if(!isWorkspaceAdministrator()){toast('Only an Owner / Administrator can permanently delete users');break;}
-      const user=state.users.find(item=>item.id===id);
-      if(!user||user.isBootstrap||isAdministratorUser(user)){toast('Owner / Administrator accounts cannot be deleted');break;}
-      if(!button.dataset.deleteMode){openDeleteChoice(button,`Delete user ${user.name}?`,'Keep the user’s activity and stock history, or erase the user account and its audit trail.','Delete user, keep records','Erase user and audit trail');break;}
-      state.users=state.users.filter(item=>item.id!==user.id);
-      if(state.currentUserId===user.id){
-        const builtInOwner=state.users.find(item=>item.isBootstrap&&item.status==='Active');
-        const nextAdmin=state.users.find(item=>item.role==='Owner / Administrator'&&item.status==='Active');
-        const nextActive=state.users.find(item=>item.status==='Active');
-        state.currentUserId=(builtInOwner||nextAdmin||nextActive)?.id||'';
-        if(state.currentUserId){const nextUser=state.users.find(item=>item.id===state.currentUserId);safeSessionSet(AUTH_SESSION_KEY,JSON.stringify({id:nextUser.id,passwordHash:nextUser.passwordHash}));}else safeSessionRemove(AUTH_SESSION_KEY);
+      if (!isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can permanently delete users'); break; }
+      const user = state.users.find(item => item.id === id);
+      if (!user || user.isBootstrap || isAdministratorUser(user)) { toast('Owner / Administrator accounts cannot be deleted'); break; }
+      if (!button.dataset.deleteMode) { openDeleteChoice(button, `Delete user ${user.name}?`, 'Keep the user’s activity and stock history, or erase the user account and its audit trail.', 'Delete user, keep records', 'Erase user and audit trail'); break; }
+      state.users = state.users.filter(item => item.id !== user.id);
+      if (state.currentUserId === user.id) {
+        const builtInOwner = state.users.find(item => item.isBootstrap && item.status === 'Active');
+        const nextAdmin = state.users.find(item => item.role === 'Owner / Administrator' && item.status === 'Active');
+        const nextActive = state.users.find(item => item.status === 'Active');
+        state.currentUserId = (builtInOwner || nextAdmin || nextActive)?.id || '';
+        if (state.currentUserId) { const nextUser = state.users.find(item => item.id === state.currentUserId); safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({ id: nextUser.id, passwordHash: nextUser.passwordHash })); } else safeSessionRemove(AUTH_SESSION_KEY);
       }
-      if(button.dataset.deleteMode==='erase-all'){
-        state.activityLog=(state.activityLog||[]).filter(item=>item.actor!==user.name);
-        (state.stockMovements||[]).forEach(m => { if (m.user === user.name) m.user = `${user.name} (deleted)`; });
-      }else recordActivity('User deleted',`${user.name} · existing records retained`,user.id);
-      saveState();render();toast(button.dataset.deleteMode==='erase-all'?`User ${user.name} and audit trail erased`:`User ${user.name} deleted; existing records were kept`);break;
+      if (button.dataset.deleteMode === 'erase-all') {
+        state.activityLog = (state.activityLog || []).filter(item => item.actor !== user.name);
+        (state.stockMovements || []).forEach(m => { if (m.user === user.name) m.user = `${user.name} (deleted)`; });
+      } else recordActivity('User deleted', `${user.name} · existing records retained`, user.id);
+      saveState(); render(); toast(button.dataset.deleteMode === 'erase-all' ? `User ${user.name} and audit trail erased` : `User ${user.name} deleted; existing records were kept`); break;
     }
-    case 'new-branch': openDialog('new-branch','Add branch','Create an independent workspace for another location.',inputField('branch-name','Branch name','e.g. Arusha branch','text',true));break;
+    case 'new-branch': openDialog('new-branch', 'Add branch', 'Create an independent workspace for another location.', inputField('branch-name', 'Branch name', 'e.g. Arusha branch', 'text', true)); break;
     case 'finalize-order': {
-      const order=state.orders.find(o=>o.id===id);if(!order||order.status!=='Draft')break;
+      const order = state.orders.find(o => o.id === id); if (!order || order.status !== 'Draft') break;
       if (finalizeSalesOrder(order)) toast('Order finalized and invoice created');
       break;
     }
     case 'view-order': {
-      const order=salesOrderRows().find(o=>o.id===id);if(!order)break;
+      const order = salesOrderRows().find(o => o.id === id); if (!order) break;
       const discrepancies = order.discrepancies || [];
-      const lines=(order.items||[]).map(l=>{
-        const p=state.products.find(x=>x.id===l.productId);
-        const prodName = p?.name||l.product||l.productName||l.productId;
+      const lines = (order.items || []).map(l => {
+        const p = state.products.find(x => x.id === l.productId);
+        const prodName = p?.name || l.product || l.productName || l.productId;
         const lineIssues = discrepancies.filter(d => d.productId === l.productId || d.productName === prodName);
         const issueBadges = lineIssues.map(d => `<div class="line-issue-tag">⚠️ ${esc(d.typeLabel || d.type)}: ${esc(d.note || d.status)}</div>`).join('');
         return `<tr>
@@ -6665,8 +6663,8 @@ function handleAction(button) {
             ${issueBadges}
           </td>
           <td>${l.qty}</td>
-          <td>${money(l.unitPrice??p?.price??0)}</td>
-          <td>${money(l.qty*(l.unitPrice??p?.price??0))}</td>
+          <td>${money(l.unitPrice ?? p?.price ?? 0)}</td>
+          <td>${money(l.qty * (l.unitPrice ?? p?.price ?? 0))}</td>
         </tr>`;
       }).join('');
 
@@ -6699,11 +6697,11 @@ function handleAction(button) {
       const orderDue = Math.max(0, Number(order.total || 0) - Number(order.paid || 0));
       const orderPayStatus = orderPaymentStatus(order);
       const attsHTML = renderAttachmentsGallery(order.attachments || [], { scope: 'order', recordId: order.id, canAdd: true });
-      openModal('Order details',`${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,
+      openModal('Order details', `${esc(order.id)} · ${esc(order.customer)} · ${esc(order.status)}`,
         `${issuesBox}
         <div class="table-scroll"><table class="data-table"><thead><tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th></tr></thead><tbody>${lines}</tbody></table></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
-          <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid||0)}${orderDue > 0 ? ` · <span style="color:${orderPayStatus === 'Partially paid' ? '#d97706' : '#dc2626'}">Due ${money(orderDue)}</span>` : ''} · ${orderPayStatus}</strong> · Method: <span class="status-pill ${methodPillClass(order)}" style="font-size:11px;padding:2px 8px">${esc(orderPaymentMethodLabel(order))}</span></p>
+          <p style="margin:0"><strong>Total ${money(order.total)} · Paid ${money(order.paid || 0)}${orderDue > 0 ? ` · <span style="color:${orderPayStatus === 'Partially paid' ? '#d97706' : '#dc2626'}">Due ${money(orderDue)}</span>` : ''} · ${orderPayStatus}</strong> · Method: <span class="status-pill ${methodPillClass(order)}" style="font-size:11px;padding:2px 8px">${esc(orderPaymentMethodLabel(order))}</span></p>
           <button class="button small" data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Highlight / Manage Delivery Mistakes</button>
         </div>
         <div style="margin-top:16px">${attsHTML}</div>`,
@@ -6830,71 +6828,71 @@ function handleAction(button) {
       toast('Delivery mistake record removed');
       break;
     }
-    case 'add-order-payment': openOrderPayment(id);break;
-    case 'manage-order-returns': openOrderReturn(id);break;
+    case 'add-order-payment': openOrderPayment(id); break;
+    case 'manage-order-returns': openOrderReturn(id); break;
     case 'delete-order': {
-      const order=state.orders.find(o=>o.id===id);if(!order)break;
-      const adminOverride=isWorkspaceAdministrator()&&order.status!=='Draft';
-      if(order.status!=='Draft'&&!adminOverride){toast('Only the Owner / Administrator can override deletion of a finalized order');break;}
-      if(!button.dataset.deleteMode){openDeleteChoice(button,`Delete sales order ${id}?`,adminOverride?'Choose whether to move the order bundle to Trash or permanently erase its invoice, account entries, returns, and stock impact.':'Choose whether to move the draft to Trash or permanently erase it.','Move bundle to Trash','Erase everything');break;}
-      const invoice=state.sales.find(sale=>sale.id===order.invoiceId||sale.orderId===order.id);
-      const returns=state.returns.filter(record=>record.saleId===(order.invoiceId||order.id));
-      const entryMatches=entry=>['order','order-payment','sales','sales-payment'].includes(entry.sourceType)&&[order.id,order.invoiceId].includes(entry.sourceId);
-      const accountEntries=state.entries.filter(entryMatches);
-      if(button.dataset.deleteMode==='keep-history')archiveToTrashBin(state,order.source==='POS'?'POS sale':'Sales order',{order,invoice,returns,accountEntries},order.id,currentWorkspaceUser().name);
-      if(adminOverride){
-        const restocked=new Map();for(const ret of returns)if(ret.restocked)restocked.set(ret.productId,(restocked.get(ret.productId)||0)+(Number(ret.qty)||0));
-        for(const line of order.items||[]){const product=state.products.find(p=>p.id===line.productId);if(!product)continue;const qty=Math.max(0,(Number(line.qty)||0)-(restocked.get(line.productId)||0));if(!qty)continue;const before=product.stock;product.stock+=qty;state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:qty,reason:`Admin deleted sale ${id}`,user:currentWorkspaceUser().name});}
-        state.sales=state.sales.filter(sale=>sale.id!==invoice?.id&&sale.orderId!==order.id);
-        for(const entry of state.entries)if(entry.sourceType==='account-payment'&&Array.isArray(entry.allocations))entry.allocations=entry.allocations.filter(allocation=>allocation.orderId!==order.id);
+      const order = state.orders.find(o => o.id === id); if (!order) break;
+      const adminOverride = isWorkspaceAdministrator() && order.status !== 'Draft';
+      if (order.status !== 'Draft' && !adminOverride) { toast('Only the Owner / Administrator can override deletion of a finalized order'); break; }
+      if (!button.dataset.deleteMode) { openDeleteChoice(button, `Delete sales order ${id}?`, adminOverride ? 'Choose whether to move the order bundle to Trash or permanently erase its invoice, account entries, returns, and stock impact.' : 'Choose whether to move the draft to Trash or permanently erase it.', 'Move bundle to Trash', 'Erase everything'); break; }
+      const invoice = state.sales.find(sale => sale.id === order.invoiceId || sale.orderId === order.id);
+      const returns = state.returns.filter(record => record.saleId === (order.invoiceId || order.id));
+      const entryMatches = entry => ['order', 'order-payment', 'sales', 'sales-payment'].includes(entry.sourceType) && [order.id, order.invoiceId].includes(entry.sourceId);
+      const accountEntries = state.entries.filter(entryMatches);
+      if (button.dataset.deleteMode === 'keep-history') archiveToTrashBin(state, order.source === 'POS' ? 'POS sale' : 'Sales order', { order, invoice, returns, accountEntries }, order.id, currentWorkspaceUser().name);
+      if (adminOverride) {
+        const restocked = new Map(); for (const ret of returns) if (ret.restocked) restocked.set(ret.productId, (restocked.get(ret.productId) || 0) + (Number(ret.qty) || 0));
+        for (const line of order.items || []) { const product = state.products.find(p => p.id === line.productId); if (!product) continue; const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0)); if (!qty) continue; const before = product.stock; product.stock += qty; state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: qty, reason: `Admin deleted sale ${id}`, user: currentWorkspaceUser().name }); }
+        state.sales = state.sales.filter(sale => sale.id !== invoice?.id && sale.orderId !== order.id);
+        for (const entry of state.entries) if (entry.sourceType === 'account-payment' && Array.isArray(entry.allocations)) entry.allocations = entry.allocations.filter(allocation => allocation.orderId !== order.id);
       }
-      removeAccountEntries(entryMatches);state.returns=state.returns.filter(record=>!returns.some(ret=>ret.id===record.id));
-      if(!adminOverride&&invoice)state.sales=state.sales.filter(sale=>sale.id!==invoice.id);
-      state.orders=state.orders.filter(o=>o.id!==id);recordActivity(adminOverride?'Finalized sales order deleted by administrator':'Draft sales order deleted',id,id);saveState();render();toast(button.dataset.deleteMode==='keep-history'?'Order bundle moved to Trash':adminOverride?'Finalized order and linked records erased':'Draft order permanently erased');break;
+      removeAccountEntries(entryMatches); state.returns = state.returns.filter(record => !returns.some(ret => ret.id === record.id));
+      if (!adminOverride && invoice) state.sales = state.sales.filter(sale => sale.id !== invoice.id);
+      state.orders = state.orders.filter(o => o.id !== id); recordActivity(adminOverride ? 'Finalized sales order deleted by administrator' : 'Draft sales order deleted', id, id); saveState(); render(); toast(button.dataset.deleteMode === 'keep-history' ? 'Order bundle moved to Trash' : adminOverride ? 'Finalized order and linked records erased' : 'Draft order permanently erased'); break;
     }
     case 'receive-purchase': {
-      const purchase=state.purchases.find(p=>p.id===id);if(!purchase||purchase.status!=='Pending')break;
-      for(const line of purchase.lines||[]){
-        const product=state.products.find(p=>p.id===line.productId);
-        if(product){
-          const before=product.stock;
-          const qty=Number(line.qty)||0;
-          product.stock+=qty;
-          const unitCost=Number(line.unitCost)||0;
-          if(unitCost>0 && product.stock>0){
-            const oldVal=before*(Number(product.cost)||0);
-            const newVal=qty*unitCost;
-            product.cost=Math.round((oldVal+newVal)/product.stock);
+      const purchase = state.purchases.find(p => p.id === id); if (!purchase || purchase.status !== 'Pending') break;
+      for (const line of purchase.lines || []) {
+        const product = state.products.find(p => p.id === line.productId);
+        if (product) {
+          const before = product.stock;
+          const qty = Number(line.qty) || 0;
+          product.stock += qty;
+          const unitCost = Number(line.unitCost) || 0;
+          if (unitCost > 0 && product.stock > 0) {
+            const oldVal = before * (Number(product.cost) || 0);
+            const newVal = qty * unitCost;
+            product.cost = Math.round((oldVal + newVal) / product.stock);
           }
-          state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:product.stock-before,reason:`Received ${purchase.id}`,user:currentWorkspaceUser().name});
+          state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: product.stock - before, reason: `Received ${purchase.id}`, user: currentWorkspaceUser().name });
         }
       }
-      purchase.status='Received';
-      const existingCredit = (state.entries||[]).find(e => e.sourceType === 'purchase' && e.sourceId === purchase.id && e.type === 'Credit');
+      purchase.status = 'Received';
+      const existingCredit = (state.entries || []).find(e => e.sourceType === 'purchase' && e.sourceId === purchase.id && e.type === 'Credit');
       if (!existingCredit) {
-        postAccountEntry({partyType:'Supplier',party:purchase.supplier,date:today(),type:'Credit',amount:purchase.total,memo:`Received purchase · ${purchase.id}`,sourceType:'purchase',sourceId:purchase.id});
+        postAccountEntry({ partyType: 'Supplier', party: purchase.supplier, date: today(), type: 'Credit', amount: purchase.total, memo: `Received purchase · ${purchase.id}`, sourceType: 'purchase', sourceId: purchase.id });
       }
-      recordActivity('Purchase order received',`${purchase.supplier} · ${purchase.lines.length} product lines`,purchase.id);
-      saveState();render();toast('Purchase received, stock & cost updated');break;
+      recordActivity('Purchase order received', `${purchase.supplier} · ${purchase.lines.length} product lines`, purchase.id);
+      saveState(); render(); toast('Purchase received, stock & cost updated'); break;
     }
     case 'delete-purchase': {
-      const purchase=state.purchases.find(p=>p.id===id);if(!purchase)break;
-      const adminOverride=isWorkspaceAdministrator()&&purchase.status==='Received';
-      if(purchase.status==='Received'&&!adminOverride){toast('Only the Owner / Administrator can override deletion of a received purchase');break;}
-      if(!button.dataset.deleteMode){openDeleteChoice(button,`Delete purchase ${id}?`,adminOverride?'Choose whether to move the purchase bundle to Trash or permanently erase its account entries, returns, and stock impact.':'Choose whether to move the purchase to Trash or permanently erase its account entries.','Move bundle to Trash','Erase everything');break;}
-      const returns=(state.purchaseReturns||[]).filter(record=>record.purchaseId===id||record.purchaseOrderId===id);
-      const accountEntries=state.entries.filter(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===id);
-      if(button.dataset.deleteMode==='keep-history')archiveToTrashBin(state,'Purchase order',{purchase,returns,accountEntries},id,currentWorkspaceUser().name);
-      if(adminOverride){
-        const returnedByProduct=new Map();for(const ret of returns)returnedByProduct.set(ret.productId,(returnedByProduct.get(ret.productId)||0)+(Number(ret.qty)||0));
-        for(const line of purchase.lines||[]){const product=state.products.find(p=>p.id===line.productId);if(!product)continue;const before=product.stock,qty=Math.max(0,(Number(line.qty)||0)-(returnedByProduct.get(line.productId)||0));if(!qty)continue;product.stock=Math.max(0,product.stock-qty);state.stockMovements.unshift({id:idFor('STK',state.stockMovements),productId:product.id,product:product.name,date:today(),before,after:product.stock,delta:product.stock-before,reason:`Admin deleted received purchase ${id}`,user:currentWorkspaceUser().name});}
+      const purchase = state.purchases.find(p => p.id === id); if (!purchase) break;
+      const adminOverride = isWorkspaceAdministrator() && purchase.status === 'Received';
+      if (purchase.status === 'Received' && !adminOverride) { toast('Only the Owner / Administrator can override deletion of a received purchase'); break; }
+      if (!button.dataset.deleteMode) { openDeleteChoice(button, `Delete purchase ${id}?`, adminOverride ? 'Choose whether to move the purchase bundle to Trash or permanently erase its account entries, returns, and stock impact.' : 'Choose whether to move the purchase to Trash or permanently erase its account entries.', 'Move bundle to Trash', 'Erase everything'); break; }
+      const returns = (state.purchaseReturns || []).filter(record => record.purchaseId === id || record.purchaseOrderId === id);
+      const accountEntries = state.entries.filter(entry => ['purchase', 'purchase-payment'].includes(entry.sourceType) && entry.sourceId === id);
+      if (button.dataset.deleteMode === 'keep-history') archiveToTrashBin(state, 'Purchase order', { purchase, returns, accountEntries }, id, currentWorkspaceUser().name);
+      if (adminOverride) {
+        const returnedByProduct = new Map(); for (const ret of returns) returnedByProduct.set(ret.productId, (returnedByProduct.get(ret.productId) || 0) + (Number(ret.qty) || 0));
+        for (const line of purchase.lines || []) { const product = state.products.find(p => p.id === line.productId); if (!product) continue; const before = product.stock, qty = Math.max(0, (Number(line.qty) || 0) - (returnedByProduct.get(line.productId) || 0)); if (!qty) continue; product.stock = Math.max(0, product.stock - qty); state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: product.stock - before, reason: `Admin deleted received purchase ${id}`, user: currentWorkspaceUser().name }); }
       }
-      removeAccountEntries(entry=>['purchase','purchase-payment'].includes(entry.sourceType)&&entry.sourceId===id);state.purchaseReturns=(state.purchaseReturns||[]).filter(record=>!returns.some(ret=>ret.id===record.id));
-      state.purchases=state.purchases.filter(p=>p.id!==id);recordActivity(adminOverride?'Received purchase deleted by administrator':'Purchase order deleted',id,id);saveState();render();toast(button.dataset.deleteMode==='keep-history'?'Purchase bundle moved to Trash':adminOverride?'Received purchase and linked records erased':'Purchase order permanently erased');break;
+      removeAccountEntries(entry => ['purchase', 'purchase-payment'].includes(entry.sourceType) && entry.sourceId === id); state.purchaseReturns = (state.purchaseReturns || []).filter(record => !returns.some(ret => ret.id === record.id));
+      state.purchases = state.purchases.filter(p => p.id !== id); recordActivity(adminOverride ? 'Received purchase deleted by administrator' : 'Purchase order deleted', id, id); saveState(); render(); toast(button.dataset.deleteMode === 'keep-history' ? 'Purchase bundle moved to Trash' : adminOverride ? 'Received purchase and linked records erased' : 'Purchase order permanently erased'); break;
     }
     case 'export-parties': {
-      const list=type==='Supplier'?state.suppliers:state.customers;
-      downloadCSV(type==='Supplier'?'tide-suppliers.csv':'tide-customers.csv',type==='Supplier'?[['Name','Phone','Email','Terms','Balance','Status'],...list.map(p=>[p.name,p.phone,p.email,p.terms,p.balance,p.status])]:[['Name','Phone','Email','Terms','Credit limit','Balance','Status'],...list.map(p=>[p.name,p.phone,p.email,p.terms,p.creditLimit||0,p.balance,p.status])]);break;
+      const list = type === 'Supplier' ? state.suppliers : state.customers;
+      downloadCSV(type === 'Supplier' ? 'tide-suppliers.csv' : 'tide-customers.csv', type === 'Supplier' ? [['Name', 'Phone', 'Email', 'Terms', 'Balance', 'Status'], ...list.map(p => [p.name, p.phone, p.email, p.terms, p.balance, p.status])] : [['Name', 'Phone', 'Email', 'Terms', 'Credit limit', 'Balance', 'Status'], ...list.map(p => [p.name, p.phone, p.email, p.terms, p.creditLimit || 0, p.balance, p.status])]); break;
     }
     case 'download-product-template':
       downloadCSV('tide-product-template.csv', [
@@ -6904,21 +6902,21 @@ function handleAction(button) {
       ]);
       toast('Product template downloaded with pricing and expiration sample rows');
       break;
-    case 'remove-company-logo': state.companyLogo='';saveState();render();toast('Company logo removed');break;
+    case 'remove-company-logo': state.companyLogo = ''; saveState(); render(); toast('Company logo removed'); break;
     case 'product-stock-history': {
-      const product=state.products.find(p=>p.id===id);if(!product)break;
-      const rows=state.stockMovements.filter(m=>m.productId===id).map(m=>`<tr><td>${dateLabel(m.date)}</td><td>${esc(m.reason)}</td><td>${m.before}</td><td>${m.after}</td><td>${m.delta>0?'+':''}${m.delta}</td></tr>`).join('')||emptyRow(5,'No stock movements recorded');
-      openModal('Stock history',product.name,`<div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Reason</th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table></div>`,'Close');break;
+      const product = state.products.find(p => p.id === id); if (!product) break;
+      const rows = state.stockMovements.filter(m => m.productId === id).map(m => `<tr><td>${dateLabel(m.date)}</td><td>${esc(m.reason)}</td><td>${m.before}</td><td>${m.after}</td><td>${m.delta > 0 ? '+' : ''}${m.delta}</td></tr>`).join('') || emptyRow(5, 'No stock movements recorded');
+      openModal('Stock history', product.name, `<div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Reason</th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table></div>`, 'Close'); break;
     }
     case 'adjust-stock': {
       const product = state.products.find(p => p.id === id); if (!product) break;
-      openDialog('adjust-stock','Adjust stock',`Set the new on-hand quantity for ${esc(product.name)}.`,`${inputField('stock-new-quantity','New quantity','','number',true,product.stock)}${inputField('stock-reason','Reason','e.g. Count correction')}`,'Save adjustment');
+      openDialog('adjust-stock', 'Adjust stock', `Set the new on-hand quantity for ${esc(product.name)}.`, `${inputField('stock-new-quantity', 'New quantity', '', 'number', true, product.stock)}${inputField('stock-reason', 'Reason', 'e.g. Count correction')}`, 'Save adjustment');
       document.getElementById('modal-content').dataset.recordId = id; break;
     }
     case 'bulk-stock-adjust': {
-      if(!state.products.length){toast('Add products to Inventory before adjusting stock');break;}
-      const options=state.products.map(p=>`${p.id} · ${p.name}`);
-      openDialog('bulk-adjust-stock','Bulk stock adjustment','Select a product and enter its verified on-hand count.',`${selectField('bulk-product','Product',options)}${inputField('bulk-quantity','Counted / new quantity','','number',true)}${inputField('stock-reason','Reason','e.g. Damaged goods correction')}`,'Save stock');break;
+      if (!state.products.length) { toast('Add products to Inventory before adjusting stock'); break; }
+      const options = state.products.map(p => `${p.id} · ${p.name}`);
+      openDialog('bulk-adjust-stock', 'Bulk stock adjustment', 'Select a product and enter its verified on-hand count.', `${selectField('bulk-product', 'Product', options)}${inputField('bulk-quantity', 'Counted / new quantity', '', 'number', true)}${inputField('stock-reason', 'Reason', 'e.g. Damaged goods correction')}`, 'Save stock'); break;
     }
     case 'bulk-stocktake':
     case 'open-stocktake':
@@ -7182,8 +7180,8 @@ function handleAction(button) {
     case 'save-pos-draft': savePOSDraft(); break;
     case 'resume-pos': resumePOSDraft(id); break;
     case 'set-report-period': {
-      const period=button.dataset.period;
-      if(['weekly','monthly','annual'].includes(period)){reportPeriod=period;render();}
+      const period = button.dataset.period;
+      if (['weekly', 'monthly', 'annual'].includes(period)) { reportPeriod = period; render(); }
       break;
     }
     case 'delete-product': deleteProduct(id, button); break;
@@ -7243,11 +7241,11 @@ function handleAction(button) {
       ]);
       break;
     case 'export-financial-report': {
-      const report=reportPeriodData();
-      const receivables=accountOutstandingTotal('Customer');
-      const payables=accountOutstandingTotal('Supplier');
-      const methodTotals=new Map();report.sales.forEach(sale=>{const method=sale.method||'Other';methodTotals.set(method,(methodTotals.get(method)||0)+(Number(sale.total)||0));});
-      downloadCSV(`tide-financial-${reportPeriod}-${today()}.csv`,[['Report',report.label],['From',report.start],['To',report.end],[],['Measure','Amount TZS'],['Sales revenue',report.salesTotal],['Customer payments collected',report.collected],['Purchases ordered',report.purchaseTotal],['Supplier payments made',report.supplierPaid],['Net cash movement',report.netCollected],['Customer receivables',receivables],['Supplier payables',payables],[],['Sales by payment method','Amount TZS'],...Array.from(methodTotals)]);
+      const report = reportPeriodData();
+      const receivables = accountOutstandingTotal('Customer');
+      const payables = accountOutstandingTotal('Supplier');
+      const methodTotals = new Map(); report.sales.forEach(sale => { const method = sale.method || 'Other'; methodTotals.set(method, (methodTotals.get(method) || 0) + (Number(sale.total) || 0)); });
+      downloadCSV(`tide-financial-${reportPeriod}-${today()}.csv`, [['Report', report.label], ['From', report.start], ['To', report.end], [], ['Measure', 'Amount TZS'], ['Sales revenue', report.salesTotal], ['Customer payments collected', report.collected], ['Purchases ordered', report.purchaseTotal], ['Supplier payments made', report.supplierPaid], ['Net cash movement', report.netCollected], ['Customer receivables', receivables], ['Supplier payables', payables], [], ['Sales by payment method', 'Amount TZS'], ...Array.from(methodTotals)]);
       break;
     }
     case 'export-inventory':
@@ -7858,7 +7856,7 @@ document.addEventListener('submit', event => {
     handleRegister(event.target);
   } else if (event.target.id === 'company-settings-form') {
     event.preventDefault();
-    if(!isWorkspaceAdministrator()&&!userHasPermission('settings','edit-company')){toast('You do not have permission to change company settings');return;}
+    if (!isWorkspaceAdministrator() && !userHasPermission('settings', 'edit-company')) { toast('You do not have permission to change company settings'); return; }
     saveCompanySettings(event.target);
   } else if (event.target.id === 'modal-content' && event.target.dataset.dialogKind) {
     event.preventDefault();
@@ -7945,15 +7943,15 @@ document.addEventListener('change', event => {
   if (event.target.id === 'report-payment-direction') { reportPaymentDirectionFilter = event.target.value; render(); }
   if (event.target.id === 'report-payment-method') { reportPaymentMethodFilter = event.target.value; render(); }
   if (event.target.id === 'inventory-movement-filter') { inventoryMovementTypeFilter = event.target.value; render(); }
-  if(event.target.matches('[data-permission-module]')){
-    const group=event.target.closest('fieldset');
-    group?.querySelectorAll('input[name="user-permission"]').forEach(input=>{input.checked=event.target.checked;});
-    event.target.indeterminate=false;
+  if (event.target.matches('[data-permission-module]')) {
+    const group = event.target.closest('fieldset');
+    group?.querySelectorAll('input[name="user-permission"]').forEach(input => { input.checked = event.target.checked; });
+    event.target.indeterminate = false;
   }
-  if(event.target.matches('input[name="user-permission"]')){
-    const group=event.target.closest('fieldset'),parent=group?.querySelector('[data-permission-module]');
-    const children=[...(group?.querySelectorAll('input[name="user-permission"]')||[])],checked=children.filter(input=>input.checked).length;
-    if(parent){parent.checked=checked===children.length;parent.indeterminate=checked>0&&checked<children.length;}
+  if (event.target.matches('input[name="user-permission"]')) {
+    const group = event.target.closest('fieldset'), parent = group?.querySelector('[data-permission-module]');
+    const children = [...(group?.querySelectorAll('input[name="user-permission"]') || [])], checked = children.filter(input => input.checked).length;
+    if (parent) { parent.checked = checked === children.length; parent.indeterminate = checked > 0 && checked < children.length; }
   }
   if (event.target.id === 'pos-category') {
     posCategory = event.target.value;
@@ -7976,7 +7974,7 @@ document.addEventListener('change', event => {
     render();
   }
   if (event.target.id === 'product-csv-file' && event.target.files?.[0]) {
-    const reader=new FileReader();reader.onload=()=>importProductsCSV(String(reader.result||''));reader.readAsText(event.target.files[0]);event.target.value='';
+    const reader = new FileReader(); reader.onload = () => importProductsCSV(String(reader.result || '')); reader.readAsText(event.target.files[0]); event.target.value = '';
   }
   if (event.target.id === 'restore-backup-file' && event.target.files?.[0]) {
     const file = event.target.files[0];
@@ -8025,7 +8023,7 @@ async function forceReloadApp() {
       const keys = await caches.keys();
       for (const key of keys) await caches.delete(key);
     }
-  } catch {}
+  } catch { }
   setTimeout(() => {
     window.location.href = window.location.origin + window.location.pathname + '?v=' + Date.now() + window.location.hash;
   }, 350);
@@ -8052,9 +8050,9 @@ function openCloudStatusModal() {
         <div><small class="muted" style="display:block">Sales</small><strong>${saleCount}</strong></div>
       </div>
       <div style="font-size:12px;line-height:1.4">
-        ${connected 
-          ? `✓ <strong>Live link active:</strong> Any sales, purchases, customers, or products added on this ${deviceType} automatically sync with your other devices in real time.`
-          : `⚠️ <strong>Not syncing with cloud:</strong> This device is not currently connected to the shared Firebase database. Tap 'Force Sync Now' below.`}
+        ${connected
+      ? `✓ <strong>Live link active:</strong> Any sales, purchases, customers, or products added on this ${deviceType} automatically sync with your other devices in real time.`
+      : `⚠️ <strong>Not syncing with cloud:</strong> This device is not currently connected to the shared Firebase database. Tap 'Force Sync Now' below.`}
       </div>
       <div style="display:flex;gap:8px;flex-direction:column;margin-top:4px">
         <button type="button" class="button primary" data-action="force-cloud-sync" style="width:100%">⚡ Force Sync Now (Upload & Download)</button>
@@ -8223,9 +8221,9 @@ async function initApp() {
   activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
   state.activeBranchId = activeBranch.id;
   state.branch = activeBranch.name;
-  state.users.forEach(user=>{
-    if(!user.branchId)user.branchId=activeBranch.id;
-    if(user.isBootstrap && !user.role) {
+  state.users.forEach(user => {
+    if (!user.branchId) user.branchId = activeBranch.id;
+    if (user.isBootstrap && !user.role) {
       user.role = 'Owner / Administrator';
       user.modules = ['*'];
       user.permissions = { '*': ['*'] };
@@ -8249,25 +8247,28 @@ async function initApp() {
     window.TideFirebase.initFirebase().then(() => {
       window.TideFirebase.streamProducts((remoteProducts) => {
         if (!Array.isArray(remoteProducts)) return;
-        if (remoteProducts.length === 0 && (state.products || []).length > 0) {
-          // Seed the "products" collection if empty
+        
+        const hasSeeded = localStorage.getItem('tide_products_seeded_v2');
+        if (remoteProducts.length === 0 && !hasSeeded && (state.products || []).length > 0) {
+          // One-time initial seeding of existing products catalogue into Firestore
+          localStorage.setItem('tide_products_seeded_v2', 'true');
           window.TideFirebase.batchSyncProducts(state.products);
           return;
         }
 
-        // Merge remote products into local state
-        const productMap = new Map();
-        (state.products || []).forEach(p => { if (p && p.id) productMap.set(p.id, p); });
-        remoteProducts.forEach(rp => {
-          if (rp && rp.id) {
-            productMap.set(rp.id, { ...(productMap.get(rp.id) || {}), ...rp });
+        // Real-time synchronization directly from Firestore 'products' collection
+        if (remoteProducts.length > 0) {
+          localStorage.setItem('tide_products_seeded_v2', 'true');
+          state.products = remoteProducts;
+          persistState(state);
+          const curPage = state.currentPage || location.hash.replace('#', '') || 'dashboard';
+          if (['products', 'inventory', 'pos', 'dashboard'].includes(curPage)) {
+            render();
           }
-        });
-        state.products = Array.from(productMap.values());
-        persistState(state);
-
-        const curPage = state.currentPage || location.hash.replace('#', '') || 'dashboard';
-        if (['products', 'inventory', 'pos', 'dashboard'].includes(curPage)) {
+        } else if (hasSeeded) {
+          // If products were legitimately deleted down to zero
+          state.products = [];
+          persistState(state);
           render();
         }
       });
@@ -8275,7 +8276,7 @@ async function initApp() {
   }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => {});
+    navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => { });
   }
 
   const todayLabel = document.getElementById('today-label');
@@ -8294,12 +8295,12 @@ async function initApp() {
     return;
   }
   let session = null;
-  try { session = JSON.parse(safeSessionGet(AUTH_SESSION_KEY) || 'null'); } catch {}
+  try { session = JSON.parse(safeSessionGet(AUTH_SESSION_KEY) || 'null'); } catch { }
   const signedInUser = state.users.find(user => user.id === session?.id && user.passwordHash === session?.passwordHash && user.status !== 'Inactive');
   if (signedInUser) {
     state.currentUserId = signedInUser.id;
-    if(!activateAssignedBranch(signedInUser)){
-      state.currentUserId='';safeSessionRemove(AUTH_SESSION_KEY);
+    if (!activateAssignedBranch(signedInUser)) {
+      state.currentUserId = ''; safeSessionRemove(AUTH_SESSION_KEY);
       renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
       return;
     }
