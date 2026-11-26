@@ -12325,3 +12325,132 @@ tr.row-revoked td strong {
     font-size: 10px;
   }
 }
+
+/* =========================================================
+   Expenses Module & Fast Action Button
+   ========================================================= */
+.quick-expense-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 107, 0, 0.35);
+  background: rgba(255, 107, 0, 0.1);
+  color: #d94e00;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.quick-expense-btn:hover {
+  background: #ff6b00;
+  border-color: #ff6b00;
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(255, 107, 0, 0.28);
+}
+
+.quick-expense-plus {
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 800;
+}
+
+:root[data-theme="dark"] .quick-expense-btn {
+  background: rgba(255, 122, 26, 0.16);
+  border-color: rgba(255, 122, 26, 0.4);
+  color: #ff9c54;
+}
+
+:root[data-theme="dark"] .quick-expense-btn:hover {
+  background: #ff6b00;
+  border-color: #ff6b00;
+  color: #ffffff;
+}
+
+@media (max-width: 600px) {
+  .quick-expense-btn {
+    height: 32px;
+    padding: 0 9px;
+    font-size: 11px;
+  }
+}
+
+.expense-paid-card {
+  border: 1px solid var(--line, #e2e8f0);
+  background: var(--bg-subtle, #f8fafc);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+:root[data-theme="dark"] .expense-paid-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: #334155;
+}
+
+.expense-paid-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  user-select: none;
+}
+
+.expense-paid-toggle input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: #00a651;
+  cursor: pointer;
+}
+
+.expense-payment-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line, #cbd5e1);
+}
+
+.expense-payment-fields[hidden] {
+  display: none !important;
+}
+
+@media (max-width: 540px) {
+  .expense-payment-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hub-action-box.hub-fast-action {
+  border-color: rgba(255, 107, 0, 0.42);
+  background: linear-gradient(135deg, rgba(255, 107, 0, 0.08), rgba(255, 140, 66, 0.02));
+}
+
+.hub-action-box.hub-fast-action:hover {
+  border-color: #ff6b00;
+  box-shadow: 0 6px 18px rgba(255, 107, 0, 0.16);
+}
+
+.hub-fast-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #ff6b00;
+  color: #ffffff;
+  vertical-align: middle;
+}

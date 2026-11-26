@@ -31,6 +31,7 @@ const initialState = {
   returns: [],
   purchaseReturns: [],
   purchases: [],
+  expenses: [],
   entries: [],
   queue: [],
   stockMovements: [],
@@ -93,7 +94,7 @@ const initialState = {
 
 const branchCollections = [
   'products', 'customers', 'suppliers', 'orders', 'sales',
-  'returns', 'purchaseReturns', 'purchases', 'entries', 'queue',
+  'returns', 'purchaseReturns', 'purchases', 'expenses', 'entries', 'queue',
   'stockMovements', 'trashBin', 'stocktakeDraft', 'stocktakes'
 ];
 
@@ -129,6 +130,9 @@ let salesDateTo = '';
 let purchaseStatusFilter = '';
 let purchaseDateFrom = '';
 let purchaseDateTo = '';
+let expenseStatusFilter = '';
+let expenseDateFrom = '';
+let expenseDateTo = '';
 let orderMenuPortal = null;
 let pendingCompanyLogo = '';
 let authErrorMessage = '';
@@ -267,6 +271,7 @@ const userModuleChoices = [
   ['pos', 'Point of Sale'],
   ['inventory', 'Inventory'],
   ['purchases', 'Purchases'],
+  ['expenses', 'Expenses'],
   ['customers', 'Customers'],
   ['suppliers', 'Suppliers'],
   ['accounting', 'Accounting'],
@@ -281,7 +286,7 @@ const userRoleDefaults = {
   'Administrator': userModuleChoices.map(m => m[0]),
   'Admin': userModuleChoices.map(m => m[0]),
   'Owner': userModuleChoices.map(m => m[0]),
-  'Manager': ['dashboard', 'sales', 'pos', 'inventory', 'purchases', 'customers', 'suppliers', 'accounting', 'reports', 'branches'],
+  'Manager': ['dashboard', 'sales', 'pos', 'inventory', 'purchases', 'expenses', 'customers', 'suppliers', 'accounting', 'reports', 'branches'],
   'Salesman': ['dashboard', 'sales', 'pos', 'customers'],
   'Storekeeper': ['dashboard', 'inventory', 'purchases']
 };
@@ -292,6 +297,7 @@ const userActionPermissions = [
   { module: 'pos', actions: [['open', 'Open POS'], ['draft', 'Save POS drafts'], ['finalize', 'Complete checkout'], ['payments', 'Record POS payments'], ['refunds', 'Process refunds']] },
   { module: 'inventory', actions: [['view', 'View products and stock'], ['add-products', 'Add products'], ['edit-products', 'Edit products'], ['delete-products', 'Delete products'], ['adjust-stock', 'Adjust stock'], ['stock-history', 'View stock history'], ['stocktake', 'Run stock take'], ['bulk-import', 'Import products in bulk'], ['export', 'Export products']] },
   { module: 'purchases', actions: [['view', 'View purchases'], ['create', 'Create purchase orders'], ['edit', 'Edit purchase orders'], ['delete', 'Delete purchases'], ['receive', 'Receive stock'], ['payments', 'Record supplier payments'], ['returns', 'Manage supplier returns'], ['invoices', 'Upload and view invoices']] },
+  { module: 'expenses', actions: [['view', 'View expenses'], ['create', 'Record expenses'], ['edit', 'Edit expenses'], ['mark-paid', 'Mark expenses as paid'], ['delete', 'Delete expenses'], ['export', 'Export expenses']] },
   { module: 'customers', actions: [['view', 'View customers'], ['add', 'Add customers'], ['edit', 'Edit customers'], ['delete', 'Delete customers'], ['activate', 'Activate or deactivate customers'], ['account-view', 'View account history'], ['order-history', 'View customer past orders'], ['payments', 'Record customer payments'], ['export', 'Export customers']] },
   { module: 'suppliers', actions: [['view', 'View suppliers'], ['add', 'Add suppliers'], ['edit', 'Edit suppliers'], ['delete', 'Delete suppliers'], ['activate', 'Activate or deactivate suppliers'], ['account-view', 'View account history'], ['order-history', 'View supplier past purchase orders'], ['payments', 'Record supplier payments'], ['returns', 'Manage supplier returns'], ['payment-details', 'View payment details'], ['export', 'Export suppliers']] },
   { module: 'accounting', actions: [['view', 'View accounting and ledger'], ['record-payments', 'Record account payments'], ['manage-entries', 'Manage account entries'], ['export', 'Export ledger']] },
@@ -348,6 +354,7 @@ function canViewPage(module, user = currentWorkspaceUser()) {
   if (module === 'pos') return userHasPermission('pos', 'open', user) || userHasPermission('pos', 'view', user);
   if (module === 'products') return userHasPermission('inventory', 'view', user) || userHasPermission('inventory', 'add-products', user) || userHasPermission('inventory', 'edit-products', user);
   if (module === 'inventory') return userHasPermission('inventory', 'stocktake', user) || userHasPermission('inventory', 'adjust-stock', user) || userHasPermission('inventory', 'stock-history', user);
+  if (module === 'expenses') return userHasPermission('expenses', 'view', user) || userHasPermission('expenses', 'create', user) || userHasPermission('accounting', 'view', user);
   return userHasPermission(module, 'view', user);
 }
 
@@ -405,6 +412,12 @@ function canPerformAction(action, element = null) {
     case 'purchase-payment': return require('purchases', 'payments');
     case 'return-purchase': return require('purchases', 'returns');
     case 'delete-purchase': return user.isBootstrap || (isAdministratorUser(user) && require('purchases', 'delete'));
+    case 'new-expense': return require('expenses', 'create') || require('accounting', 'manage-entries');
+    case 'edit-expense': return require('expenses', 'edit') || require('accounting', 'manage-entries');
+    case 'view-expense': return require('expenses', 'view') || require('accounting', 'view');
+    case 'mark-expense-paid': return require('expenses', 'mark-paid') || require('expenses', 'edit') || require('accounting', 'record-payments');
+    case 'delete-expense': return user.isBootstrap || (isAdministratorUser(user) && (require('expenses', 'delete') || require('accounting', 'manage-entries')));
+    case 'export-expenses': return require('expenses', 'export') || require('accounting', 'export');
     case 'new-party': return require(type === 'Supplier' ? 'suppliers' : 'customers', 'add');
     case 'export-parties': return require(type === 'Supplier' ? 'suppliers' : 'customers', 'export');
     case 'record-payment': return page === 'accounting' ? require('accounting', 'record-payments') : type === 'Supplier' ? require('suppliers', 'payments') : type === 'Customer' ? require('customers', 'payments') : require('accounting', 'record-payments');
@@ -432,7 +445,7 @@ function canPerformAction(action, element = null) {
 
 const pageLabels = {
   home: 'Home', dashboard: 'Overview', sales: 'Sales', pos: 'Point of sale',
-  products: 'Product Management', inventory: 'Inventory Management', purchases: 'Purchases', customers: 'Customers',
+  products: 'Product Management', inventory: 'Inventory Management', purchases: 'Purchases', expenses: 'Expenses', customers: 'Customers',
   suppliers: 'Suppliers', users: 'Users', branches: 'Branches',
   accounting: 'Accounting', reports: 'Reports', settings: 'Settings'
 };
@@ -1740,6 +1753,10 @@ function findAttachmentById(attId) {
     const found = (e.attachments || []).find(a => a.id === attId);
     if (found) return { attachment: found, record: e, recordType: 'entry' };
   }
+  for (const ex of state.expenses || []) {
+    const found = (ex.attachments || []).find(a => a.id === attId);
+    if (found) return { attachment: found, record: ex, recordType: 'expense' };
+  }
   return null;
 }
 
@@ -1932,26 +1949,31 @@ function renderHome() {
   const branchStatus = activeBranchObj && activeBranchObj.status === 'Inactive' ? 'Closed' : 'Active';
 
   const allHubActions = [
+    { action: 'new-expense', permPage: 'expenses', icon: '💸', title: 'Record Expense', desc: 'Fast entry: payee, purpose, amount, payment & receipts', fast: true },
     { page: 'dashboard', icon: '◫', title: 'View Dashboard', desc: 'View Trends and Performance' },
     { page: 'pos', icon: '🛒', title: 'Make a Sale', desc: 'Process sales and Print Receipts' },
     { page: 'sales', icon: '↗', title: 'Sales & Orders', desc: 'Manage customer orders and invoices' },
     { page: 'products', icon: '📦', title: 'Product Management', desc: 'Catalog, pricing, SKU, barcodes, and expiry' },
     { page: 'inventory', icon: '▤', title: 'Inventory Management', desc: 'Physical counts, stock takes, and audit history' },
     { page: 'purchases', icon: '🚚', title: 'Purchases', desc: 'Manage supplier orders and restock' },
+    { page: 'expenses', icon: '🧾', title: 'Expenses', desc: 'View, filter, settle, and track all business expenses' },
     { page: 'reports', icon: '📊', title: 'Reports', desc: 'Product reports, payments, and financial insights' },
-    { page: 'accounting', icon: '🧾', title: 'Expense Tracking', desc: 'Track business expenses and outflows' },
-    { page: 'customers', icon: '💳', title: 'Payment Tracking', desc: 'Track customer and supplier payments' },
+    { page: 'accounting', icon: '◈', title: 'Accounting & Ledger', desc: 'Customer and supplier account balances' },
+    { page: 'customers', icon: '💳', title: 'Customers', desc: 'Manage customers and receivables' },
     { page: 'branches', icon: '🏢', title: 'Branch Management', desc: 'Manage branches and locations' }
   ];
 
   // Only display actions authorized to the specific user
-  const visibleActions = allHubActions.filter(action => canViewPage(action.page, user));
+  const visibleActions = allHubActions.filter(item =>
+    item.action ? canPerformAction(item.action) : canViewPage(item.page, user)
+  );
 
   const canViewSales = canViewPage('sales', user);
   const canViewPurchases = canViewPage('purchases', user);
+  const canViewExpenses = canViewPage('expenses', user);
   const canViewAccounting = canViewPage('accounting', user);
   const canViewReports = canViewPage('reports', user);
-  const canViewFinances = canViewSales || canViewPurchases || canViewAccounting || canViewReports || user.isBootstrap;
+  const canViewFinances = canViewSales || canViewPurchases || canViewExpenses || canViewAccounting || canViewReports || user.isBootstrap;
 
   const todayStr = today();
   const allOrders = typeof salesOrderRows === 'function' ? salesOrderRows() : (state.sales || []);
@@ -1992,9 +2014,9 @@ function renderHome() {
 
       <section class="hub-actions-grid" aria-label="Quick Actions">
         ${visibleActions.length ? visibleActions.map(action => `
-          <button type="button" class="hub-action-box" data-page="${esc(action.page)}">
+          <button type="button" class="hub-action-box ${action.fast ? 'hub-fast-action' : ''}" ${action.action ? `data-action="${esc(action.action)}"` : `data-page="${esc(action.page)}"`}>
             <div class="hub-box-icon">${action.icon}</div>
-            <strong class="hub-box-title">${esc(action.title)}</strong>
+            <strong class="hub-box-title">${esc(action.title)}${action.fast ? '<span class="hub-fast-pill">Fast</span>' : ''}</strong>
             <span class="hub-box-desc">${esc(action.desc)}</span>
           </button>
         `).join('') : `
@@ -2029,14 +2051,14 @@ function renderHome() {
           </button>
           ` : ''}
 
-          ${(canViewPurchases || canViewAccounting) ? `
-          <button type="button" class="hub-fin-card" data-page="${canViewPurchases ? 'purchases' : 'accounting'}" title="Click to open Purchases & Expenses">
+          ${(canViewExpenses || canViewPurchases || canViewAccounting) ? `
+          <button type="button" class="hub-fin-card" data-page="${canViewExpenses ? 'expenses' : canViewPurchases ? 'purchases' : 'accounting'}" title="Click to open Expenses">
             <div class="hub-fin-card-top">
               <span class="hub-fin-card-label">Daily Expenses</span>
               <span class="hub-fin-pill pill-expense">${expenseCountToday} outflow${expenseCountToday === 1 ? '' : 's'}</span>
             </div>
             <strong class="hub-fin-card-value font-mono">${money(totalExpensesToday)}</strong>
-            <span class="hub-fin-card-footer">Purchases & business costs</span>
+            <span class="hub-fin-card-footer">Operating expenses & purchases</span>
           </button>
           ` : ''}
 
@@ -2089,7 +2111,7 @@ function renderHome() {
                 <td class="text-right"><button type="button" class="hub-table-btn" data-page="sales">View Sales →</button></td>
               </tr>
               ` : ''}
-              ${(canViewPurchases || canViewAccounting) ? `
+              ${(canViewExpenses || canViewPurchases || canViewAccounting) ? `
               <tr>
                 <td>
                   <div class="hub-table-cat">
@@ -2097,10 +2119,10 @@ function renderHome() {
                     <strong>Expenses of the Day</strong>
                   </div>
                 </td>
-                <td class="text-muted">Supplier purchases and operating costs logged today</td>
+                <td class="text-muted">Operating expenses and supplier purchases logged today</td>
                 <td class="text-center"><span class="badge">${expenseCountToday} record${expenseCountToday === 1 ? '' : 's'}</span></td>
                 <td class="text-right font-mono text-expense">−${money(totalExpensesToday)}</td>
-                <td class="text-right"><button type="button" class="hub-table-btn" data-page="${canViewPurchases ? 'purchases' : 'accounting'}">View Purchases →</button></td>
+                <td class="text-right"><button type="button" class="hub-table-btn" data-page="${canViewExpenses ? 'expenses' : canViewPurchases ? 'purchases' : 'accounting'}">View Expenses →</button></td>
               </tr>
               ` : ''}
               ${canViewReports ? `
@@ -4098,6 +4120,111 @@ function renderPurchases() {
   `;
 }
 
+// Expenses Management
+function renderExpenses() {
+  const allExpenses = Array.isArray(state.expenses) ? state.expenses : [];
+  const todayStr = today();
+  const totalAmount = allExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const paidExpenses = allExpenses.filter(e => Boolean(e.paid));
+  const unpaidExpenses = allExpenses.filter(e => !e.paid);
+  const paidTotal = paidExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const unpaidTotal = unpaidExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const todayTotal = allExpenses.filter(e => (e.date || '').slice(0, 10) === todayStr).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+  const query = (tableQuery || '').trim().toLowerCase();
+  const filtered = allExpenses.filter(e => {
+    if (expenseStatusFilter === 'paid' && !e.paid) return false;
+    if (expenseStatusFilter === 'unpaid' && e.paid) return false;
+    if (!isWithinDateRange(e.date, expenseDateFrom, expenseDateTo)) return false;
+    if (query) {
+      const hay = `${e.id || ''} ${e.forWhom || ''} ${e.purpose || ''} ${e.notes || ''} ${e.paymentMethod || ''}`.toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  }).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const filteredTotal = filtered.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+  const rows = filtered.map(e => {
+    const isPaid = Boolean(e.paid);
+    const attCount = Array.isArray(e.attachments) ? e.attachments.length : 0;
+    return `
+      <tr>
+        <td>
+          <strong>${esc(e.id)}</strong>
+          ${attCount > 0 ? `<div style="margin-top:4px"><span class="status-pill status-attachment" title="${attCount} receipt/document(s) attached">📎 ${attCount} attachment${attCount > 1 ? 's' : ''}</span></div>` : ''}
+        </td>
+        <td>${dateLabel(e.date)}</td>
+        <td><strong>${esc(e.forWhom || '—')}</strong></td>
+        <td>
+          <strong>${esc(e.purpose || '—')}</strong>
+          ${e.notes ? `<div class="muted" style="font-size:11.5px;margin-top:2px;max-width:280px;white-space:normal">${esc(e.notes)}</div>` : ''}
+        </td>
+        <td><strong>${money(e.amount)}</strong></td>
+        <td>
+          <span class="status-pill ${isPaid ? 'paid' : 'pending'}">${isPaid ? 'Paid' : 'Unpaid'}</span>
+          ${isPaid && e.paymentDate ? `<div class="muted" style="font-size:11px;margin-top:3px">${dateLabel(e.paymentDate)}${e.paymentMethod ? ` · ${esc(e.paymentMethod)}` : ''}</div>` : ''}
+        </td>
+        <td>
+          <details class="order-actions expense-actions">
+            <summary aria-label="Actions for ${esc(e.id)}">⋮</summary>
+            <div class="order-actions-menu">
+              <button data-action="view-expense" data-id="${esc(e.id)}">View details &amp; attachments</button>
+              ${!isPaid ? `<button data-action="mark-expense-paid" data-id="${esc(e.id)}">Mark as paid</button>` : ''}
+              <button data-action="edit-expense" data-id="${esc(e.id)}">Edit expense</button>
+              <div class="menu-divider"></div>
+              <button class="danger-action" data-action="delete-expense" data-id="${esc(e.id)}">Delete expense</button>
+            </div>
+          </details>
+        </td>
+      </tr>
+    `;
+  }).join('') || emptyRow(7, 'No expenses recorded yet — click "＋ Record expense" to log one quickly');
+
+  return `
+    ${heading('Expenses', 'Fast business expense entry, payment tracking, notes, and receipt attachments.', `
+      <button class="button" data-action="export-expenses">↓ Export CSV</button>
+      <button class="button primary" data-action="new-expense">＋ Record expense</button>
+    `)}
+    <section class="summary-strip">
+      <div class="summary-mini"><small>Total Expenses (${allExpenses.length})</small><strong>${money(totalAmount)}</strong></div>
+      <div class="summary-mini"><small>Paid (${paidExpenses.length})</small><strong style="color:#00a651">${money(paidTotal)}</strong></div>
+      <div class="summary-mini"><small>Unpaid / Pending (${unpaidExpenses.length})</small><strong style="color:${unpaidTotal > 0 ? '#ef233c' : 'var(--ink)'}">${money(unpaidTotal)}</strong></div>
+      <div class="summary-mini"><small>Today's Expenses</small><strong>${money(todayTotal)}</strong></div>
+    </section>
+    <section class="table-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label class="search-box"><input id="table-search" placeholder="Search payee, purpose, notes, or ID…" value="${esc(tableQuery)}"></label>
+          <select class="select-control" id="expense-status">
+            <option value="" ${expenseStatusFilter === '' ? 'selected' : ''}>All statuses</option>
+            <option value="paid" ${expenseStatusFilter === 'paid' ? 'selected' : ''}>Paid</option>
+            <option value="unpaid" ${expenseStatusFilter === 'unpaid' ? 'selected' : ''}>Unpaid</option>
+          </select>
+          ${dateRangeFilter('expense', expenseDateFrom, expenseDateTo)}
+        </div>
+        <span class="muted" style="font-size:11px">${filtered.length} of ${allExpenses.length} expenses · <strong>${money(filteredTotal)}</strong></span>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Reference</th>
+              <th>Date</th>
+              <th>For Whom</th>
+              <th>Purpose &amp; Notes</th>
+              <th>Amount</th>
+              <th>Payment Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 // Customers & Suppliers
 function renderParties(type) {
   const isSupplier = type === 'suppliers';
@@ -4811,6 +4938,24 @@ function collectAllPaymentRecords() {
     }
   }
 
+  // Also include paid operating expenses as OUTFLOW records
+  for (const ex of state.expenses || []) {
+    if (ex && ex.paid && Number(ex.amount) > 0) {
+      records.push({
+        id: ex.id,
+        date: (ex.paymentDate || ex.date || '').slice(0, 10),
+        direction: 'OUTFLOW',
+        partyType: 'Expense',
+        party: ex.forWhom || 'General Expense',
+        amount: Number(ex.amount) || 0,
+        method: ex.paymentMethod || 'Cash',
+        sourceType: 'Operating expense',
+        sourceId: ex.id,
+        memo: `${ex.purpose || 'Expense'}${ex.notes ? ` · ${ex.notes}` : ''}`
+      });
+    }
+  }
+
   return records.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 
@@ -5338,6 +5483,7 @@ function render() {
       products: renderProductManagement,
       inventory: renderInventoryManagement,
       purchases: renderPurchases,
+      expenses: renderExpenses,
       customers: () => renderParties('customers'),
       suppliers: () => renderParties('suppliers'),
       users: renderUsers,
@@ -5543,6 +5689,133 @@ function openPurchaseForm(existing = null) {
     document.getElementById('purchase-method').value = existing.paymentMethod || 'Cash';
     seedTransactionLineValues('purchase', existing.lines || [], 'unitCost');
   }
+}
+
+function openExpenseForm(existing = null) {
+  const isPaid = existing ? Boolean(existing.paid) : true;
+  const expDate = existing?.date || today();
+  const payDate = existing?.paymentDate || (isPaid ? expDate : today());
+  const payMethod = existing?.paymentMethod || 'Cash';
+
+  const pastPayees = [...new Set([
+    ...(state.expenses || []).map(e => e.forWhom).filter(Boolean),
+    ...(state.suppliers || []).map(s => s.name).filter(Boolean),
+    ...(state.users || []).map(u => u.name).filter(Boolean)
+  ])];
+  const commonPurposes = [...new Set([
+    'Rent', 'Electricity & Utilities', 'Transport & Fuel', 'Staff Allowance / Meals',
+    'Maintenance & Repairs', 'Internet & Airtime', 'Office Supplies', 'Delivery & Logistics',
+    'Taxes & Licenses', 'Cleaning & Security', 'Marketing', 'Miscellaneous',
+    ...(state.expenses || []).map(e => e.purpose).filter(Boolean)
+  ])];
+
+  const payeeListHtml = `<datalist id="expense-payee-list">${pastPayees.map(v => `<option value="${esc(v)}"></option>`).join('')}</datalist>`;
+  const purposeListHtml = `<datalist id="expense-purpose-list">${commonPurposes.map(v => `<option value="${esc(v)}"></option>`).join('')}</datalist>`;
+
+  const content = `
+    ${payeeListHtml}${purposeListHtml}
+    <div class="form-grid">
+      <div class="field">
+        <label for="expense-date">Expense Date *</label>
+        <input id="expense-date" name="expense-date" type="date" value="${esc(expDate)}" required>
+      </div>
+      <div class="field">
+        <label for="expense-amount">Amount (${esc(state.currency || 'TZS')}) *</label>
+        <input id="expense-amount" name="expense-amount" type="number" min="1" step="any" placeholder="e.g. 50000" value="${existing ? esc(existing.amount) : ''}" required>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="field">
+        <label for="expense-for-whom">Expense For Whom *</label>
+        <input id="expense-for-whom" name="expense-for-whom" type="text" list="expense-payee-list" placeholder="e.g. TANESCO, Juma Driver, Landlord" value="${esc(existing?.forWhom || '')}" required autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="expense-purpose">For What Purpose *</label>
+        <input id="expense-purpose" name="expense-purpose" type="text" list="expense-purpose-list" placeholder="e.g. Electricity bill, Fuel, Rent" value="${esc(existing?.purpose || '')}" required autocomplete="off">
+      </div>
+    </div>
+    <div class="field">
+      <label for="expense-notes">Expense Notes (optional)</label>
+      <textarea id="expense-notes" name="expense-notes" rows="2" placeholder="Add receipt number, extra context, or remarks…">${esc(existing?.notes || '')}</textarea>
+    </div>
+    <div class="expense-paid-card">
+      <label class="expense-paid-toggle" for="expense-paid-checkbox">
+        <input id="expense-paid-checkbox" name="expense-paid" type="checkbox" ${isPaid ? 'checked' : ''}>
+        <span>This expense has been paid</span>
+      </label>
+      <div class="expense-payment-fields" id="expense-payment-fields" ${isPaid ? '' : 'hidden'}>
+        <div class="field">
+          <label for="expense-payment-date">Date of Payment *</label>
+          <input id="expense-payment-date" name="expense-payment-date" type="date" value="${esc(payDate)}" ${isPaid ? 'required' : ''}>
+        </div>
+        ${selectField('expense-payment-method', 'Payment Method', ['Cash', 'M-Pesa', 'Tigo Pesa', 'Airtel Money', 'Bank transfer', 'Card', 'Cheque'], payMethod)}
+      </div>
+    </div>
+    ${renderAttachmentUploader(existing?.attachments || [], 'expense')}
+  `;
+
+  openDialog(
+    'save-expense',
+    existing ? `Edit Expense · ${existing.id}` : 'Record Expense (Fast Entry)',
+    existing ? 'Update expense details, payment status, or receipt attachments.' : 'Log business expenses quickly with optional receipt or document attachments.',
+    content,
+    existing ? 'Save Changes' : 'Save Expense'
+  );
+  const form = document.getElementById('modal-content');
+  if (form) {
+    if (existing) form.dataset.recordId = existing.id;
+    else delete form.dataset.recordId;
+  }
+  setTimeout(() => document.getElementById('expense-for-whom')?.focus(), 40);
+}
+
+function openExpenseDetail(expense) {
+  if (!expense) return;
+  const isPaid = Boolean(expense.paid);
+  const attsHTML = renderAttachmentsGallery(expense.attachments || [], { scope: 'expense', recordId: expense.id, canAdd: true });
+  const content = `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="background:var(--bg-subtle, #f8fafc);padding:12px 14px;border-radius:10px;border:1px solid var(--line, #e2e8f0);display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12.5px">
+        <div><small class="muted" style="display:block">Expense Date</small><strong>${dateLabel(expense.date)}</strong></div>
+        <div><small class="muted" style="display:block">Amount</small><strong style="font-size:15px">${money(expense.amount)}</strong></div>
+        <div><small class="muted" style="display:block">Expense For Whom</small><strong>${esc(expense.forWhom || '—')}</strong></div>
+        <div><small class="muted" style="display:block">Purpose</small><strong>${esc(expense.purpose || '—')}</strong></div>
+        <div><small class="muted" style="display:block">Payment Status</small><span class="status-pill ${isPaid ? 'paid' : 'pending'}">${isPaid ? 'Paid' : 'Unpaid'}</span></div>
+        <div><small class="muted" style="display:block">Date of Payment</small><strong>${isPaid && expense.paymentDate ? `${dateLabel(expense.paymentDate)}${expense.paymentMethod ? ` (${esc(expense.paymentMethod)})` : ''}` : 'Not paid yet'}</strong></div>
+      </div>
+      ${expense.notes ? `
+      <div style="background:var(--bg-subtle, #f8fafc);padding:10px 14px;border-radius:8px;border:1px solid var(--line, #e2e8f0)">
+        <small class="muted" style="display:block;margin-bottom:4px">Expense Notes</small>
+        <p style="margin:0;font-size:13px;white-space:pre-wrap">${esc(expense.notes)}</p>
+      </div>` : ''}
+      ${attsHTML}
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px">
+        ${!isPaid ? `<button type="button" class="button primary" data-action="mark-expense-paid" data-id="${esc(expense.id)}">✓ Mark as Paid</button>` : ''}
+        <button type="button" class="button" data-action="edit-expense" data-id="${esc(expense.id)}">✎ Edit Expense</button>
+      </div>
+    </div>
+  `;
+  openModal(`Expense Details · ${esc(expense.id)}`, `${esc(expense.forWhom || '')} · ${esc(expense.purpose || '')}`, content, 'Close');
+}
+
+function openMarkExpensePaidDialog(expense) {
+  if (!expense) return;
+  const content = `
+    <div style="margin-bottom:10px;padding:10px 12px;border-radius:8px;background:var(--bg-subtle, #f8fafc);border:1px solid var(--line, #e2e8f0);font-size:12.5px">
+      <strong>${esc(expense.forWhom)}</strong> — ${esc(expense.purpose)} · <strong>${money(expense.amount)}</strong>
+    </div>
+    <div class="form-grid">
+      <div class="field">
+        <label for="mark-expense-payment-date">Date of Payment *</label>
+        <input id="mark-expense-payment-date" name="mark-expense-payment-date" type="date" value="${esc(today())}" required>
+      </div>
+      ${selectField('mark-expense-payment-method', 'Payment Method', ['Cash', 'M-Pesa', 'Tigo Pesa', 'Airtel Money', 'Bank transfer', 'Card', 'Cheque'], expense.paymentMethod || 'Cash')}
+    </div>
+    ${renderAttachmentUploader(expense.attachments || [], 'expense')}
+  `;
+  openDialog('mark-expense-paid', `Mark Expense Paid · ${expense.id}`, 'Confirm the date of payment and optionally attach a payment receipt.', content, 'Confirm Paid');
+  const form = document.getElementById('modal-content');
+  if (form) form.dataset.recordId = expense.id;
 }
 
 function transactionProductPicker(kind) {
@@ -6551,6 +6824,73 @@ async function handleDialogSubmit(form) {
     const branch = { id: idFor('BR', state.branches), name, status: 'Active' }; state.branches.push(branch); state.branchData[branch.id] = Object.fromEntries(branchCollections.map(k => [k, []]));
     saveState(); document.getElementById('app-modal').close(); render(); toast('Branch added'); return;
   }
+  if (kind === 'save-expense') {
+    const date = val('expense-date') || today();
+    const forWhom = val('expense-for-whom');
+    const purpose = val('expense-purpose');
+    const notes = val('expense-notes');
+    const amount = Number(val('expense-amount')) || 0;
+    const paid = Boolean(data.get('expense-paid'));
+    const paymentDate = paid ? (val('expense-payment-date') || today()) : '';
+    const paymentMethod = paid ? (val('expense-payment-method') || 'Cash') : '';
+
+    if (!forWhom) { toast('Enter who the expense is for'); return; }
+    if (!purpose) { toast('Enter the purpose of the expense'); return; }
+    if (amount <= 0) { toast('Enter a valid expense amount greater than 0'); return; }
+
+    if (!Array.isArray(state.expenses)) state.expenses = [];
+    const existingId = form.dataset.recordId;
+    const existing = existingId ? state.expenses.find(e => e.id === existingId) : null;
+    const attachments = structuredClone(currentDraftAttachments || []);
+
+    if (existing) {
+      Object.assign(existing, {
+        date, forWhom, purpose, notes, amount, paid, paymentDate, paymentMethod, attachments,
+        updatedAt: new Date().toISOString()
+      });
+      recordActivity('Expense updated', `${forWhom} · ${purpose} · ${money(amount)}`, existing.id);
+    } else {
+      const expense = {
+        id: idFor('EXP', state.expenses),
+        date,
+        forWhom,
+        purpose,
+        notes,
+        amount,
+        paid,
+        paymentDate,
+        paymentMethod,
+        attachments,
+        createdBy: currentWorkspaceUser().name,
+        createdAt: new Date().toISOString()
+      };
+      state.expenses.unshift(expense);
+      recordActivity('Expense recorded', `${forWhom} · ${purpose} · ${money(amount)} (${paid ? 'Paid' : 'Unpaid'})`, expense.id);
+    }
+
+    currentDraftAttachments = [];
+    saveState();
+    document.getElementById('app-modal')?.close();
+    render();
+    toast(existing ? 'Expense updated' : `✓ Expense recorded (${money(amount)})`);
+    return;
+  }
+  if (kind === 'mark-expense-paid') {
+    const expense = (state.expenses || []).find(e => e.id === form.dataset.recordId);
+    if (!expense) return;
+    expense.paid = true;
+    expense.paymentDate = val('mark-expense-payment-date') || today();
+    expense.paymentMethod = val('mark-expense-payment-method') || 'Cash';
+    expense.attachments = structuredClone(currentDraftAttachments || []);
+    expense.updatedAt = new Date().toISOString();
+    currentDraftAttachments = [];
+    recordActivity('Expense marked paid', `${expense.forWhom} · ${expense.purpose} · ${money(expense.amount)} on ${expense.paymentDate}`, expense.id);
+    saveState();
+    document.getElementById('app-modal')?.close();
+    render();
+    toast(`✓ Expense ${expense.id} marked as paid`);
+    return;
+  }
   toast('This form is not available yet');
 }
 
@@ -6576,6 +6916,7 @@ function handleAction(button) {
       if (from && to && from > to) { toast('The start date must be before the end date'); break; }
       if (isSales) { salesDateFrom = from; salesDateTo = to; }
       else if (kind === 'purchase') { purchaseDateFrom = from; purchaseDateTo = to; }
+      else if (kind === 'expense') { expenseDateFrom = from; expenseDateTo = to; }
       closeDateFilterPortal();
       button.closest('details')?.removeAttribute('open');
       render();
@@ -6587,6 +6928,52 @@ function handleAction(button) {
       break;
     case 'new-product': openProductForm(); break;
     case 'edit-product': openProductForm(state.products.find(p => p.id === id)); break;
+    case 'new-expense': openExpenseForm(); break;
+    case 'edit-expense': {
+      const exp = (state.expenses || []).find(e => e.id === id);
+      if (exp) openExpenseForm(exp);
+      break;
+    }
+    case 'view-expense': {
+      const exp = (state.expenses || []).find(e => e.id === id);
+      if (exp) openExpenseDetail(exp);
+      break;
+    }
+    case 'mark-expense-paid': {
+      const exp = (state.expenses || []).find(e => e.id === id);
+      if (exp) openMarkExpensePaidDialog(exp);
+      break;
+    }
+    case 'delete-expense': {
+      const exp = (state.expenses || []).find(e => e.id === id);
+      if (!exp) break;
+      if (!button.dataset.deleteMode) {
+        openDeleteChoice(button, `Delete expense ${exp.id}?`, `${exp.forWhom} — ${exp.purpose} (${money(exp.amount)}). Move to Trash or permanently erase it.`, 'Move to Trash', 'Erase permanently');
+        break;
+      }
+      if (button.dataset.deleteMode === 'keep-history' && typeof archiveToTrashBin === 'function') {
+        archiveToTrashBin(state, 'Expense', { expense: exp }, exp.id, currentWorkspaceUser().name);
+      }
+      state.expenses = (state.expenses || []).filter(e => e.id !== id);
+      recordActivity('Expense deleted', `${exp.forWhom} · ${exp.purpose} · ${money(exp.amount)}`, id);
+      saveState();
+      render();
+      toast(button.dataset.deleteMode === 'keep-history' ? 'Expense moved to Trash' : 'Expense permanently deleted');
+      break;
+    }
+    case 'export-expenses': {
+      const list = Array.isArray(state.expenses) ? state.expenses : [];
+      downloadCSV(`tide-expenses-${today()}.csv`, [
+        ['Reference', 'Date', 'For Whom', 'Purpose', 'Notes', 'Amount', 'Status', 'Payment Date', 'Payment Method', 'Attachments', 'Recorded By'],
+        ...list.map(e => [
+          e.id, e.date || '', e.forWhom || '', e.purpose || '', e.notes || '',
+          Number(e.amount) || 0, e.paid ? 'Paid' : 'Unpaid', e.paymentDate || '',
+          e.paymentMethod || '', (e.attachments || []).length, e.createdBy || ''
+        ])
+      ]);
+      toast('Expenses exported to CSV');
+      break;
+    }
     case 'new-party': openPartyForm(type || 'Customer'); break;
     case 'edit-party': { const partyType = type === 'Supplier' ? 'Supplier' : 'Customer', list = partyType === 'Supplier' ? state.suppliers : state.customers, party = list.find(item => item.name === button.dataset.partyName); if (party) openPartyForm(partyType, party); break; }
     case 'delete-party': {
@@ -6811,6 +7198,7 @@ function handleAction(button) {
         if (scope === 'order') target = state.orders.find(o => o.id === recordId) || state.sales.find(s => s.id === recordId);
         else if (scope === 'purchase') target = state.purchases.find(p => p.id === recordId);
         else if (scope === 'entry') target = state.entries.find(e => e.id === recordId);
+        else if (scope === 'expense') target = (state.expenses || []).find(e => e.id === recordId);
         if (target && Array.isArray(target.attachments)) {
           const idx = target.attachments.findIndex(a => a.id === attId);
           if (idx >= 0) {
@@ -7960,6 +8348,8 @@ document.addEventListener('change', event => {
         targetRecord = state.purchases.find(p => p.id === recordId);
       } else if (scope === 'entry') {
         targetRecord = state.entries.find(e => e.id === recordId);
+      } else if (scope === 'expense') {
+        targetRecord = (state.expenses || []).find(e => e.id === recordId);
       }
       if (targetRecord) {
         targetRecord.attachments = targetRecord.attachments || [];
@@ -8073,6 +8463,11 @@ document.addEventListener('input', event => {
   if (event.target.id === 'table-search') {
     tableQuery = event.target.value;
     render();
+    const input = document.getElementById('table-search');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
   }
   if (event.target.id === 'report-search') {
     reportSearchQuery = event.target.value;
@@ -8134,6 +8529,17 @@ document.addEventListener('change', event => {
   if (event.target.id === 'sales-payment') { salesPaymentFilter = event.target.value; render(); }
   if (event.target.id === 'sales-delivery') { salesDeliveryFilter = event.target.value; render(); }
   if (event.target.id === 'purchase-status') { purchaseStatusFilter = event.target.value; render(); }
+  if (event.target.id === 'expense-status') { expenseStatusFilter = event.target.value; render(); }
+  if (event.target.id === 'expense-paid-checkbox') {
+    const fields = document.getElementById('expense-payment-fields');
+    const payDateInput = document.getElementById('expense-payment-date');
+    const checked = event.target.checked;
+    if (fields) fields.hidden = !checked;
+    if (payDateInput) {
+      payDateInput.required = checked;
+      if (checked && !payDateInput.value) payDateInput.value = document.getElementById('expense-date')?.value || today();
+    }
+  }
   if (event.target.id === 'report-payment-direction') { reportPaymentDirectionFilter = event.target.value; render(); }
   if (event.target.id === 'report-payment-method') { reportPaymentMethodFilter = event.target.value; render(); }
   if (event.target.id === 'inventory-movement-filter') { inventoryMovementTypeFilter = event.target.value; render(); }
@@ -8231,6 +8637,7 @@ function openCloudStatusModal() {
   const suppCount = state?.suppliers?.length || 0;
   const saleCount = (state?.orders?.length || 0) + (state?.sales?.filter(s => !state.orders?.some(o => o.id === s.orderId || o.invoiceId === s.id))?.length || 0);
   const purchCount = state?.purchases?.length || 0;
+  const expCount = state?.expenses?.length || 0;
   const userCount = state?.users?.length || 0;
 
   const content = `
@@ -8247,6 +8654,7 @@ function openCloudStatusModal() {
         <div><small class="muted" style="display:block">Suppliers</small><strong>${suppCount}</strong></div>
         <div><small class="muted" style="display:block">Sales/Orders</small><strong>${saleCount}</strong></div>
         <div><small class="muted" style="display:block">Purchases</small><strong>${purchCount}</strong></div>
+        <div><small class="muted" style="display:block">Expenses</small><strong>${expCount}</strong></div>
         <div><small class="muted" style="display:block">Users</small><strong>${userCount}</strong></div>
       </div>
       <div style="font-size:12px;line-height:1.45">
@@ -8295,6 +8703,9 @@ document.addEventListener('keydown', event => {
     event.preventDefault();
     if (page !== 'inventory') setPage('inventory');
     setTimeout(() => document.getElementById('table-search')?.focus(), 0);
+  } else if (event.altKey && event.key.toLowerCase() === 'e' && !typing) {
+    event.preventDefault();
+    if (canPerformAction('new-expense')) openExpenseForm();
   } else if (event.key === '/' && !typing) {
     event.preventDefault();
     if (page === 'pos') document.getElementById('pos-search')?.focus();

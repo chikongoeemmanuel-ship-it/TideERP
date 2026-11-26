@@ -128,7 +128,7 @@ function sanitizeState(restored, initialState) {
   const clean = { ...structuredClone(initialState), ...restored };
   const arrayKeys = [
     'products', 'customers', 'suppliers', 'orders', 'sales',
-    'returns', 'purchaseReturns', 'purchases', 'entries', 'queue',
+    'returns', 'purchaseReturns', 'purchases', 'expenses', 'entries', 'queue',
     'stockMovements', 'stocktakes', 'users', 'productCategories', 'measurementUnits',
     'productPackages', 'trashBin', 'activityLog', 'branches'
   ];
@@ -195,6 +195,7 @@ const ERP_MODULE_DEFS = {
   parties: ['customers', 'suppliers'],
   sales: ['orders', 'sales', 'returns'],
   purchases: ['purchases', 'purchaseReturns'],
+  expenses: ['expenses'],
   accounting: ['entries'],
   inventory_logs: ['stockMovements', 'stocktakes', 'stocktakeDraft'],
   system_logs: ['activityLog', 'trashBin', 'queue'],
@@ -489,6 +490,7 @@ function mergeLegacyForMigration(localState, legacyPayload) {
   merged.sales = unionById(legacyPayload.sales, localState.sales);
   merged.orders = unionById(legacyPayload.orders, localState.orders);
   merged.purchases = unionById(legacyPayload.purchases, localState.purchases);
+  merged.expenses = unionById(legacyPayload.expenses, localState.expenses);
   merged.entries = unionById(legacyPayload.entries, localState.entries);
   merged.returns = unionById(legacyPayload.returns, localState.returns);
   merged.purchaseReturns = unionById(legacyPayload.purchaseReturns, localState.purchaseReturns);

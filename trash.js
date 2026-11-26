@@ -86,6 +86,16 @@ function restoreFromTrash(state, trashId) {
         break;
       }
 
+      case 'Expense': {
+        const expense = data.expense || data;
+        if (!Array.isArray(state.expenses)) state.expenses = [];
+        if (state.expenses.some(e => e.id === expense.id)) {
+          return { success: false, message: `Expense ${expense.id} already exists` };
+        }
+        state.expenses.unshift(expense);
+        break;
+      }
+
       case 'Customer account': {
         const customer = data.customer || data;
         if (state.customers.some(c => c.id === customer.id || c.name === customer.name)) {
