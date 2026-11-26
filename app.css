@@ -12225,3 +12225,103 @@ tr.row-revoked td strong {
     white-space: nowrap !important;
   }
 }
+
+/* =========================================================
+   App Footer Toolbar: Cloud Sync Status & Branch Switcher
+   ========================================================= */
+.app-footer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--bg-card, #ffffff);
+  border-top: 1px solid var(--line, #e2e8f0);
+  margin-top: auto;
+  font-size: 12px;
+  position: sticky;
+  bottom: 0;
+  z-index: 25;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.03);
+}
+
+.footer-actions-cluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-subtle, #f1f5f9);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 8px;
+  color: var(--ink, #0f172a);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.footer-action-button:hover {
+  background: var(--accent-light, #e0f2fe);
+  border-color: var(--accent, #0284c7);
+  color: var(--accent, #0284c7);
+}
+
+.footer-icon-badge {
+  font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.footer-status-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted, #64748b);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.footer-live-beacon {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00a651;
+  box-shadow: 0 0 6px rgba(0, 166, 81, 0.6);
+  flex-shrink: 0;
+}
+
+:root[data-theme="dark"] .app-footer-bar {
+  background: #0f172a;
+  border-top-color: #1e293b;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="dark"] .footer-action-button {
+  background: #1e293b;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .footer-action-button:hover {
+  background: #334155;
+  border-color: #475569;
+}
+
+@media (max-width: 600px) {
+  .app-footer-bar {
+    padding: 6px 12px;
+  }
+  .footer-action-button {
+    padding: 5px 9px;
+    font-size: 11px;
+  }
+  .footer-status-tag {
+    font-size: 10px;
+  }
+}

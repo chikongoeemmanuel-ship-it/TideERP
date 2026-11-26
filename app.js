@@ -1113,6 +1113,20 @@ function snapshotCurrentBranch() {
   state.branchData[activeBranch.id] = data;
 }
 
+function syncProductToCloud(product) {
+  if (!product || !product.id) return;
+  if (typeof window.TideFirebase?.saveProduct === 'function') {
+    window.TideFirebase.saveProduct(product);
+  }
+}
+
+function syncProductsBatchToCloud(products) {
+  if (!Array.isArray(products) || !products.length) return;
+  if (typeof window.TideFirebase?.batchSyncProducts === 'function') {
+    window.TideFirebase.batchSyncProducts(products);
+  }
+}
+
 function saveState() {
   snapshotCurrentBranch();
   persistState(state);
@@ -1190,6 +1204,8 @@ function refreshBranchSwitcher() {
     const name = activeBranch?.name || state.branch || 'Main branch';
     button.title = `Active: ${name} (Click to switch branch)`;
     button.setAttribute('aria-label', `Switch branch, active: ${name}`);
+    const footerLabel = document.getElementById('footer-branch-label');
+    if (footerLabel) footerLabel.textContent = name;
   }
 }
 
@@ -1261,16 +1277,25 @@ function openNotificationsPanel() {
   const rect = button.getBoundingClientRect();
   if (window.innerWidth <= 760) {
     Object.assign(panel.style, {
-      top: '50px',
+      bottom: '55px',
       left: '8px',
       right: '8px',
-      width: 'auto'
+      width: 'auto',
+      top: 'auto'
     });
   } else {
-    Object.assign(panel.style, {
-      top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
-      right: `${Math.max(8, window.innerWidth - rect.right)}px`
-    });
+    if (rect.top > window.innerHeight / 2) {
+      Object.assign(panel.style, {
+        bottom: `${Math.max(10, window.innerHeight - rect.top + 8)}px`,
+        right: `${Math.max(8, window.innerWidth - rect.right)}px`,
+        top: 'auto'
+      });
+    } else {
+      Object.assign(panel.style, {
+        top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
+        right: `${Math.max(8, window.innerWidth - rect.right)}px`
+      });
+    }
   }
   panel.querySelector('.topbar-popover-close').addEventListener('click', () => panel.remove());
   panel.querySelectorAll('[data-notification-page]').forEach(item => item.addEventListener('click', () => { const target = item.dataset.notificationPage; panel.remove(); setPage(target); }));
@@ -1326,16 +1351,25 @@ function openBranchSwitcherPanel() {
   const rect = button.getBoundingClientRect();
   if (window.innerWidth <= 760) {
     Object.assign(panel.style, {
-      top: '50px',
+      bottom: '55px',
       left: '8px',
       right: '8px',
-      width: 'auto'
+      width: 'auto',
+      top: 'auto'
     });
   } else {
-    Object.assign(panel.style, {
-      top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
-      right: `${Math.max(8, window.innerWidth - rect.right)}px`
-    });
+    if (rect.top > window.innerHeight / 2) {
+      Object.assign(panel.style, {
+        bottom: `${Math.max(10, window.innerHeight - rect.top + 8)}px`,
+        right: `${Math.max(8, window.innerWidth - rect.right)}px`,
+        top: 'auto'
+      });
+    } else {
+      Object.assign(panel.style, {
+        top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
+        right: `${Math.max(8, window.innerWidth - rect.right)}px`
+      });
+    }
   }
 
   panel.querySelector('.topbar-popover-close').addEventListener('click', () => panel.remove());
@@ -2412,6 +2446,7 @@ function completePOS() {
   }
 
   const saleId = existing?.id || idFor('POS', state.sales);
+  const changedProducts = [];
   for (const line of posCart) {
     const product = state.products.find(p => p.id === line.id);
     if (product) {
@@ -2428,6 +2463,7 @@ function completePOS() {
         reason: `POS sale ${saleId}`,
         user: currentWorkspaceUser().name
       });
+      changedProducts.push(product);
     }
   }
 
@@ -2465,6 +2501,7 @@ function completePOS() {
   posMethod = 'Cash';
   posCategory = '';
   saveState();
+  syncProductsBatchToCloud(changedProducts);
   toast(`Sale ${sale.id} completed successfully`);
   render();
 }
@@ -2753,11 +2790,14 @@ function finalizeSalesOrder(order) {
         return false;
       }
     }
+    const changedProducts = [];
     for (const line of order.items || []) {
       const product = state.products.find(item => item.id === line.productId);
+      if (!product) continue;
       const before = product.stock;
       product.stock -= Number(line.qty) || 0;
       state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: order.date || today(), before, after: product.stock, delta: product.stock - before, reason: `Sales order ${order.id}`, user: currentWorkspaceUser().name });
+      changedProducts.push(product);
     }
     order.status = 'Final';
     order.finalAt = new Date().toISOString();
@@ -2773,6 +2813,9 @@ function finalizeSalesOrder(order) {
   }
   ensureOrderInvoice(order);
   saveState();
+  if (typeof changedProducts !== 'undefined' && changedProducts.length) {
+    syncProductsBatchToCloud(changedProducts);
+  }
   render();
   return true;
 }
@@ -5924,6 +5967,7 @@ async function handleDialogSubmit(form) {
     });
     recordActivity('Expired stock written off', `${qty} ${product.unit} of ${product.name}`, product.id);
     saveState();
+    syncProductToCloud(product);
     document.getElementById('app-modal').close();
     render();
     toast(`${qty} ${product.unit} of ${product.name} written off`);
@@ -5937,6 +5981,7 @@ async function handleDialogSubmit(form) {
     product.price = newPrice;
     recordActivity('Clearance discount applied', `${product.name} discounted from ${money(oldPrice)} to ${money(newPrice)}`, product.id);
     saveState();
+    syncProductToCloud(product);
     document.getElementById('app-modal').close();
     render();
     toast(`Selling price for ${product.name} updated to ${money(newPrice)}`);
@@ -5949,6 +5994,7 @@ async function handleDialogSubmit(form) {
     product.batchNumber = val('edit-expiry-batch') || '';
     recordActivity('Product expiry updated', `${product.name} · Expiry: ${product.expiryDate || 'None'} · Batch: ${product.batchNumber || 'None'}`, product.id);
     saveState();
+    syncProductToCloud(product);
     document.getElementById('app-modal').close();
     render();
     toast(`Expiry details updated for ${product.name}`);
@@ -6051,7 +6097,9 @@ async function handleDialogSubmit(form) {
     const before = product.stock, next = Math.max(0, Number(val('stock-new-quantity')) || 0); product.stock = next;
     state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: next, delta: next - before, reason: val('stock-reason') || 'Manual adjustment', user: currentWorkspaceUser().name });
     recordActivity('Stock adjusted', `${product.name} · ${before} → ${next}`, product.id);
-    saveState(); document.getElementById('app-modal').close(); render(); toast('Stock adjusted'); return;
+    saveState();
+    syncProductToCloud(product);
+    document.getElementById('app-modal').close(); render(); toast('Stock adjusted'); return;
   }
   if (kind === 'finalize-stocktake') {
     const reason = val('stocktake-reason') || 'Physical stock take count';
@@ -6155,7 +6203,9 @@ async function handleDialogSubmit(form) {
     const before = product.stock, next = Math.max(0, Number(val('bulk-quantity')) || 0); product.stock = next;
     state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date: today(), before, after: next, delta: next - before, reason: val('stock-reason') || 'Stock take / adjustment', user: currentWorkspaceUser().name });
     recordActivity('Stock count / adjustment saved', `${product.name} · ${before} → ${next}`, product.id);
-    saveState(); document.getElementById('app-modal').close(); render(); toast('Stock count saved'); return;
+    saveState();
+    syncProductToCloud(product);
+    document.getElementById('app-modal').close(); render(); toast('Stock count saved'); return;
   }
   if (kind === 'save-edit-stocktake') {
     if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); return; }
@@ -6404,7 +6454,9 @@ async function handleDialogSubmit(form) {
       });
     }
     recordActivity('Sales return recorded', `${order.customer} · ${product?.name || productId} · ${qty}`, order.id);
-    saveState(); document.getElementById('app-modal').close(); render(); toast('Return recorded and balance adjusted'); return;
+    saveState();
+    if (restock && product) syncProductToCloud(product);
+    document.getElementById('app-modal').close(); render(); toast('Return recorded and balance adjusted'); return;
   }
   if (kind === 'new-user') {
     if (!canPerformAction('new-user')) { toast('You do not have permission to add users'); return; }
@@ -6852,6 +6904,7 @@ function handleAction(button) {
     }
     case 'receive-purchase': {
       const purchase = state.purchases.find(p => p.id === id); if (!purchase || purchase.status !== 'Pending') break;
+      const changedProducts = [];
       for (const line of purchase.lines || []) {
         const product = state.products.find(p => p.id === line.productId);
         if (product) {
@@ -6865,6 +6918,7 @@ function handleAction(button) {
             product.cost = Math.round((oldVal + newVal) / product.stock);
           }
           state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: product.stock - before, reason: `Received ${purchase.id}`, user: currentWorkspaceUser().name });
+          changedProducts.push(product);
         }
       }
       purchase.status = 'Received';
@@ -6873,7 +6927,9 @@ function handleAction(button) {
         postAccountEntry({ partyType: 'Supplier', party: purchase.supplier, date: today(), type: 'Credit', amount: purchase.total, memo: `Received purchase · ${purchase.id}`, sourceType: 'purchase', sourceId: purchase.id });
       }
       recordActivity('Purchase order received', `${purchase.supplier} · ${purchase.lines.length} product lines`, purchase.id);
-      saveState(); render(); toast('Purchase received, stock & cost updated'); break;
+      saveState();
+      if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
+      render(); toast('Purchase received, stock & cost updated'); break;
     }
     case 'delete-purchase': {
       const purchase = state.purchases.find(p => p.id === id); if (!purchase) break;
@@ -7297,6 +7353,16 @@ function handleAction(button) {
       toast('Syncing with cloud database...');
       if (typeof initCloudSync === 'function') {
         initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
+      }
+      if (typeof window.TideFirebase?.getProducts === 'function') {
+        window.TideFirebase.getProducts().then(prods => {
+          if (prods && prods.length > 0) {
+            state.products = prods;
+            persistState(state);
+            render();
+            toast(`✓ Synced ${prods.length} products from cloud!`);
+          }
+        }).catch(e => console.warn('Product sync error:', e));
       }
       if (typeof pushStateToCloud === 'function') {
         pushStateToCloud(state, true);

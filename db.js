@@ -217,16 +217,26 @@ function isCloudSyncConnected() {
 function updateCloudStatusUI(status, info) {
   if (typeof document === 'undefined') return;
   const btn = document.getElementById('cloud-sync-button');
+  const indicator = document.getElementById('cloud-sync-indicator');
+  const statusText = document.getElementById('footer-sync-status-text');
+  const beacon = document.querySelector('.footer-live-beacon');
+  const target = indicator || btn;
   if (!btn) return;
   if (status === 'connected') {
-    btn.style.color = '#00a651';
+    if (target) target.style.color = '#00a651';
     btn.title = 'Cloud Sync: Live Connected (PC ⇄ Phone)';
+    if (statusText) statusText.textContent = 'Multi-device Live';
+    if (beacon) beacon.style.background = '#00a651';
   } else if (status === 'connecting') {
-    btn.style.color = '#f59e0b';
+    if (target) target.style.color = '#f59e0b';
     btn.title = 'Cloud Sync: Connecting to Firebase...';
+    if (statusText) statusText.textContent = 'Connecting...';
+    if (beacon) beacon.style.background = '#f59e0b';
   } else {
-    btn.style.color = '#ef4444';
+    if (target) target.style.color = '#ef4444';
     btn.title = 'Cloud Sync: Disconnected (Tap to view)';
+    if (statusText) statusText.textContent = 'Offline (local mode)';
+    if (beacon) beacon.style.background = '#ef4444';
   }
 }
 

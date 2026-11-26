@@ -80,17 +80,24 @@
   /**
    * Initialize Firebase Web SDK and Firestore instance
    */
+  let initRetryCount = 0;
   async function initFirebase(customConfig) {
     if (firestoreDb) return firestoreDb;
+
+    // Retry loop on slow mobile network connections waiting for Google CDN scripts
+    while ((typeof window === 'undefined' || !window.firebase) && initRetryCount < 30) {
+      initRetryCount++;
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    if (typeof window === 'undefined' || !window.firebase) {
+      console.warn('Firebase SDK not loaded on window after retries');
+      return null;
+    }
 
     const config = customConfig || await loadConfig();
     if (!config || !config.projectId) {
       console.warn('Firebase config missing projectId');
-      return null;
-    }
-
-    if (typeof window === 'undefined' || !window.firebase) {
-      console.warn('Firebase SDK not loaded on window');
       return null;
     }
 
@@ -199,7 +206,10 @@
    * Fetch all products once from the "products" collection
    */
   async function getProducts() {
-    const db = getDb();
+    let db = getDb();
+    if (!db) {
+      db = await initFirebase();
+    }
     if (!db) return [];
 
     try {
