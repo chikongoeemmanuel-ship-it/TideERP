@@ -1,7 +1,8 @@
 /**
  * Tide ERP - Firebase Firestore Client Service
  * Project: tideerp
- * Provides real-time synchronization for products, customers, and workspace records.
+ * Provides unified real-time synchronization for products (with safe doc IDs,
+ * chunked batch upload, chunked batch delete, and offline persistence).
  */
 
 (function (root, factory) {
@@ -15,7 +16,6 @@
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  // Fallback credentials used if environment variables or API config cannot be fetched
   const FALLBACK_CONFIG = {
     apiKey: "AIzaSyDaFgbjKDUHGS4hbBTb4sjJ76nK24ozkls",
     authDomain: "tideerp.firebaseapp.com",
@@ -28,9 +28,85 @@
 
   let firebaseApp = null;
   let firestoreDb = null;
+  let persistenceAttempted = false;
   let productsUnsubscribe = null;
   let activeConfig = null;
-  let isSyncing = false;
+  let bulkMutationCount = 0;
+  let pendingStreamCallback = null;
+  let pendingStreamProducts = null;
+  let pendingStreamSnapshot = null;
+  let productBatchQueue = Promise.resolve();
+
+  /**
+   * Convert any SKU / product ID into a valid Firestore document ID
+   * (Firestore doc IDs cannot contain '/' or be '.' or '..').
+   */
+  function toDocId(rawId) {
+    let s = String(rawId ?? '').trim();
+    if (!s || s === '.' || s === '..') {
+      s = 'prod_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    }
+    s = s.replace(/\//g, '__SL__');
+    if (s.length > 300) s = s.slice(0, 300);
+    return s;
+  }
+
+  function resolveProductDocId(productOrId) {
+    if (productOrId && typeof productOrId === 'object') {
+      if (productOrId._docId && !String(productOrId._docId).includes('/')) {
+        return String(productOrId._docId);
+      }
+      return toDocId(productOrId.id);
+    }
+    return toDocId(productOrId);
+  }
+
+  function isBulkOpActive() {
+    return bulkMutationCount > 0;
+  }
+
+  function beginBulkOp() {
+    bulkMutationCount++;
+  }
+
+  function endBulkOp() {
+    bulkMutationCount = Math.max(0, bulkMutationCount - 1);
+    if (bulkMutationCount === 0 && pendingStreamProducts && typeof pendingStreamCallback === 'function') {
+      const prods = pendingStreamProducts;
+      const snap = pendingStreamSnapshot;
+      pendingStreamProducts = null;
+      pendingStreamSnapshot = null;
+      try {
+        pendingStreamCallback(prods, snap);
+      } catch (err) {
+        console.warn('Deferred product stream callback error:', err);
+      }
+    }
+  }
+
+  function enqueueProductBatch(taskFn) {
+    const next = productBatchQueue.then(taskFn, taskFn);
+    productBatchQueue = next.catch(() => {});
+    return next;
+  }
+
+  async function commitBatchWithRetry(batchBuilder, maxRetries = 3) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const batch = batchBuilder();
+        await batch.commit();
+        return true;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`Firestore batch attempt ${attempt}/${maxRetries} failed:`, err);
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 400 * attempt));
+        }
+      }
+    }
+    throw lastErr;
+  }
 
   /**
    * Fetch Firebase credentials from Vercel Serverless Function `/api/config`
@@ -39,13 +115,11 @@
   async function loadConfig() {
     if (activeConfig) return activeConfig;
 
-    // 1. Check window.__FIREBASE_CONFIG__ (if injected via build or head)
     if (typeof window !== 'undefined' && window.__FIREBASE_CONFIG__ && window.__FIREBASE_CONFIG__.projectId) {
       activeConfig = window.__FIREBASE_CONFIG__;
       return activeConfig;
     }
 
-    // 2. Fetch from Vercel Serverless Function /api/config
     try {
       if (typeof fetch === 'function' && location.protocol !== 'file:') {
         const res = await fetch('/api/config', { cache: 'no-cache' });
@@ -61,7 +135,6 @@
       console.info('Config API unavailable; using standard client credentials.');
     }
 
-    // 3. Check localStorage
     try {
       const stored = localStorage.getItem('tide-firebase-config');
       if (stored) {
@@ -78,42 +151,55 @@
   }
 
   /**
-   * Initialize Firebase Web SDK and Firestore instance
+   * Initialize Firebase Web SDK and Firestore instance (with offline persistence)
    */
-  let initRetryCount = 0;
+  let initPromise = null;
   async function initFirebase(customConfig) {
     if (firestoreDb) return firestoreDb;
+    if (initPromise && !customConfig) return initPromise;
 
-    // Retry loop on slow mobile network connections waiting for Google CDN scripts
-    while ((typeof window === 'undefined' || !window.firebase) && initRetryCount < 30) {
-      initRetryCount++;
-      await new Promise(r => setTimeout(r, 350));
-    }
-
-    if (typeof window === 'undefined' || !window.firebase) {
-      console.warn('Firebase SDK not loaded on window after retries');
-      return null;
-    }
-
-    const config = customConfig || await loadConfig();
-    if (!config || !config.projectId) {
-      console.warn('Firebase config missing projectId');
-      return null;
-    }
-
-    try {
-      if (!window.firebase.apps.length) {
-        firebaseApp = window.firebase.initializeApp(config);
-      } else {
-        firebaseApp = window.firebase.app();
+    initPromise = (async () => {
+      let retries = 0;
+      while ((typeof window === 'undefined' || !window.firebase) && retries < 30) {
+        retries++;
+        await new Promise(r => setTimeout(r, 350));
       }
-      firestoreDb = window.firebase.firestore();
-      console.info('✓ Firebase Firestore initialized under project: ' + config.projectId);
-      return firestoreDb;
-    } catch (err) {
-      console.error('Failed to initialize Firebase:', err);
-      return null;
-    }
+
+      if (typeof window === 'undefined' || !window.firebase) {
+        console.warn('Firebase SDK not loaded on window after retries');
+        return null;
+      }
+
+      const config = customConfig || await loadConfig();
+      if (!config || !config.projectId) {
+        console.warn('Firebase config missing projectId');
+        return null;
+      }
+
+      try {
+        if (!window.firebase.apps.length) {
+          firebaseApp = window.firebase.initializeApp(config);
+        } else {
+          firebaseApp = window.firebase.app();
+        }
+        firestoreDb = window.firebase.firestore();
+        if (!persistenceAttempted) {
+          persistenceAttempted = true;
+          firestoreDb.enablePersistence({ synchronizeTabs: true }).catch(() => {
+            // Safe to ignore in private browsing or older browsers
+          });
+        }
+        console.info('✓ Firebase Firestore initialized under project: ' + config.projectId);
+        return firestoreDb;
+      } catch (err) {
+        console.error('Failed to initialize Firebase:', err);
+        return null;
+      }
+    })();
+
+    const db = await initPromise;
+    if (!db) initPromise = null;
+    return db;
   }
 
   function getDb() {
@@ -125,21 +211,13 @@
     return null;
   }
 
-  // =========================================================================
-  // CRUD Operations on the "products" Firestore Collection
-  // =========================================================================
-
-  /**
-   * Save or update a product document in Firestore
-   * Collection: "products", Document ID: product.id (SKU)
-   */
-  async function saveProduct(product) {
-    const db = getDb();
-    if (!db || !product || !product.id) return false;
-
-    try {
-      const clean = {
-        id: String(product.id),
+  function normalizeProductForCloud(product) {
+    const idStr = String(product.id ?? '').trim();
+    const docId = resolveProductDocId(product);
+    return {
+      docId,
+      data: {
+        id: idStr || docId,
         name: String(product.name || '').trim(),
         category: String(product.category || 'General').trim(),
         price: Number(product.price) || 0,
@@ -152,10 +230,23 @@
         batchNumber: String(product.batchNumber || ''),
         updatedAt: new Date().toISOString(),
         updatedAtMs: Date.now()
-      };
+      }
+    };
+  }
 
-      await db.collection('products').doc(clean.id).set(clean, { merge: true });
-      console.info(`✓ Product ${clean.id} (${clean.name}) saved to Firestore`);
+  // =========================================================================
+  // CRUD Operations on the "products" Firestore Collection
+  // =========================================================================
+
+  async function saveProduct(product) {
+    let db = getDb();
+    if (!db) db = await initFirebase();
+    if (!db || !product || !product.id) return false;
+
+    try {
+      const { docId, data } = normalizeProductForCloud(product);
+      product._docId = docId;
+      await db.collection('products').doc(docId).set(data, { merge: true });
       return true;
     } catch (err) {
       console.error(`Failed to save product ${product?.id} to Firestore:`, err);
@@ -163,21 +254,19 @@
     }
   }
 
-  /**
-   * Update specific fields of a product document in Firestore
-   */
   async function updateProduct(productId, updates) {
-    const db = getDb();
+    let db = getDb();
+    if (!db) db = await initFirebase();
     if (!db || !productId || !updates) return false;
 
     try {
+      const docId = resolveProductDocId(productId);
       const cleanUpdates = {
         ...updates,
         updatedAt: new Date().toISOString(),
         updatedAtMs: Date.now()
       };
-      await db.collection('products').doc(String(productId)).update(cleanUpdates);
-      console.info(`✓ Product ${productId} updated in Firestore`);
+      await db.collection('products').doc(docId).set(cleanUpdates, { merge: true });
       return true;
     } catch (err) {
       console.error(`Failed to update product ${productId} in Firestore:`, err);
@@ -185,49 +274,56 @@
     }
   }
 
-  /**
-   * Delete a product document from the "products" collection in Firestore
-   */
-  async function deleteProduct(productId) {
-    const db = getDb();
-    if (!db || !productId) return false;
+  async function deleteProduct(productOrId) {
+    let db = getDb();
+    if (!db) db = await initFirebase();
+    if (!db || !productOrId) return false;
 
     try {
-      await db.collection('products').doc(String(productId)).delete();
-      console.info(`✓ Product ${productId} deleted from Firestore`);
+      const docId = resolveProductDocId(productOrId);
+      await db.collection('products').doc(docId).delete();
       return true;
     } catch (err) {
-      console.error(`Failed to delete product ${productId} from Firestore:`, err);
+      console.error(`Failed to delete product ${productOrId?.id || productOrId} from Firestore:`, err);
       return false;
     }
   }
 
   /**
-   * Fetch all products once from the "products" collection
+   * Fetch all products once from the "products" collection (preferring fresh server data)
    */
-  async function getProducts() {
+  async function getProducts(preferServer = false) {
     let db = getDb();
-    if (!db) {
-      db = await initFirebase();
-    }
-    if (!db) return [];
+    if (!db) db = await initFirebase();
+    if (!db) return null;
 
     try {
-      const snapshot = await db.collection('products').get();
+      let snapshot;
+      if (preferServer) {
+        try {
+          snapshot = await db.collection('products').get({ source: 'server' });
+        } catch {
+          snapshot = await db.collection('products').get();
+        }
+      } else {
+        snapshot = await db.collection('products').get();
+      }
       const products = [];
       snapshot.forEach(doc => {
-        products.push(doc.data());
+        const data = doc.data();
+        if (data) {
+          products.push({ ...data, id: data.id || doc.id, _docId: doc.id });
+        }
       });
       return products;
     } catch (err) {
       console.error('Failed to get products from Firestore:', err);
-      return [];
+      return null;
     }
   }
 
   /**
    * Stream products in real-time using onSnapshot listener on the "products" collection
-   * Automatically notifies onUpdate whenever products are added, modified, or removed across devices
    */
   function streamProducts(onUpdate, onError) {
     const db = getDb();
@@ -237,6 +333,7 @@
       productsUnsubscribe();
       productsUnsubscribe = null;
     }
+    pendingStreamCallback = onUpdate;
 
     try {
       productsUnsubscribe = db.collection('products').onSnapshot(
@@ -244,10 +341,16 @@
           const products = [];
           snapshot.forEach(doc => {
             const data = doc.data();
-            if (data && data.id) {
-              products.push(data);
+            if (data) {
+              products.push({ ...data, id: data.id || doc.id, _docId: doc.id });
             }
           });
+          if (bulkMutationCount > 0) {
+            // Defer partial intermediate snapshots while a multi-chunk upload/delete is committing
+            pendingStreamProducts = products;
+            pendingStreamSnapshot = snapshot;
+            return;
+          }
           if (typeof onUpdate === 'function') {
             onUpdate(products, snapshot);
           }
@@ -266,59 +369,144 @@
   }
 
   /**
-   * Batch sync an array of products into the Firestore "products" collection
-   * Splits into batches of 400 (under Firestore's 500-op limit per batch)
+   * Batch upload/sync ANY number of products into Firestore "products" collection.
+   * Deduplicates by safe doc ID, chunks into batches of 450, retries failed chunks,
+   * locks streamProducts mid-upload so partial batches never overwrite local state.
    */
-  async function batchSyncProducts(productsArray) {
-    const db = getDb();
-    if (!db || !Array.isArray(productsArray) || !productsArray.length) return 0;
-    if (isSyncing) return 0;
-    isSyncing = true;
-
-    try {
-      const BATCH_SIZE = 400;
-      let totalSynced = 0;
-
-      for (let i = 0; i < productsArray.length; i += BATCH_SIZE) {
-        const chunk = productsArray.slice(i, i + BATCH_SIZE);
-        const batch = db.batch();
-
-        for (const p of chunk) {
-          if (!p || !p.id) continue;
-          const ref = db.collection('products').doc(String(p.id));
-          const clean = {
-            id: String(p.id),
-            name: String(p.name || '').trim(),
-            category: String(p.category || 'General').trim(),
-            price: Number(p.price) || 0,
-            cost: Number(p.cost) || 0,
-            stock: Math.max(0, Number(p.stock) || 0),
-            low: Math.max(0, Number(p.low) || 0),
-            unit: String(p.unit || 'Piece').trim(),
-            status: String(p.status || 'Active'),
-            expiryDate: String(p.expiryDate || ''),
-            batchNumber: String(p.batchNumber || '')
-          };
-          batch.set(ref, clean, { merge: true });
-          totalSynced++;
-        }
-
-        await batch.commit();
-      }
-      console.info(`✓ Batch synced ${totalSynced} products to Firestore "products" collection`);
-      return totalSynced;
-    } catch (err) {
-      console.error('Failed to batch sync products to Firestore:', err);
-      return 0;
-    } finally {
-      isSyncing = false;
+  async function batchSyncProducts(productsArray, onProgress) {
+    if (!Array.isArray(productsArray) || !productsArray.length) {
+      return { synced: 0, total: 0, failed: 0 };
     }
+
+    return enqueueProductBatch(async () => {
+      let db = getDb();
+      if (!db) db = await initFirebase();
+      if (!db) return { synced: 0, total: productsArray.length, failed: productsArray.length };
+
+      // Deduplicate by Firestore docId (last item wins)
+      const uniqueMap = new Map();
+      for (const p of productsArray) {
+        if (!p || (!p.id && !p.name)) continue;
+        const normalized = normalizeProductForCloud(p);
+        p._docId = normalized.docId;
+        uniqueMap.set(normalized.docId, normalized);
+      }
+
+      const items = Array.from(uniqueMap.values());
+      const total = items.length;
+      const BATCH_SIZE = 450; // Safely under Firestore's 500 writes/batch limit
+      let synced = 0;
+      let failed = 0;
+
+      beginBulkOp();
+      try {
+        for (let i = 0; i < total; i += BATCH_SIZE) {
+          const chunk = items.slice(i, i + BATCH_SIZE);
+          try {
+            await commitBatchWithRetry(() => {
+              const batch = db.batch();
+              for (const item of chunk) {
+                const ref = db.collection('products').doc(item.docId);
+                batch.set(ref, item.data, { merge: true });
+              }
+              return batch;
+            }, 3);
+            synced += chunk.length;
+          } catch (chunkErr) {
+            console.error(`Batch upload chunk ${i}-${i + chunk.length} failed; falling back to per-item save:`, chunkErr);
+            for (const item of chunk) {
+              try {
+                await db.collection('products').doc(item.docId).set(item.data, { merge: true });
+                synced++;
+              } catch (itemErr) {
+                failed++;
+                console.error(`Failed saving product ${item.docId}:`, itemErr);
+              }
+            }
+          }
+          if (typeof onProgress === 'function') {
+            try { onProgress(synced, total, failed); } catch {}
+          }
+        }
+        console.info(`✓ Batch synced ${synced}/${total} products to Firestore (failed: ${failed})`);
+        return { synced, total, failed };
+      } finally {
+        endBulkOp();
+      }
+    });
+  }
+
+  /**
+   * Batch delete ANY number of products from Firestore "products" collection at once.
+   * Uses Firestore WriteBatch (450 deletes per commit) and locks streamProducts mid-delete
+   * so deleted items never bounce back one-by-one.
+   */
+  async function batchDeleteProducts(productsOrIds, onProgress) {
+    if (!Array.isArray(productsOrIds) || !productsOrIds.length) {
+      return { deleted: 0, total: 0, failed: 0 };
+    }
+
+    return enqueueProductBatch(async () => {
+      let db = getDb();
+      if (!db) db = await initFirebase();
+      if (!db) return { deleted: 0, total: productsOrIds.length, failed: productsOrIds.length };
+
+      const docIdSet = new Set();
+      for (const item of productsOrIds) {
+        if (!item) continue;
+        const docId = resolveProductDocId(item);
+        if (docId) docIdSet.add(docId);
+      }
+
+      const docIds = Array.from(docIdSet);
+      const total = docIds.length;
+      const BATCH_SIZE = 450;
+      let deleted = 0;
+      let failed = 0;
+
+      beginBulkOp();
+      try {
+        for (let i = 0; i < total; i += BATCH_SIZE) {
+          const chunk = docIds.slice(i, i + BATCH_SIZE);
+          try {
+            await commitBatchWithRetry(() => {
+              const batch = db.batch();
+              for (const docId of chunk) {
+                batch.delete(db.collection('products').doc(docId));
+              }
+              return batch;
+            }, 3);
+            deleted += chunk.length;
+          } catch (chunkErr) {
+            console.error(`Batch delete chunk ${i}-${i + chunk.length} failed; falling back to per-item delete:`, chunkErr);
+            for (const docId of chunk) {
+              try {
+                await db.collection('products').doc(docId).delete();
+                deleted++;
+              } catch (itemErr) {
+                failed++;
+                console.error(`Failed deleting product ${docId}:`, itemErr);
+              }
+            }
+          }
+          if (typeof onProgress === 'function') {
+            try { onProgress(deleted, total, failed); } catch {}
+          }
+        }
+        console.info(`✓ Batch deleted ${deleted}/${total} products from Firestore (failed: ${failed})`);
+        return { deleted, total, failed };
+      } finally {
+        endBulkOp();
+      }
+    });
   }
 
   return {
     initFirebase,
     loadConfig,
     getDb,
+    toDocId,
+    isBulkOpActive,
     saveProduct,
     createProduct: saveProduct,
     updateProduct,
@@ -326,6 +514,7 @@
     getProducts,
     streamProducts,
     batchSyncProducts,
+    batchDeleteProducts,
     FALLBACK_CONFIG
   };
 }));

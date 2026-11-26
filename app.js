@@ -1096,7 +1096,10 @@ function activateAssignedBranch(user = currentWorkspaceUser()) {
     snapshotCurrentBranch();
     activeBranch = branch;
     const saved = state.branchData?.[branch.id] || {};
-    branchCollections.forEach(key => { state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : [])); });
+    branchCollections.forEach(key => {
+      if (key === 'products') return; // Products are managed globally via Firestore 'products' collection
+      state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : []));
+    });
   }
   state.activeBranchId = branch.id;
   state.branch = branch.name;
@@ -3503,7 +3506,7 @@ function renderProductManagement() {
           </select>
         </div>
         <span class="muted" id="inventory-result-count" style="font-size:11px">${rows.length} of ${state.products.length} products</span>
-        <div id="bulk-product-bar" class="bulk-action-bar" ${selectedCount > 0 ? '' : 'hidden style="display:none!important;"'}>
+        <div id="bulk-product-bar" class="bulk-action-bar" ${selectedCount > 0 ? 'style="display:flex"' : 'hidden style="display:none"'}>
           <span id="bulk-product-count" class="muted" style="font-size:11px">${selectedCount > 0 ? `${selectedCount} product${selectedCount !== 1 ? 's' : ''} selected` : ''}</span>
           <button class="button small danger-action" data-action="bulk-delete-products">Delete selected</button>
         </div>
@@ -3940,17 +3943,19 @@ function updateBulkProductBar() {
   const n = selectedProductIds.size;
   if (n === 0) {
     bar.hidden = true;
-    bar.style.display = 'none';
+    bar.style.setProperty('display', 'none');
   } else {
     bar.hidden = false;
-    bar.style.display = 'flex';
+    bar.removeAttribute('hidden');
+    bar.style.setProperty('display', 'flex');
   }
   if (count) count.textContent = `${n} product${n !== 1 ? 's' : ''} selected`;
   const allChecks = document.querySelectorAll('.product-row-check');
   const selectAll = document.getElementById('select-all-products');
   if (selectAll && allChecks.length) {
-    selectAll.checked = n > 0 && n === allChecks.length;
-    selectAll.indeterminate = n > 0 && n < allChecks.length;
+    const checkedCount = Array.from(allChecks).filter(cb => cb.checked).length;
+    selectAll.checked = checkedCount > 0 && checkedCount === allChecks.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < allChecks.length;
   }
 }
 
@@ -3967,6 +3972,7 @@ function deleteProduct(id, button = null) {
     return;
   }
   const mode = button.dataset.deleteMode;
+  document.getElementById('app-modal')?.close();
   if (mode === 'erase-all') eraseProductHistory(id);
   for (const record of [...state.orders, ...state.sales]) {
     for (const line of record.items || []) {
@@ -3980,7 +3986,7 @@ function deleteProduct(id, button = null) {
   }
   state.products = state.products.filter(p => p.id !== id);
   if (typeof window.TideFirebase?.deleteProduct === 'function') {
-    window.TideFirebase.deleteProduct(id);
+    window.TideFirebase.deleteProduct(product);
   }
   if (mode === 'erase-all') state.activityLog = (state.activityLog || []).filter(item => item.reference !== id && !String(item.details || '').includes(product.name));
   recordActivity('Product deleted', mode === 'erase-all' ? `${product.name} · related records erased` : `${product.name} · previous records retained`, id);
@@ -5363,44 +5369,42 @@ function openDialog(kind, title, subtitle, content, confirmLabel = 'Save') {
   document.getElementById('modal-content').dataset.dialogKind = kind;
 }
 
-function handleRemoteCloudSync(remotePayload, deviceName) {
-  if (!remotePayload || typeof remotePayload !== 'object') return;
+function handleRemoteCloudSync(remoteFields, deviceName, changedModules = []) {
+  if (!remoteFields || typeof remoteFields !== 'object') return;
   const curId = state.currentUserId;
   const curBranchId = state.activeBranchId;
+  const curProducts = Array.isArray(state.products) ? state.products : [];
 
-  // Non-destructive intelligent merge: local products, sales, customers, etc. are never wiped out
-  const merged = typeof mergeWorkspaceState === 'function' ? mergeWorkspaceState(state, remotePayload) : { ...remotePayload, ...state };
+  const updated = { ...state };
+  for (const [key, value] of Object.entries(remoteFields)) {
+    if (key === 'products' || key === 'currentUserId') continue;
+    updated[key] = value;
+  }
 
-  const remoteCustomerCount = remotePayload.customers?.length || 0;
-  const remoteSalesCount = remotePayload.sales?.length || 0;
-  const remoteOrderCount = remotePayload.orders?.length || 0;
-  const remoteSupplierCount = remotePayload.suppliers?.length || 0;
-
-  const localHasUniqueData =
-    (state.customers?.length || 0) > remoteCustomerCount ||
-    (state.sales?.length || 0) > remoteSalesCount ||
-    (state.orders?.length || 0) > remoteOrderCount ||
-    (state.suppliers?.length || 0) > remoteSupplierCount ||
-    (merged.customers?.length || 0) > remoteCustomerCount ||
-    (merged.sales?.length || 0) > remoteSalesCount ||
-    (merged.orders?.length || 0) > remoteOrderCount;
-
-  const sanitized = sanitizeState(merged, initialState);
-  sanitized.products = state.products; // Preserve products managed via dedicated 'products' collection
+  const sanitized = sanitizeState(updated, initialState);
+  sanitized.products = curProducts; // Products stay synchronized via the dedicated 'products' collection
   sanitized.currentUserId = curId;
+
+  // Keep this device on its active branch if it still exists
   if (curBranchId && (sanitized.branches || []).some(b => b.id === curBranchId)) {
     sanitized.activeBranchId = curBranchId;
+    activeBranch = sanitized.branches.find(b => b.id === curBranchId) || activeBranch;
+    sanitized.branch = activeBranch?.name || sanitized.branch;
+  } else if (sanitized.branches?.length) {
+    activeBranch = sanitized.branches[0];
+    sanitized.activeBranchId = activeBranch.id;
+    sanitized.branch = activeBranch.name;
   }
+
   state = sanitized;
   persistState(state);
+  refreshBranchSwitcher();
+  refreshNotificationIndicator();
+  updateConnection();
   render();
 
-  if (localHasUniqueData && typeof pushStateToCloud === 'function') {
-    // If this device has items (products, customers, sales) that remote didn't have, immediately push unified merge
-    pushStateToCloud(state, true);
-  } else {
-    toast(`☁️ Live Sync: Synced changes from ${deviceName || 'cloud'}`);
-  }
+  const label = changedModules.length ? changedModules.join(', ').replace(/_/g, ' ') : 'ERP data';
+  toast(`☁️ Live update from ${deviceName || 'another device'} (${label})`);
 }
 
 function openCloudSyncDialog() {
@@ -5807,7 +5811,10 @@ function switchBranch(id) {
   if (branch.id === activeBranch.id) return;
   snapshotCurrentBranch(); activeBranch = branch;
   const saved = state.branchData?.[id] || {};
-  branchCollections.forEach(key => { state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : [])); });
+  branchCollections.forEach(key => {
+    if (key === 'products') return; // Products are managed globally via Firestore 'products' collection
+    state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : []));
+  });
   state.activeBranchId = branch.id; state.branch = branch.name; saveState();
   if (!canViewPage(page)) page = 'dashboard';
   pageHistory.length = 0; history.pushState({ erpPage: page }, '', `#${page}`); render(); toast(`Switched to ${branch.name}`);
@@ -6553,6 +6560,9 @@ function handleAction(button) {
   const type = button.dataset.partyType;
 
   if (!canPerformAction(action, button)) { toast('Your account does not have permission to perform that action'); return; }
+  if (button.dataset.deleteMode) {
+    document.getElementById('app-modal')?.close();
+  }
 
   switch (action) {
     case 'apply-date-range':
@@ -7252,30 +7262,66 @@ function handleAction(button) {
         break;
       }
       const bulkMode = button.dataset.deleteMode;
-      for (const pid of ids) {
-        const product = state.products.find(p => p.id === pid);
-        if (!product) continue;
-        if (bulkMode === 'erase-all') eraseProductHistory(pid);
-        for (const record of [...state.orders, ...state.sales]) {
-          for (const line of record.items || []) {
-            if (line.productId === pid && !line.product && !line.productName) line.product = product.name;
-          }
+      const idSet = new Set(ids);
+      const nameById = new Map();
+      const toDelete = [];
+      for (const p of state.products) {
+        if (idSet.has(p.id)) {
+          nameById.set(p.id, p.name);
+          toDelete.push(p);
         }
-        for (const purchase of state.purchases) {
-          for (const line of purchase.lines || []) {
-            if (line.productId === pid && !line.product && !line.productName) line.product = product.name;
-          }
-        }
-        state.products = state.products.filter(p => p.id !== pid);
-        if (typeof window.TideFirebase?.deleteProduct === 'function') {
-          window.TideFirebase.deleteProduct(pid);
-        }
-        if (bulkMode === 'erase-all') state.activityLog = (state.activityLog || []).filter(item => item.reference !== pid);
       }
-      recordActivity('Bulk product delete', `${ids.length} product${ids.length !== 1 ? 's' : ''} removed`);
+      if (!toDelete.length) { selectedProductIds.clear(); render(); break; }
+
+      if (bulkMode === 'erase-all') {
+        for (const pid of idSet) eraseProductHistory(pid);
+      }
+      for (const record of [...state.orders, ...state.sales]) {
+        for (const line of record.items || []) {
+          if (idSet.has(line.productId) && !line.product && !line.productName) {
+            line.product = nameById.get(line.productId) || line.productId;
+          }
+        }
+      }
+      for (const purchase of state.purchases) {
+        for (const line of purchase.lines || []) {
+          if (idSet.has(line.productId) && !line.product && !line.productName) {
+            line.product = nameById.get(line.productId) || line.productId;
+          }
+        }
+      }
+      if (bulkMode === 'erase-all') {
+        state.activityLog = (state.activityLog || []).filter(item => !idSet.has(item.reference));
+      }
+
+      // Remove all selected products in a single O(N) pass
+      state.products = state.products.filter(p => !idSet.has(p.id));
+      recordActivity('Bulk product delete', `${toDelete.length} product${toDelete.length !== 1 ? 's' : ''} removed`);
       selectedProductIds.clear();
-      saveState(); render();
-      toast(bulkMode === 'erase-all' ? `${ids.length} product${ids.length !== 1 ? 's' : ''} and related transactions erased` : `${ids.length} product${ids.length !== 1 ? 's' : ''} deleted; history retained`);
+      saveState();
+      render();
+
+      if (typeof window.TideFirebase?.batchDeleteProducts === 'function') {
+        toast(`Deleting ${toDelete.length} product${toDelete.length !== 1 ? 's' : ''} from cloud...`);
+        window.TideFirebase.batchDeleteProducts(toDelete, (done, total) => {
+          if (total > 450 && done < total) {
+            toast(`Deleting products from cloud: ${done} / ${total}...`);
+          }
+        }).then(res => {
+          if (res.failed > 0) {
+            toast(`Deleted ${res.deleted}/${res.total} products (${res.failed} failed)`);
+          } else {
+            toast(bulkMode === 'erase-all'
+              ? `✓ ${res.deleted} product${res.deleted !== 1 ? 's' : ''} and related transactions erased across all devices`
+              : `✓ ${res.deleted} product${res.deleted !== 1 ? 's' : ''} deleted across all devices; history retained`);
+          }
+        }).catch(err => {
+          console.error('Bulk cloud product delete error:', err);
+          toast('Products removed locally; cloud delete will retry when online');
+        });
+      } else {
+        toast(bulkMode === 'erase-all' ? `${toDelete.length} product${toDelete.length !== 1 ? 's' : ''} and related transactions erased` : `${toDelete.length} product${toDelete.length !== 1 ? 's' : ''} deleted; history retained`);
+      }
       break;
     }
     case 'open-branch': switchBranch(id); break;
@@ -7350,23 +7396,42 @@ function handleAction(button) {
     }
     case 'open-cloud-sync-dialog': openCloudSyncDialog(); break;
     case 'force-cloud-sync': {
-      toast('Syncing with cloud database...');
-      if (typeof initCloudSync === 'function') {
-        initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
-      }
-      if (typeof window.TideFirebase?.getProducts === 'function') {
-        window.TideFirebase.getProducts().then(prods => {
-          if (prods && prods.length > 0) {
-            state.products = prods;
-            persistState(state);
-            render();
-            toast(`✓ Synced ${prods.length} products from cloud!`);
+      toast('Refreshing entire ERP from cloud database...');
+      (async () => {
+        try {
+          if (typeof window.TideFirebase?.initFirebase === 'function') {
+            await window.TideFirebase.initFirebase();
           }
-        }).catch(e => console.warn('Product sync error:', e));
-      }
-      if (typeof pushStateToCloud === 'function') {
-        pushStateToCloud(state, true);
-      }
+          const [cloudModRes, cloudProds] = await Promise.all([
+            typeof pullFullCloudState === 'function' ? pullFullCloudState(state, initialState) : Promise.resolve(null),
+            typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
+          ]);
+
+          if (cloudModRes?.hydrated && cloudModRes.state) {
+            const curId = state.currentUserId;
+            state = cloudModRes.state;
+            state.currentUserId = curId;
+            activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || activeBranch;
+            state.activeBranchId = activeBranch.id;
+            state.branch = activeBranch.name;
+          }
+          if (Array.isArray(cloudProds)) {
+            state.products = cloudProds;
+          }
+          persistState(state);
+          if (typeof initCloudSync === 'function') {
+            initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
+          }
+          refreshBranchSwitcher();
+          refreshNotificationIndicator();
+          updateConnection();
+          render();
+          toast(`✓ Entire ERP synced (${state.products.length} products, ${state.customers.length} customers, ${state.sales.length} sales)`);
+        } catch (err) {
+          console.warn('Manual full ERP sync failed:', err);
+          toast('Could not reach cloud — using local offline cache');
+        }
+      })();
       break;
     }
     case 'force-reload-app': {
@@ -7582,7 +7647,7 @@ function downloadCSV(filename, rows) {
   toast('CSV download ready');
 }
 
-function importProductsCSV(csv) {
+async function importProductsCSV(csv) {
   const rows = csv.split(/\r?\n/).filter(line => line.trim());
   if (rows.length < 2) { toast('CSV has no product rows'); return; }
   const delimiter = detectCSVDelimiter(rows[0]);
@@ -7607,15 +7672,50 @@ function importProductsCSV(csv) {
   const expiryIdx = findCol('expirydate', 'expiry', 'expirationdate', 'expiration', 'expires', 'bestbefore', 'useby', 'exp');
   const batchIdx = findCol('batchnumber', 'batch', 'batchno', 'lot', 'lotnumber', 'lotno');
 
+  // O(1) lookup maps so importing thousands of products is instantaneous
+  const bySku = new Map();
+  const byName = new Map();
+  const usedSkus = new Set();
+  for (const p of state.products) {
+    if (p?.id) {
+      bySku.set(String(p.id).trim(), p);
+      usedSkus.add(String(p.id).trim());
+    }
+    if (p?.name) {
+      byName.set(String(p.name).trim().toLowerCase(), p);
+    }
+  }
+  const categorySet = new Set(state.productCategories || []);
+  const branchCode = (activeBranch?.id || 'BR-MAIN').replace(/[^A-Za-z0-9]/g, '').slice(-6);
+  const tsPrefix = String(Date.now()).slice(-6);
+  let autoSeq = 1;
+  const nextUniqueSku = () => {
+    let candidate;
+    do {
+      candidate = `SKU-${branchCode}-${tsPrefix}${String(autoSeq++).padStart(4, '0')}`;
+    } while (usedSkus.has(candidate));
+    usedSkus.add(candidate);
+    return candidate;
+  };
+
   let added = 0;
   let updated = 0;
+  const newlyAdded = [];
+  const touchedMap = new Map();
 
   for (const rowText of rows.slice(1)) {
     const row = parseCSVLine(rowText, delimiter);
-    const name = (nameIdx !== -1 ? row[nameIdx] : '') || '';
+    const name = (nameIdx !== -1 ? row[nameIdx] : '')?.trim() || '';
     if (!name) continue;
 
-    const sku = (skuIdx !== -1 && row[skuIdx]) ? row[skuIdx].trim() : idFor('SKU', state.products);
+    const rawSku = (skuIdx !== -1 && row[skuIdx]) ? row[skuIdx].trim() : '';
+    const existing = rawSku
+      ? bySku.get(rawSku)
+      : byName.get(name.toLowerCase());
+
+    const sku = existing ? existing.id : (rawSku || nextUniqueSku());
+    usedSkus.add(sku);
+
     const category = (catIdx !== -1 && row[catIdx]) ? row[catIdx].trim() : 'General';
     const price = priceIdx !== -1 ? parseCSVNumber(row[priceIdx]) : 0;
     const cost = costIdx !== -1 ? parseCSVNumber(row[costIdx]) : 0;
@@ -7639,28 +7739,56 @@ function importProductsCSV(csv) {
       batchNumber
     };
 
-    const existing = state.products.find(p => p.id === sku || (p.name.toLowerCase() === name.toLowerCase() && !skuIdx));
     if (existing) {
       Object.assign(existing, product);
+      touchedMap.set(existing.id, existing);
       updated++;
     } else {
-      state.products.unshift(product);
+      newlyAdded.push(product);
+      bySku.set(product.id, product);
+      byName.set(name.toLowerCase(), product);
+      touchedMap.set(product.id, product);
       added++;
     }
-    if (!state.productCategories.includes(category)) {
+    if (!categorySet.has(category)) {
+      categorySet.add(category);
       state.productCategories.push(category);
     }
   }
 
+  if (newlyAdded.length) {
+    state.products = [...newlyAdded.reverse(), ...state.products];
+  }
+
+  const touchedProducts = Array.from(touchedMap.values());
   saveState();
-  if (typeof window.TideFirebase?.batchSyncProducts === 'function') {
-    window.TideFirebase.batchSyncProducts(state.products);
-  }
-  if (typeof pushStateToCloud === 'function') {
-    pushStateToCloud(state, true);
-  }
   render();
-  toast(`${added} added, ${updated} updated with verified pricing & stock`);
+
+  if (!touchedProducts.length) {
+    toast('No valid product rows found in CSV');
+    return;
+  }
+
+  if (typeof window.TideFirebase?.batchSyncProducts === 'function') {
+    toast(`Uploading all ${touchedProducts.length} products to cloud...`);
+    try {
+      const res = await window.TideFirebase.batchSyncProducts(touchedProducts, (done, total) => {
+        if (total > 450 && done < total) {
+          toast(`Uploading products to cloud: ${done} / ${total}...`);
+        }
+      });
+      if (res.failed > 0) {
+        toast(`Uploaded ${res.synced}/${res.total} products (${res.failed} failed)`);
+      } else {
+        toast(`✓ All ${res.synced} products uploaded (${added} added, ${updated} updated) — live across all devices!`);
+      }
+    } catch (err) {
+      console.error('CSV cloud batch upload error:', err);
+      toast(`${added} added, ${updated} updated locally; cloud sync will retry automatically`);
+    }
+  } else {
+    toast(`${added} added, ${updated} updated with verified pricing & stock`);
+  }
 }
 
 // Keep table action menus outside the scroll-clipped table.
@@ -8100,33 +8228,39 @@ function openCloudStatusModal() {
   const deviceType = /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Phone' : 'PC';
   const prodCount = state?.products?.length || 0;
   const custCount = state?.customers?.length || 0;
-  const saleCount = state?.sales?.length || 0;
+  const suppCount = state?.suppliers?.length || 0;
+  const saleCount = (state?.orders?.length || 0) + (state?.sales?.filter(s => !state.orders?.some(o => o.id === s.orderId || o.invoiceId === s.id))?.length || 0);
+  const purchCount = state?.purchases?.length || 0;
+  const userCount = state?.users?.length || 0;
 
   const content = `
     <div style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:${connected ? 'rgba(0,166,81,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:10px;border:1px solid ${connected ? '#00a651' : '#ef4444'}">
         <div>
-          <strong style="display:block;font-size:13px;color:${connected ? '#00a651' : '#ef4444'}">${connected ? '● Cloud Sync Connected' : '○ Cloud Sync Disconnected'}</strong>
-          <small class="muted">Device: <strong>${deviceType}</strong> · Database: <strong>Google Firebase (tideerp)</strong></small>
+          <strong style="display:block;font-size:13px;color:${connected ? '#00a651' : '#ef4444'}">${connected ? '● Unified Cloud ERP Active (Dual Mode)' : '○ Offline Mode (Local IndexedDB Cache)'}</strong>
+          <small class="muted">Device: <strong>${deviceType}</strong> · Shared Database: <strong>Google Firebase (tideerp)</strong></small>
         </div>
       </div>
       <div style="background:var(--bg-subtle, rgba(0,0,0,0.04));padding:10px;border-radius:8px;font-size:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
         <div><small class="muted" style="display:block">Products</small><strong>${prodCount}</strong></div>
         <div><small class="muted" style="display:block">Customers</small><strong>${custCount}</strong></div>
-        <div><small class="muted" style="display:block">Sales</small><strong>${saleCount}</strong></div>
+        <div><small class="muted" style="display:block">Suppliers</small><strong>${suppCount}</strong></div>
+        <div><small class="muted" style="display:block">Sales/Orders</small><strong>${saleCount}</strong></div>
+        <div><small class="muted" style="display:block">Purchases</small><strong>${purchCount}</strong></div>
+        <div><small class="muted" style="display:block">Users</small><strong>${userCount}</strong></div>
       </div>
-      <div style="font-size:12px;line-height:1.4">
+      <div style="font-size:12px;line-height:1.45">
         ${connected
-      ? `✓ <strong>Live link active:</strong> Any sales, purchases, customers, or products added on this ${deviceType} automatically sync with your other devices in real time.`
-      : `⚠️ <strong>Not syncing with cloud:</strong> This device is not currently connected to the shared Firebase database. Tap 'Force Sync Now' below.`}
+      ? `✓ <strong>Whole ERP Unified:</strong> Products, customers, suppliers, sales, POS, purchases, accounting, inventory logs, users, branches &amp; settings all run on one shared cloud database — with automatic offline caching.`
+      : `⚠️ <strong>Offline Mode:</strong> Changes are safely saved locally on this ${deviceType} and will automatically sync across all devices as soon as internet reconnects.`}
       </div>
       <div style="display:flex;gap:8px;flex-direction:column;margin-top:4px">
-        <button type="button" class="button primary" data-action="force-cloud-sync" style="width:100%">⚡ Force Sync Now (Upload & Download)</button>
-        <button type="button" class="button" data-action="force-reload-app" style="width:100%">🔄 Clear Cache & Reload Latest App Version</button>
+        <button type="button" class="button primary" data-action="force-cloud-sync" style="width:100%">⚡ Refresh Entire ERP from Cloud</button>
+        <button type="button" class="button" data-action="force-reload-app" style="width:100%">🔄 Clear Cache &amp; Reload Latest App Version</button>
       </div>
     </div>
   `;
-  openDialog('cloud-status', 'Cloud Synchronization Status', 'Real-time multi-device sync between PC and Phone.', content, 'Close');
+  openDialog('cloud-status', 'Unified Cloud ERP Status', 'One live database across PC, Phone & Tablets (with offline support).', content, 'Close');
 }
 
 document.getElementById('cloud-sync-button')?.addEventListener('click', openCloudStatusModal);
@@ -8277,13 +8411,46 @@ sidebar?.addEventListener('click', event => {
 
 window.addEventListener('resize', updateSidebarUI);
 updateSidebarUI();
-// App Initialization
+// App Initialization (Dual Mode: Cloud-First Live Unified ERP + Instant Offline IndexedDB Cache)
 async function initApp() {
   applyTheme(safeStorageGet(THEME_KEY) === 'dark' ? 'dark' : 'light');
 
-  // Load from IndexedDB (or seamlessly migrate from localStorage)
+  // 1. Load local IndexedDB cache first (enables instant offline dual-mode operation)
   state = await loadPersistedState(initialState);
   state.currentUserId = '';
+
+  // 2. Cloud-First Hydration BEFORE any startup saveState() so refreshing ANY device
+  //    immediately gets the complete live ERP (all modules + all products) without ever
+  //    overwriting the cloud with stale local data! (Timeout-guarded for offline mode)
+  try {
+    const cloudBoot = (async () => {
+      if (typeof window.TideFirebase?.initFirebase === 'function') {
+        await window.TideFirebase.initFirebase();
+      }
+      const [modResult, cloudProducts] = await Promise.all([
+        typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, initialState, true) : Promise.resolve(null),
+        typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
+      ]);
+      if (modResult?.hydrated && modResult.state) {
+        state = modResult.state;
+      }
+      if (Array.isArray(cloudProducts)) {
+        const hasSeeded = localStorage.getItem('tide_products_seeded_v2');
+        if (cloudProducts.length > 0) {
+          localStorage.setItem('tide_products_seeded_v2', 'true');
+          state.products = cloudProducts;
+        } else if (hasSeeded) {
+          state.products = [];
+        }
+      }
+      await persistState(state);
+    })();
+    const timeoutGuard = new Promise(resolve => setTimeout(resolve, 6500));
+    await Promise.race([cloudBoot, timeoutGuard]);
+  } catch (err) {
+    console.warn('Cloud boot hydration skipped (running from local offline cache):', err);
+  }
+
   activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
   state.activeBranchId = activeBranch.id;
   state.branch = activeBranch.name;
@@ -8299,7 +8466,7 @@ async function initApp() {
     state.companyName = 'My Company';
   }
 
-  // Initialize Real-Time Multi-Device Cloud Sync if configured
+  // 3. Attach Real-Time Multi-Device Listeners across the ENTIRE ERP
   window.requestPushStateToCloud = () => {
     if (typeof pushStateToCloud === 'function' && state) pushStateToCloud(state);
   };
@@ -8313,26 +8480,21 @@ async function initApp() {
     window.TideFirebase.initFirebase().then(() => {
       window.TideFirebase.streamProducts((remoteProducts) => {
         if (!Array.isArray(remoteProducts)) return;
-        
+        if (typeof window.TideFirebase?.isBulkOpActive === 'function' && window.TideFirebase.isBulkOpActive()) return;
+
         const hasSeeded = localStorage.getItem('tide_products_seeded_v2');
         if (remoteProducts.length === 0 && !hasSeeded && (state.products || []).length > 0) {
-          // One-time initial seeding of existing products catalogue into Firestore
           localStorage.setItem('tide_products_seeded_v2', 'true');
           window.TideFirebase.batchSyncProducts(state.products);
           return;
         }
 
-        // Real-time synchronization directly from Firestore 'products' collection
         if (remoteProducts.length > 0) {
           localStorage.setItem('tide_products_seeded_v2', 'true');
           state.products = remoteProducts;
           persistState(state);
-          const curPage = state.currentPage || location.hash.replace('#', '') || 'dashboard';
-          if (['products', 'inventory', 'pos', 'dashboard'].includes(curPage)) {
-            render();
-          }
+          render();
         } else if (hasSeeded) {
-          // If products were legitimately deleted down to zero
           state.products = [];
           persistState(state);
           render();
@@ -8340,6 +8502,25 @@ async function initApp() {
       });
     }).catch(err => console.warn('Product stream setup error:', err));
   }
+
+  // Auto-reconcile with cloud whenever a device comes back online
+  window.addEventListener('online', async () => {
+    try {
+      if (typeof pushStateToCloud === 'function') await pushStateToCloud(state, true);
+      if (typeof pullFullCloudState === 'function') {
+        const res = await pullFullCloudState(state, initialState);
+        if (res?.hydrated && res.state) {
+          const curId = state.currentUserId;
+          const curProds = state.products;
+          state = res.state;
+          state.currentUserId = curId;
+          state.products = curProds;
+          persistState(state);
+          render();
+        }
+      }
+    } catch {}
+  });
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => { });
@@ -8355,7 +8536,9 @@ async function initApp() {
   try {
     const hasAdmin = await ensureAdministratorLogin();
     if (!hasAdmin) { renderAuthGate('No administrator account is configured.'); return; }
-    saveState();
+    // Persist locally during boot without triggering an unnecessary cloud overwrite
+    snapshotCurrentBranch();
+    persistState(state);
   } catch (error) {
     renderAuthGate(error.message || 'Secure sign-in could not be initialized.');
     return;
@@ -8370,7 +8553,8 @@ async function initApp() {
       renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
       return;
     }
-    saveState();
+    snapshotCurrentBranch();
+    persistState(state);
     const hash = (location.hash || '').replace(/^#/, '');
     page = hash && pageLabels[hash] ? hash : 'home';
     document.getElementById('auth-gate').hidden = true;
@@ -8379,7 +8563,7 @@ async function initApp() {
   } else {
     safeSessionRemove(AUTH_SESSION_KEY);
     state.currentUserId = '';
-    saveState();
+    persistState(state);
     renderAuthGate();
   }
 }
