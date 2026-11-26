@@ -1949,7 +1949,6 @@ function renderHome() {
   const branchStatus = activeBranchObj && activeBranchObj.status === 'Inactive' ? 'Closed' : 'Active';
 
   const allHubActions = [
-    { action: 'new-expense', permPage: 'expenses', icon: '💸', title: 'Record Expense', desc: 'Fast entry: payee, purpose, amount, payment & receipts', fast: true },
     { page: 'dashboard', icon: '◫', title: 'View Dashboard', desc: 'View Trends and Performance' },
     { page: 'pos', icon: '🛒', title: 'Make a Sale', desc: 'Process sales and Print Receipts' },
     { page: 'sales', icon: '↗', title: 'Sales & Orders', desc: 'Manage customer orders and invoices' },
@@ -2240,6 +2239,7 @@ function renderDashboard() {
   const canInventory = canViewPage('inventory', user) || canViewPage('products', user);
   const canCustomers = canViewPage('customers', user);
   const canSuppliers = canViewPage('suppliers', user);
+  const canExpenses = canViewPage('expenses', user);
   const canAccounting = canViewPage('accounting', user);
   const canReports = canViewPage('reports', user);
 
@@ -2273,6 +2273,9 @@ function renderDashboard() {
   if ((canAccounting || canCustomers || canSuppliers) && canPerformAction('record-payment')) {
     quickActions.push(`<button class="quick-action" data-action="record-payment"><span class="quick-icon">◈</span><span class="quick-copy"><strong>Record a payment</strong><small>Customer or supplier account</small></span><span class="quick-arrow">›</span></button>`);
   }
+  if ((canExpenses || canAccounting) && canPerformAction('new-expense')) {
+    quickActions.push(`<button class="quick-action" data-action="new-expense"><span class="quick-icon">🧾</span><span class="quick-copy"><strong>Record an expense</strong><small>Log cost, payment &amp; receipt</small></span><span class="quick-arrow">›</span></button>`);
+  }
 
   const notes = [];
   if ((canSuppliers || canAccounting) && payable > 0) notes.push(`${money(payable)} payable to suppliers`);
@@ -2285,6 +2288,7 @@ function renderDashboard() {
         <option ${dashboardRange === 'This week' ? 'selected' : ''}>This week</option>
         <option ${dashboardRange === 'Today' ? 'selected' : ''}>Today</option>
       </select>
+      ${canPerformAction('new-expense') ? '<button class="button" data-action="new-expense"><span>＋</span> Record expense</button>' : ''}
       ${canPerformAction('new-order') ? '<button class="button primary" data-action="new-order"><span>＋</span> New sale</button>' : ''}
     `)}
     ${metrics.length ? `<section class="metric-grid">${metrics.join('')}</section>` : ''}
