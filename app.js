@@ -1293,11 +1293,11 @@ function openNotificationsPanel() {
   const rect = button.getBoundingClientRect();
   if (window.innerWidth <= 760) {
     Object.assign(panel.style, {
-      bottom: '55px',
+      top: `${Math.max(52, rect.bottom + 8)}px`,
+      bottom: 'auto',
       left: '8px',
       right: '8px',
-      width: 'auto',
-      top: 'auto'
+      width: 'auto'
     });
   } else {
     if (rect.top > window.innerHeight / 2) {
@@ -1365,25 +1365,35 @@ function openBranchSwitcherPanel() {
 
   document.body.append(panel);
   const rect = button.getBoundingClientRect();
+  const margin = 10;
   if (window.innerWidth <= 760) {
+    const bottomOffset = Math.max(56, window.innerHeight - rect.top + 8);
     Object.assign(panel.style, {
-      bottom: '55px',
-      left: '8px',
-      right: '8px',
+      bottom: `${bottomOffset}px`,
+      left: `${margin}px`,
+      right: `${margin}px`,
       width: 'auto',
-      top: 'auto'
+      top: 'auto',
+      maxHeight: `${Math.max(180, rect.top - 20)}px`
     });
   } else {
+    const panelWidth = panel.offsetWidth || 340;
+    const clampedLeft = Math.max(margin, Math.min(rect.left, window.innerWidth - panelWidth - margin));
     if (rect.top > window.innerHeight / 2) {
+      const bottomOffset = Math.max(margin, window.innerHeight - rect.top + 8);
       Object.assign(panel.style, {
-        bottom: `${Math.max(10, window.innerHeight - rect.top + 8)}px`,
-        right: `${Math.max(8, window.innerWidth - rect.right)}px`,
-        top: 'auto'
+        bottom: `${bottomOffset}px`,
+        left: `${clampedLeft}px`,
+        right: 'auto',
+        top: 'auto',
+        maxHeight: `${Math.max(200, rect.top - 20)}px`
       });
     } else {
       Object.assign(panel.style, {
         top: `${Math.min(rect.bottom + 8, window.innerHeight - 80)}px`,
-        right: `${Math.max(8, window.innerWidth - rect.right)}px`
+        left: `${clampedLeft}px`,
+        right: 'auto',
+        bottom: 'auto'
       });
     }
   }
