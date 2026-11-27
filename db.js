@@ -164,7 +164,7 @@ function sanitizeState(restored, initialState) {
   const arrayKeys = [
     'products', 'customers', 'suppliers', 'orders', 'sales',
     'returns', 'purchaseReturns', 'purchases', 'expenses', 'entries', 'queue',
-    'stockMovements', 'stocktakes', 'users', 'productCategories', 'measurementUnits',
+    'stockMovements', 'stocktakes', 'notices', 'users', 'productCategories', 'measurementUnits',
     'productPackages', 'trashBin', 'activityLog', 'branches'
   ];
   for (const key of arrayKeys) {
@@ -193,6 +193,23 @@ function sanitizeState(restored, initialState) {
   if (typeof clean.vatRate !== 'number') clean.vatRate = 18;
   if (typeof clean.autoLockMinutes !== 'number' || !Number.isFinite(clean.autoLockMinutes) || clean.autoLockMinutes < 0) {
     clean.autoLockMinutes = 20;
+  }
+  if (!clean.themeColors || typeof clean.themeColors !== 'object') {
+    clean.themeColors = { primary: '#0a1e36', secondary: '#ff6a00' };
+  } else {
+    if (!/^#[0-9a-fA-F]{6}$/.test(clean.themeColors.primary || '')) clean.themeColors.primary = '#0a1e36';
+    if (!/^#[0-9a-fA-F]{6}$/.test(clean.themeColors.secondary || '')) clean.themeColors.secondary = '#ff6a00';
+  }
+  if (!clean.notificationSound || typeof clean.notificationSound !== 'object') {
+    clean.notificationSound = { enabled: true, tone: 'chime', volume: 0.65, onOutOfStock: true, onExpired: true };
+  } else {
+    clean.notificationSound = {
+      enabled: clean.notificationSound.enabled !== false,
+      tone: clean.notificationSound.tone || 'chime',
+      volume: Number.isFinite(Number(clean.notificationSound.volume)) ? Number(clean.notificationSound.volume) : 0.65,
+      onOutOfStock: clean.notificationSound.onOutOfStock !== false,
+      onExpired: clean.notificationSound.onExpired !== false
+    };
   }
   return clean;
 }
@@ -227,13 +244,14 @@ const ERP_MODULE_DEFS = {
     'version', 'companyName', 'companyAddress', 'companyPhone', 'companyEmail',
     'companyPaymentDetails', 'companyAdminId', 'currency', 'vatEnabled', 'vatRate',
     'branches', 'users', 'productCategories', 'measurementUnits', 'productPackages',
-    'notificationSettings', 'autoLockMinutes', 'branch', 'activeBranchId'
+    'notificationSettings', 'autoLockMinutes', 'themeColors', 'notificationSound', 'branch', 'activeBranchId'
   ],
   assets: ['companyLogo'],
   parties: ['customers', 'suppliers'],
   sales: ['orders', 'sales', 'returns'],
   purchases: ['purchases', 'purchaseReturns'],
   expenses: ['expenses'],
+  notices: ['notices'],
   accounting: ['entries'],
   inventory_logs: ['stockMovements', 'stocktakes', 'stocktakeDraft'],
   system_logs: ['activityLog', 'trashBin', 'queue'],

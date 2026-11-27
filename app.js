@@ -59,6 +59,9 @@ const initialState = {
   vatEnabled: true,
   vatRate: 18,
   autoLockMinutes: 20,
+  themeColors: { primary: '#0a1e36', secondary: '#ff6a00' },
+  notificationSound: { enabled: true, tone: 'chime', volume: 0.65, onOutOfStock: true, onExpired: true },
+  notices: [],
   productCategories: ['General'],
   measurementUnits: ['Piece', 'Pack', 'Box', 'Kg', 'Litre'],
   productPackages: ['Single', 'Pack', 'Box', 'Carton'],
@@ -363,7 +366,7 @@ function canViewPage(module, user = currentWorkspaceUser()) {
 }
 
 function canPerformAction(action, element = null) {
-  if (['close-modal', 'view-attachment', 'delete-attachment', 'download-attachment', 'add-attachment', 'view-entry-attachments', 'lock-screen', 'unlock-switch-account'].includes(action)) return true;
+  if (['close-modal', 'view-attachment', 'delete-attachment', 'download-attachment', 'add-attachment', 'view-entry-attachments', 'lock-screen', 'unlock-switch-account', 'new-notice', 'test-notification-sound'].includes(action)) return true;
   const user = currentWorkspaceUser();
   if (!state.currentUserId || !user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
   if (user.isBootstrap) return true;
@@ -433,6 +436,9 @@ function canPerformAction(action, element = null) {
     case 'export-inventory': return page === 'reports' ? require('reports', 'export') : require('inventory', 'export');
     case 'export-ledger': return page === 'reports' ? require('reports', 'export') : require('accounting', 'export');
     case 'remove-company-logo': return require('settings', 'edit-logo');
+    case 'reset-brand-colors': case 'pick-brand-swatch': return user.isBootstrap || isAdministratorUser(user);
+    case 'approve-notice': case 'reject-notice': case 'pin-notice': case 'edit-notice': return user.isBootstrap || isAdministratorUser(user);
+    case 'delete-notice': return true; // Handler checks Admin or own pending notice
     case 'clear-trash': case 'restore-trash': return user.isBootstrap || (isAdministratorUser(user) && require('settings', 'edit-company'));
     case 'new-user': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'add'));
     case 'edit-user': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'edit'));
@@ -902,6 +908,9 @@ function createBlankWorkspaceState({ companyName, branchName = 'Main branch', cu
     vatEnabled: true,
     vatRate: 18,
     autoLockMinutes: 20,
+    themeColors: { primary: '#0a1e36', secondary: '#ff6a00' },
+    notificationSound: { enabled: true, tone: 'chime', volume: 0.65, onOutOfStock: true, onExpired: true },
+    notices: [],
     productCategories: ['General'],
     measurementUnits: ['Piece', 'Pack', 'Box', 'Kg', 'Litre'],
     productPackages: ['Single', 'Pack', 'Box', 'Carton'],
@@ -1602,6 +1611,63 @@ function updateConnection() {
   if (count) count.textContent = state.orders.filter(o => o.status === 'Draft' || o.status === 'Final').length;
 }
 
+const BRAND_COLORS_KEY = 'tide-erp-brand-colors';
+const DEFAULT_BRAND_COLORS = { primary: '#0a1e36', secondary: '#ff6a00' };
+
+function clampByte(n) { return Math.max(0, Math.min(255, Math.round(n))); }
+function parseHex(hex) {
+  const clean = String(hex || '').replace('#', '').trim();
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return null;
+  return [parseInt(clean.slice(0, 2), 16), parseInt(clean.slice(2, 4), 16), parseInt(clean.slice(4, 6), 16)];
+}
+function adjustHex(hex, delta) {
+  const rgb = parseHex(hex);
+  if (!rgb) return hex;
+  return '#' + rgb.map(v => clampByte(v + delta).toString(16).padStart(2, '0')).join('');
+}
+function hexToRgba(hex, alpha) {
+  const rgb = parseHex(hex);
+  if (!rgb) return `rgba(255, 106, 0, ${alpha})`;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+}
+
+function applyBrandColors(primaryHex, secondaryHex, cacheLocally = true) {
+  const primary = parseHex(primaryHex) ? primaryHex : (state?.themeColors?.primary || DEFAULT_BRAND_COLORS.primary);
+  const secondary = parseHex(secondaryHex) ? secondaryHex : (state?.themeColors?.secondary || DEFAULT_BRAND_COLORS.secondary);
+  const root = document.documentElement;
+  const isDark = root.dataset.theme === 'dark';
+
+  root.style.setProperty('--brand-primary', primary);
+  root.style.setProperty('--brand-primary-deep', adjustHex(primary, -18));
+  root.style.setProperty('--brand-primary-surface', adjustHex(primary, 14));
+  root.style.setProperty('--brand-primary-hover', adjustHex(primary, 28));
+
+  root.style.setProperty('--brand-secondary', secondary);
+  root.style.setProperty('--brand-secondary-dark', adjustHex(secondary, -24));
+  root.style.setProperty('--brand-secondary-soft', hexToRgba(secondary, isDark ? 0.2 : 0.13));
+  root.style.setProperty('--brand-secondary-glow', hexToRgba(secondary, 0.36));
+
+  root.style.setProperty('--orange', secondary);
+  root.style.setProperty('--orange-dark', adjustHex(secondary, -24));
+  root.style.setProperty('--orange-glow', hexToRgba(secondary, 0.35));
+  root.style.setProperty('--amber', secondary);
+  root.style.setProperty('--ocean', primary);
+  root.style.setProperty('--ocean-dark', adjustHex(primary, -18));
+
+  if (!isDark) {
+    root.style.setProperty('--navy', primary);
+    root.style.setProperty('--ink', primary);
+  } else {
+    root.style.removeProperty('--navy');
+    root.style.removeProperty('--ink');
+  }
+
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', primary);
+  if (cacheLocally) {
+    safeStorageSet(BRAND_COLORS_KEY, JSON.stringify({ primary, secondary }));
+  }
+}
+
 function applyTheme(theme) {
   const dark = theme === 'dark';
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
@@ -1610,8 +1676,104 @@ function applyTheme(theme) {
     button.textContent = dark ? '☀' : '☾';
     button.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
   }
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#292b2e' : '#0082cf');
   safeStorageSet(THEME_KEY, dark ? 'dark' : 'light');
+  applyBrandColors(state?.themeColors?.primary, state?.themeColors?.secondary, false);
+}
+
+// =========================================================
+// Web Audio Notification Sound Engine (Out-of-Stock & Expired)
+// Zero external audio files — works 100% offline & on mobile
+// =========================================================
+let sharedAudioCtx = null;
+let lastProductAlertSignature = '';
+let lastProductAlertSoundMs = 0;
+
+function getNotificationSoundConfig() {
+  const cfg = state?.notificationSound || {};
+  return {
+    enabled: cfg.enabled !== false,
+    tone: cfg.tone || 'chime',
+    volume: Number.isFinite(Number(cfg.volume)) ? Math.max(0.1, Math.min(1, Number(cfg.volume))) : 0.65,
+    onOutOfStock: cfg.onOutOfStock !== false,
+    onExpired: cfg.onExpired !== false
+  };
+}
+
+function playNotificationSound(toneOverride = null, volumeOverride = null) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return false;
+    if (!sharedAudioCtx) sharedAudioCtx = new AudioCtx();
+    if (sharedAudioCtx.state === 'suspended') {
+      sharedAudioCtx.resume().catch(() => {});
+    }
+    const cfg = getNotificationSoundConfig();
+    const tone = toneOverride || cfg.tone || 'chime';
+    const vol = volumeOverride !== null ? volumeOverride : cfg.volume;
+    const now = sharedAudioCtx.currentTime;
+
+    const playNote = (freq, startOffset, duration, type = 'sine', peakGain = 0.28) => {
+      const osc = sharedAudioCtx.createOscillator();
+      const gain = sharedAudioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now + startOffset);
+      gain.gain.setValueAtTime(0.0001, now + startOffset);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.001, peakGain * vol), now + startOffset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + duration);
+      osc.connect(gain);
+      gain.connect(sharedAudioCtx.destination);
+      osc.start(now + startOffset);
+      osc.stop(now + startOffset + duration + 0.03);
+    };
+
+    if (tone === 'bell') {
+      playNote(880, 0, 0.28, 'triangle', 0.32);
+      playNote(1318.5, 0.09, 0.36, 'sine', 0.24);
+    } else if (tone === 'double') {
+      playNote(784, 0, 0.14, 'square', 0.16);
+      playNote(988, 0.18, 0.18, 'square', 0.18);
+    } else if (tone === 'pulse') {
+      playNote(587.3, 0, 0.32, 'sine', 0.26);
+    } else {
+      // 'chime' (default): pleasant ascending 2-note chime
+      playNote(523.25, 0, 0.22, 'sine', 0.28);
+      playNote(659.25, 0.14, 0.34, 'sine', 0.28);
+    }
+    return true;
+  } catch (err) {
+    console.warn('Notification sound playback skipped:', err);
+    return false;
+  }
+}
+
+function checkProductAlertSound(forcePlay = false) {
+  if (!state?.currentUserId || isScreenLocked()) return;
+  const cfg = getNotificationSoundConfig();
+  if (!cfg.enabled) return;
+
+  const active = (state.products || []).filter(p => p && p.status !== 'Draft');
+  const outOfStockIds = cfg.onOutOfStock
+    ? active.filter(p => Number(p.stock) <= 0).map(p => p.id).sort()
+    : [];
+  const expiredIds = cfg.onExpired
+    ? active.filter(p => getProductExpiryInfo(p).status === 'expired').map(p => p.id).sort()
+    : [];
+
+  const totalAlerts = outOfStockIds.length + expiredIds.length;
+  const sig = `${outOfStockIds.join(',')}|${expiredIds.join(',')}`;
+
+  if (totalAlerts === 0) {
+    lastProductAlertSignature = '';
+    return;
+  }
+
+  const now = Date.now();
+  const isNewTrigger = sig !== lastProductAlertSignature;
+  if ((isNewTrigger || forcePlay) && now - lastProductAlertSoundMs > 4000) {
+    lastProductAlertSignature = sig;
+    lastProductAlertSoundMs = now;
+    playNotificationSound();
+  }
 }
 
 function refreshUserProfile() {
@@ -1686,8 +1848,22 @@ function notificationItems() {
   const user = currentWorkspaceUser();
   const items = [];
   if (userHasPermission('dashboard', 'stock-alerts', user) || canViewPage('inventory', user) || canViewPage('products', user)) {
-    const low = state.products.filter(product => product.status !== 'Draft' && Number(product.stock) <= Number(product.low));
+    const outOfStock = state.products.filter(product => product.status !== 'Draft' && Number(product.stock) <= 0);
+    if (outOfStock.length) {
+      items.push({ icon: '⛔', title: `${outOfStock.length} out-of-stock product${outOfStock.length === 1 ? '' : 's'}`, detail: outOfStock.slice(0, 3).map(p => p.name).join(' · '), page: canViewPage('products', user) ? 'products' : 'inventory', tone: 'danger' });
+    }
+    const low = state.products.filter(product => product.status !== 'Draft' && Number(product.stock) > 0 && Number(product.stock) <= Number(product.low));
     if (low.length) items.push({ icon: '▤', title: `${low.length} low-stock product${low.length === 1 ? '' : 's'}`, detail: low.slice(0, 3).map(product => `${product.name} (${product.stock} left)`).join(' · '), page: canViewPage('inventory', user) ? 'inventory' : 'products', tone: 'warning' });
+    const expired = state.products.filter(product => product.status !== 'Draft' && getProductExpiryInfo(product).status === 'expired');
+    if (expired.length) {
+      items.push({ icon: '⚠', title: `${expired.length} expired product${expired.length === 1 ? '' : 's'}`, detail: expired.slice(0, 3).map(p => p.name).join(' · '), page: canViewPage('products', user) ? 'products' : 'inventory', tone: 'danger' });
+    }
+  }
+  if (isWorkspaceAdministrator()) {
+    const pendingNotices = (state.notices || []).filter(n => n.status === 'Pending');
+    if (pendingNotices.length) {
+      items.push({ icon: '📢', title: `${pendingNotices.length} notice${pendingNotices.length === 1 ? '' : 's'} awaiting approval`, detail: 'Review team announcements on the Dashboard Notice Board.', page: 'dashboard', tone: 'info' });
+    }
   }
   if (canViewPage('sales', user) || canViewPage('accounting', user)) {
     const due = state.orders.filter(order => order.status !== 'Draft' && Number(order.total) > Number(order.paid || 0));
@@ -1713,6 +1889,7 @@ function refreshNotificationIndicator() {
   let badge = button.querySelector('.notification-count');
   if (!badge) { badge = document.createElement('span'); badge.className = 'notification-count'; button.append(badge); }
   if (badge) badge.textContent = count ? String(count) : '';
+  checkProductAlertSound();
 }
 
 function openNotificationsPanel() {
@@ -2676,6 +2853,125 @@ function recentSalesTable(rows = state.sales.slice(0, 5)) {
   return `<div class="table-panel"><div class="table-heading"><h2>Recent transactions</h2><button class="text-link" data-page="sales">View all sales →</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Reference</th><th>Customer</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>${rows.map(s => `<tr><td><strong>${esc(s.id)}</strong></td><td>${esc(s.customer)}</td><td>${dateLabel(s.date)}</td><td><strong>${money(s.total)}</strong></td><td><span class="status-pill ${statusClass(s.status)}">${esc(s.status)}</span></td></tr>`).join('')}</tbody></table></div></div>`;
 }
 
+function renderNoticeBoard() {
+  const user = currentWorkspaceUser();
+  const isAdmin = isWorkspaceAdministrator();
+  const allNotices = Array.isArray(state.notices) ? state.notices : [];
+
+  const published = allNotices
+    .filter(n => n.status === 'Published')
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.publishedAt || b.createdAt || '').localeCompare(a.publishedAt || a.createdAt || ''));
+
+  const pendingForAdmin = isAdmin
+    ? allNotices.filter(n => n.status === 'Pending').sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    : [];
+
+  const myPending = !isAdmin
+    ? allNotices.filter(n => n.status === 'Pending' && n.authorId === user.id).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    : [];
+
+  const formatNoticeTime = (iso) => {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('en-TZ', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+        timeZone: 'Africa/Dar_es_Salaam'
+      }).format(new Date(iso));
+    } catch {
+      return String(iso).slice(0, 10);
+    }
+  };
+
+  const renderPublishedCard = (n) => {
+    const priority = (n.priority || 'General').toLowerCase();
+    return `
+      <article class="notice-card ${n.pinned ? 'is-pinned' : ''} ${priority === 'urgent' ? 'is-urgent' : ''}">
+        <div class="notice-card-top">
+          <div class="notice-card-heading">
+            ${n.pinned ? '<span title="Pinned announcement">📌</span>' : ''}
+            <strong>${esc(n.title)}</strong>
+            <span class="notice-priority-pill priority-${esc(priority)}">${esc(n.priority || 'General')}</span>
+          </div>
+          ${isAdmin ? `
+            <div class="notice-card-actions">
+              <button type="button" class="button small" data-action="pin-notice" data-id="${esc(n.id)}" title="${n.pinned ? 'Unpin notice' : 'Pin to top'}">${n.pinned ? 'Unpin' : '📌 Pin'}</button>
+              <button type="button" class="button small" data-action="edit-notice" data-id="${esc(n.id)}">Edit</button>
+              <button type="button" class="button small danger-action" data-action="delete-notice" data-id="${esc(n.id)}">Delete</button>
+            </div>
+          ` : ''}
+        </div>
+        <p class="notice-card-body">${esc(n.message)}</p>
+        <div class="notice-card-meta">
+          <span>Posted by <strong>${esc(n.authorName || 'Administrator')}</strong> (${esc(n.authorRole || 'Staff')})${n.approvedBy && n.approvedBy !== n.authorName ? ` · Approved by <strong>${esc(n.approvedBy)}</strong>` : ''}</span>
+          <span>${esc(formatNoticeTime(n.publishedAt || n.createdAt))}</span>
+        </div>
+      </article>
+    `;
+  };
+
+  const renderPendingCard = (n, forAdmin) => `
+    <article class="notice-card is-pending">
+      <div class="notice-card-top">
+        <div class="notice-card-heading">
+          <span>⏳</span>
+          <strong>${esc(n.title)}</strong>
+          <span class="notice-priority-pill priority-${esc((n.priority || 'General').toLowerCase())}">${esc(n.priority || 'General')}</span>
+          <span class="notice-pending-badge">Awaiting Approval</span>
+        </div>
+        <div class="notice-card-actions">
+          ${forAdmin ? `
+            <button type="button" class="button small primary" data-action="approve-notice" data-id="${esc(n.id)}">✓ Approve &amp; Publish</button>
+            <button type="button" class="button small danger-action" data-action="reject-notice" data-id="${esc(n.id)}">✕ Reject</button>
+          ` : `
+            <button type="button" class="button small danger-action" data-action="delete-notice" data-id="${esc(n.id)}">Withdraw</button>
+          `}
+        </div>
+      </div>
+      <p class="notice-card-body">${esc(n.message)}</p>
+      <div class="notice-card-meta">
+        <span>Submitted by <strong>${esc(n.authorName || 'Staff')}</strong> (${esc(n.authorRole || 'User')})</span>
+        <span>${esc(formatNoticeTime(n.createdAt))}</span>
+      </div>
+    </article>
+  `;
+
+  return `
+    <section class="notice-board-panel" aria-label="Team Notice Board">
+      <div class="notice-board-head">
+        <div class="notice-board-title-wrap">
+          <div class="notice-board-icon" aria-hidden="true">📢</div>
+          <div>
+            <h2>Team Notice Board ${pendingForAdmin.length ? `<span class="notice-pending-badge">⏳ ${pendingForAdmin.length} pending approval</span>` : ''}</h2>
+            <p>${isAdmin ? 'Broadcast announcements to all staff and review team notice requests.' : 'Official announcements from management — submit a notice for administrator approval.'}</p>
+          </div>
+        </div>
+        <button type="button" class="button primary small" data-action="new-notice">
+          ${isAdmin ? '＋ Post Announcement' : '＋ Submit Notice'}
+        </button>
+      </div>
+      <div class="notice-list">
+        ${published.length ? published.map(renderPublishedCard).join('') : '<div class="notice-empty-box">No announcements posted yet. Use the button above to share updates with your team.</div>'}
+      </div>
+      ${pendingForAdmin.length ? `
+        <div class="notice-pending-section">
+          <h3>⏳ Pending Team Announcements (${pendingForAdmin.length})</h3>
+          <div class="notice-list">
+            ${pendingForAdmin.map(n => renderPendingCard(n, true)).join('')}
+          </div>
+        </div>
+      ` : ''}
+      ${myPending.length ? `
+        <div class="notice-pending-section">
+          <h3>⏳ Your Submissions Awaiting Admin Approval (${myPending.length})</h3>
+          <div class="notice-list">
+            ${myPending.map(n => renderPendingCard(n, false)).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </section>
+  `;
+}
+
 function renderDashboard() {
   const user = currentWorkspaceUser();
   const canSales = canViewPage('sales', user);
@@ -2735,6 +3031,7 @@ function renderDashboard() {
       ${canPerformAction('new-expense') ? '<button class="button" data-action="new-expense"><span>＋</span> Record expense</button>' : ''}
       ${canPerformAction('new-order') ? '<button class="button primary" data-action="new-order"><span>＋</span> New sale</button>' : ''}
     `)}
+    ${renderNoticeBoard()}
     ${metrics.length ? `<section class="metric-grid">${metrics.join('')}</section>` : ''}
     ${(canSales || canReports) ? `
     <section class="dashboard-grid">
@@ -5844,6 +6141,93 @@ function renderSettings() {
           </div>
         </div>
 
+        <div class="settings-section">
+          <h2>Brand Theme Colors</h2>
+          ${isWorkspaceAdministrator() ? (() => {
+            const pColor = state.themeColors?.primary || DEFAULT_BRAND_COLORS.primary;
+            const sColor = state.themeColors?.secondary || DEFAULT_BRAND_COLORS.secondary;
+            const primaryPresets = [
+              ['#0a1e36', 'Midnight Navy (Default)'],
+              ['#1e293b', 'Deep Slate'],
+              ['#0b3b2c', 'Forest Emerald'],
+              ['#1e1b4b', 'Royal Indigo'],
+              ['#18181b', 'Charcoal Black'],
+              ['#4a0e1e', 'Deep Burgundy']
+            ];
+            const secondaryPresets = [
+              ['#ff6a00', 'Vibrant Orange (Default)'],
+              ['#0284c7', 'Ocean Blue'],
+              ['#059669', 'Emerald Green'],
+              ['#dc2626', 'Crimson Red'],
+              ['#d97706', 'Gold Amber'],
+              ['#7c3aed', 'Electric Violet']
+            ];
+            return `
+              <p class="panel-subtitle" style="margin:0 0 10px">Customize the system's Primary color (sidebar, headers, dark cards) and Secondary color (buttons, active tabs, accents) for all users in your workspace.</p>
+              <div class="brand-color-grid">
+                <div class="color-picker-card">
+                  <label for="setting-primary-color" style="font-weight:700;font-size:13px">Primary Color</label>
+                  <div class="color-picker-input-row">
+                    <input type="color" id="setting-primary-color" name="setting-primary-color" value="${esc(pColor)}">
+                    <span class="color-hex-tag" id="setting-primary-hex">${esc(pColor)}</span>
+                  </div>
+                  <div class="color-swatch-row">
+                    ${primaryPresets.map(([hex, label]) => `<button type="button" class="color-swatch-btn" data-action="pick-brand-swatch" data-swatch-target="primary" data-swatch-color="${hex}" style="background:${hex}" title="${esc(label)}"></button>`).join('')}
+                  </div>
+                </div>
+                <div class="color-picker-card">
+                  <label for="setting-secondary-color" style="font-weight:700;font-size:13px">Secondary Color</label>
+                  <div class="color-picker-input-row">
+                    <input type="color" id="setting-secondary-color" name="setting-secondary-color" value="${esc(sColor)}">
+                    <span class="color-hex-tag" id="setting-secondary-hex">${esc(sColor)}</span>
+                  </div>
+                  <div class="color-swatch-row">
+                    ${secondaryPresets.map(([hex, label]) => `<button type="button" class="color-swatch-btn" data-action="pick-brand-swatch" data-swatch-target="secondary" data-swatch-color="${hex}" style="background:${hex}" title="${esc(label)}"></button>`).join('')}
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top:10px">
+                <button type="button" class="button small" data-action="reset-brand-colors">↺ Reset to Default Colors (Dark Blue &amp; Orange)</button>
+              </div>
+            `;
+          })() : `<p class="field-hint">Only an Owner / Administrator can change the workspace Primary and Secondary brand colors.</p>`}
+        </div>
+
+        <div class="settings-section">
+          <h2>Notification Sound Alerts</h2>
+          ${(() => {
+            const snd = getNotificationSoundConfig();
+            return `
+              <p class="panel-subtitle" style="margin:0 0 10px">Play an audible alert when products run out of stock or expire.</p>
+              <div class="form-grid">
+                <div class="field">
+                  <label><input type="checkbox" id="setting-sound-enabled" name="setting-sound-enabled" ${snd.enabled ? 'checked' : ''}> Enable notification sounds</label>
+                  <div class="sound-triggers-row">
+                    <label><input type="checkbox" name="setting-sound-oos" ${snd.onOutOfStock ? 'checked' : ''}> Out of stock products</label>
+                    <label><input type="checkbox" name="setting-sound-expired" ${snd.onExpired ? 'checked' : ''}> Expired products</label>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="setting-sound-tone">Alert Sound Tone</label>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <select id="setting-sound-tone" name="setting-sound-tone" style="flex:1">
+                      <option value="chime" ${snd.tone === 'chime' ? 'selected' : ''}>Soft Chime (Default)</option>
+                      <option value="bell" ${snd.tone === 'bell' ? 'selected' : ''}>Crisp Bell</option>
+                      <option value="double" ${snd.tone === 'double' ? 'selected' : ''}>Double Alert (Urgent)</option>
+                      <option value="pulse" ${snd.tone === 'pulse' ? 'selected' : ''}>Gentle Pulse</option>
+                    </select>
+                    <button type="button" class="button small" data-action="test-notification-sound">🔊 Test</button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="setting-sound-volume">Alert Volume (<span id="setting-sound-volume-label">${Math.round(snd.volume * 100)}%</span>)</label>
+                  <input id="setting-sound-volume" name="setting-sound-volume" type="range" min="15" max="100" step="5" value="${Math.round(snd.volume * 100)}">
+                </div>
+              </div>
+            `;
+          })()}
+        </div>
+
         <div class="modal-actions">
           <button class="button primary" type="submit">Save settings</button>
         </div>
@@ -5884,10 +6268,29 @@ function saveCompanySettings(form) {
     safeSessionSet(LAST_ACTIVITY_KEY, String(lastActivityAt));
     updateLockCountdownUI();
   }
+  if (isWorkspaceAdministrator()) {
+    const primaryVal = form.querySelector('[name="setting-primary-color"]')?.value;
+    const secondaryVal = form.querySelector('[name="setting-secondary-color"]')?.value;
+    if (parseHex(primaryVal) && parseHex(secondaryVal)) {
+      state.themeColors = { primary: primaryVal, secondary: secondaryVal };
+      applyBrandColors(primaryVal, secondaryVal, true);
+    }
+  }
+  const soundEnabledEl = form.querySelector('[name="setting-sound-enabled"]');
+  if (soundEnabledEl) {
+    const volPct = Number(form.querySelector('[name="setting-sound-volume"]')?.value) || 65;
+    state.notificationSound = {
+      enabled: soundEnabledEl.checked,
+      tone: form.querySelector('[name="setting-sound-tone"]')?.value || 'chime',
+      volume: Math.max(0.15, Math.min(1, volPct / 100)),
+      onOutOfStock: form.querySelector('[name="setting-sound-oos"]')?.checked ?? true,
+      onExpired: form.querySelector('[name="setting-sound-expired"]')?.checked ?? true
+    };
+  }
   saveState();
   refreshCompanyLogo();
   render();
-  toast('Company settings and tax preferences saved');
+  toast('Company settings, colors, and notification preferences saved');
 }
 
 // Master Render Function
@@ -5976,6 +6379,7 @@ function handleRemoteCloudSync(remoteFields, deviceName, changedModules = []) {
   }
 
   state = sanitized;
+  applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
   persistState(state);
   refreshBranchSwitcher();
   refreshNotificationIndicator();
@@ -6249,6 +6653,55 @@ function openMarkExpensePaidDialog(expense) {
   openDialog('mark-expense-paid', `Mark Expense Paid · ${expense.id}`, 'Confirm the date of payment and optionally attach a payment receipt.', content, 'Confirm Paid');
   const form = document.getElementById('modal-content');
   if (form) form.dataset.recordId = expense.id;
+}
+
+function openNoticeForm(existing = null) {
+  const isAdmin = isWorkspaceAdministrator();
+  const content = `
+    <div class="form-grid">
+      <div class="field full">
+        <label for="notice-title">Announcement Title *</label>
+        <input id="notice-title" name="notice-title" type="text" placeholder="e.g. Stock delivery arriving at 2 PM" value="${esc(existing?.title || '')}" required>
+      </div>
+      <div class="field">
+        <label for="notice-priority">Priority</label>
+        <select id="notice-priority" name="notice-priority">
+          <option value="General" ${(existing?.priority || 'General') === 'General' ? 'selected' : ''}>General</option>
+          <option value="Important" ${existing?.priority === 'Important' ? 'selected' : ''}>Important</option>
+          <option value="Urgent" ${existing?.priority === 'Urgent' ? 'selected' : ''}>Urgent</option>
+        </select>
+      </div>
+      ${isAdmin ? `
+      <div class="field" style="display:flex;align-items:flex-end;padding-bottom:6px">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+          <input type="checkbox" name="notice-pinned" ${existing?.pinned ? 'checked' : ''}>
+          <span>📌 Pin to top of Notice Board</span>
+        </label>
+      </div>
+      ` : `
+      <div class="field" style="display:flex;align-items:flex-end">
+        <small class="field-hint">Your notice will be sent to the Administrator for approval before appearing to all staff.</small>
+      </div>
+      `}
+      <div class="field full">
+        <label for="notice-message">Message *</label>
+        <textarea id="notice-message" name="notice-message" rows="4" placeholder="Write your announcement or update for the team…" required>${esc(existing?.message || '')}</textarea>
+      </div>
+    </div>
+  `;
+  openDialog(
+    'save-notice',
+    existing ? 'Edit Announcement' : (isAdmin ? 'Post Team Announcement' : 'Submit Notice for Approval'),
+    existing ? 'Update the announcement shown on the Dashboard Notice Board.' : (isAdmin ? 'Published immediately to all team members across every device.' : 'An Administrator will review and approve your announcement.'),
+    content,
+    existing ? 'Save Changes' : (isAdmin ? 'Publish Announcement' : 'Submit for Approval')
+  );
+  const form = document.getElementById('modal-content');
+  if (form) {
+    if (existing) form.dataset.recordId = existing.id;
+    else delete form.dataset.recordId;
+  }
+  setTimeout(() => document.getElementById('notice-title')?.focus(), 40);
 }
 
 function transactionProductPicker(kind) {
@@ -7339,6 +7792,51 @@ async function handleDialogSubmit(form) {
     toast(`✓ Expense ${expense.id} marked as paid`);
     return;
   }
+  if (kind === 'save-notice') {
+    const title = val('notice-title');
+    const message = val('notice-message');
+    const priority = val('notice-priority') || 'General';
+    const isAdmin = isWorkspaceAdministrator();
+    const pinned = isAdmin ? Boolean(data.get('notice-pinned')) : false;
+
+    if (!title) { toast('Enter an announcement title'); return; }
+    if (!message) { toast('Enter the announcement message'); return; }
+
+    if (!Array.isArray(state.notices)) state.notices = [];
+    const existingId = form.dataset.recordId;
+    const existing = existingId ? state.notices.find(n => n.id === existingId) : null;
+    const user = currentWorkspaceUser();
+    const nowIso = new Date().toISOString();
+
+    if (existing) {
+      if (!isAdmin) { toast('Only an Administrator can edit published notices'); return; }
+      Object.assign(existing, { title, message, priority, pinned, updatedAt: nowIso });
+      recordActivity('Notice updated', title, existing.id);
+    } else {
+      const notice = {
+        id: idFor('NTC', state.notices),
+        title,
+        message,
+        priority,
+        pinned,
+        status: isAdmin ? 'Published' : 'Pending',
+        authorId: user.id,
+        authorName: user.name || 'User',
+        authorRole: isAdmin ? 'Owner / Administrator' : (user.role || 'Staff'),
+        approvedBy: isAdmin ? (user.name || 'Administrator') : '',
+        createdAt: nowIso,
+        publishedAt: isAdmin ? nowIso : ''
+      };
+      state.notices.unshift(notice);
+      recordActivity(isAdmin ? 'Announcement published' : 'Notice submitted for approval', title, notice.id);
+    }
+
+    saveState();
+    document.getElementById('app-modal')?.close();
+    render();
+    toast(existing ? 'Announcement updated' : (isAdmin ? '📢 Announcement published to all users' : '⏳ Notice submitted — awaiting administrator approval'));
+    return;
+  }
   toast('This form is not available yet');
 }
 
@@ -7518,6 +8016,92 @@ function handleAction(button) {
     case 'logout': logout(); break;
     case 'lock-screen': lockScreen('manual'); break;
     case 'unlock-switch-account': clearScreenLock(); logout(); break;
+    case 'new-notice': openNoticeForm(); break;
+    case 'edit-notice': {
+      if (!isWorkspaceAdministrator()) { toast('Only an Administrator can edit announcements'); break; }
+      const notice = (state.notices || []).find(n => n.id === id);
+      if (notice) openNoticeForm(notice);
+      break;
+    }
+    case 'approve-notice': {
+      if (!isWorkspaceAdministrator()) { toast('Only an Administrator can approve announcements'); break; }
+      const notice = (state.notices || []).find(n => n.id === id);
+      if (!notice) break;
+      notice.status = 'Published';
+      notice.approvedBy = currentWorkspaceUser().name || 'Administrator';
+      notice.publishedAt = new Date().toISOString();
+      recordActivity('Announcement approved & published', notice.title, notice.id);
+      saveState();
+      render();
+      toast(`✓ Approved and published "${notice.title}"`);
+      break;
+    }
+    case 'reject-notice': {
+      if (!isWorkspaceAdministrator()) { toast('Only an Administrator can reject notices'); break; }
+      const notice = (state.notices || []).find(n => n.id === id);
+      if (!notice) break;
+      state.notices = (state.notices || []).filter(n => n.id !== id);
+      recordActivity('Pending notice rejected', notice.title, id);
+      saveState();
+      render();
+      toast('Pending notice rejected and removed');
+      break;
+    }
+    case 'pin-notice': {
+      if (!isWorkspaceAdministrator()) { toast('Only an Administrator can pin announcements'); break; }
+      const notice = (state.notices || []).find(n => n.id === id);
+      if (!notice) break;
+      notice.pinned = !notice.pinned;
+      saveState();
+      render();
+      toast(notice.pinned ? '📌 Announcement pinned to top' : 'Announcement unpinned');
+      break;
+    }
+    case 'delete-notice': {
+      const notice = (state.notices || []).find(n => n.id === id);
+      if (!notice) break;
+      const user = currentWorkspaceUser();
+      const canDelete = isWorkspaceAdministrator() || (notice.status === 'Pending' && notice.authorId === user.id);
+      if (!canDelete) { toast('You do not have permission to delete this announcement'); break; }
+      state.notices = (state.notices || []).filter(n => n.id !== id);
+      recordActivity('Notice removed', notice.title, id);
+      saveState();
+      render();
+      toast(notice.status === 'Pending' ? 'Notice withdrawn' : 'Announcement deleted');
+      break;
+    }
+    case 'test-notification-sound': {
+      const tone = document.getElementById('setting-sound-tone')?.value || getNotificationSoundConfig().tone;
+      const volPct = Number(document.getElementById('setting-sound-volume')?.value) || Math.round(getNotificationSoundConfig().volume * 100);
+      playNotificationSound(tone, Math.max(0.15, Math.min(1, volPct / 100)));
+      toast('🔊 Playing alert sound preview');
+      break;
+    }
+    case 'pick-brand-swatch': {
+      if (!isWorkspaceAdministrator()) break;
+      const target = button.dataset.swatchTarget;
+      const color = button.dataset.swatchColor;
+      if (!parseHex(color)) break;
+      const inputId = target === 'secondary' ? 'setting-secondary-color' : 'setting-primary-color';
+      const hexId = target === 'secondary' ? 'setting-secondary-hex' : 'setting-primary-hex';
+      const inputEl = document.getElementById(inputId);
+      const hexEl = document.getElementById(hexId);
+      if (inputEl) inputEl.value = color;
+      if (hexEl) hexEl.textContent = color.toUpperCase();
+      const pVal = document.getElementById('setting-primary-color')?.value || state.themeColors?.primary || DEFAULT_BRAND_COLORS.primary;
+      const sVal = document.getElementById('setting-secondary-color')?.value || state.themeColors?.secondary || DEFAULT_BRAND_COLORS.secondary;
+      applyBrandColors(pVal, sVal, false);
+      break;
+    }
+    case 'reset-brand-colors': {
+      if (!isWorkspaceAdministrator()) { toast('Only an Administrator can reset brand colors'); break; }
+      state.themeColors = { ...DEFAULT_BRAND_COLORS };
+      applyBrandColors(DEFAULT_BRAND_COLORS.primary, DEFAULT_BRAND_COLORS.secondary, true);
+      saveState();
+      render();
+      toast('↺ Brand colors reset to default (Dark Blue & Orange)');
+      break;
+    }
     case 'edit-user-permissions': { const user = state.users.find(item => item.id === id); openUserPermissionsForm(user); break; }
     case 'toggle-user': {
       const user = state.users.find(u => u.id === id); if (!user || user.isBootstrap) { toast('The owner account cannot be deactivated'); break; }
@@ -8925,6 +9509,19 @@ document.addEventListener('input', event => {
       input.setSelectionRange(input.value.length, input.value.length);
     }
   }
+  if (event.target.id === 'setting-primary-color' || event.target.id === 'setting-secondary-color') {
+    const pVal = document.getElementById('setting-primary-color')?.value || DEFAULT_BRAND_COLORS.primary;
+    const sVal = document.getElementById('setting-secondary-color')?.value || DEFAULT_BRAND_COLORS.secondary;
+    const pHex = document.getElementById('setting-primary-hex');
+    const sHex = document.getElementById('setting-secondary-hex');
+    if (pHex) pHex.textContent = pVal.toUpperCase();
+    if (sHex) sHex.textContent = sVal.toUpperCase();
+    applyBrandColors(pVal, sVal, false);
+  }
+  if (event.target.id === 'setting-sound-volume') {
+    const lbl = document.getElementById('setting-sound-volume-label');
+    if (lbl) lbl.textContent = `${event.target.value}%`;
+  }
   if (event.target.id === 'report-search') {
     reportSearchQuery = event.target.value;
     render();
@@ -9289,6 +9886,12 @@ function hideBootSplash() {
 // App Initialization (Instant Local-First Paint + Non-Blocking Live Cloud Hydration)
 async function initApp() {
   applyTheme(safeStorageGet(THEME_KEY) === 'dark' ? 'dark' : 'light');
+  try {
+    const cachedColors = JSON.parse(safeStorageGet(BRAND_COLORS_KEY) || 'null');
+    if (cachedColors?.primary && cachedColors?.secondary) {
+      applyBrandColors(cachedColors.primary, cachedColors.secondary, false);
+    }
+  } catch {}
 
   // 0. Resolve active tenant workspace from saved session (or last active workspace) BEFORE loading data
   let savedSession = null;
@@ -9320,6 +9923,7 @@ async function initApp() {
     }
   };
   normalizeBootState();
+  applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
 
   const todayLabel = document.getElementById('today-label');
   if (todayLabel) {
@@ -9418,6 +10022,7 @@ async function initApp() {
 
       if (changed) {
         normalizeBootState();
+  applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
         await persistState(state, bootWorkspaceId);
         if (state.currentUserId) {
           render();
