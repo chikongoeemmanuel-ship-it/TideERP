@@ -9279,7 +9279,14 @@ sidebar?.addEventListener('click', event => {
 
 window.addEventListener('resize', updateSidebarUI);
 updateSidebarUI();
-// App Initialization (Multi-Tenant Dual Mode: Cloud-First Unified ERP + Isolated Offline Cache)
+function hideBootSplash() {
+  const splash = document.getElementById('boot-splash');
+  if (!splash) return;
+  splash.classList.add('is-done');
+  setTimeout(() => splash.remove(), 220);
+}
+
+// App Initialization (Instant Local-First Paint + Non-Blocking Live Cloud Hydration)
 async function initApp() {
   applyTheme(safeStorageGet(THEME_KEY) === 'dark' ? 'dark' : 'light');
 
@@ -9292,24 +9299,108 @@ async function initApp() {
   }
   const bootTemplate = bootWorkspaceId === 'ws_primary' ? initialState : createBlankWorkspaceState();
 
-  // 1. Load isolated local IndexedDB cache first (enables instant offline dual-mode operation)
+  // 1. Load isolated local IndexedDB cache (~15ms) and PAINT UI IMMEDIATELY (zero blank wait!)
   state = await loadPersistedState(bootTemplate, bootWorkspaceId);
   state.currentUserId = '';
 
-  // 2. Cloud-First Hydration BEFORE any startup saveState() so refreshing ANY device
-  //    immediately gets the complete live ERP for THIS company only (Timeout-guarded for offline mode)
+  const normalizeBootState = () => {
+    activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
+    state.activeBranchId = activeBranch.id;
+    state.branch = activeBranch.name;
+    state.users.forEach(user => {
+      if (!user.branchId) user.branchId = activeBranch.id;
+      if (user.isBootstrap && !user.role) {
+        user.role = 'Owner / Administrator';
+        user.modules = ['*'];
+        user.permissions = { '*': ['*'] };
+      }
+    });
+    if (!state.companyName || state.companyName === 'Kipepeo Traders' || /kipepeo/i.test(state.companyName)) {
+      state.companyName = 'My Company';
+    }
+  };
+  normalizeBootState();
+
+  const todayLabel = document.getElementById('today-label');
+  if (todayLabel) {
+    todayLabel.textContent = new Intl.DateTimeFormat('en-TZ', {
+      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+      timeZone: 'Africa/Dar_es_Salaam'
+    }).format(new Date());
+  }
+
   try {
-    const cloudBoot = (async () => {
+    const hasAdmin = await ensureAdministratorLogin();
+    if (!hasAdmin) { hideBootSplash(); renderAuthGate('No administrator account is configured.'); return; }
+  } catch (error) {
+    hideBootSplash();
+    renderAuthGate(error.message || 'Secure sign-in could not be initialized.');
+    return;
+  }
+
+  const signedInUser = state.users.find(user => user.id === savedSession?.id && user.passwordHash === savedSession?.passwordHash && user.status !== 'Inactive');
+  if (signedInUser) {
+    state.currentUserId = signedInUser.id;
+    if (!activateAssignedBranch(signedInUser)) {
+      state.currentUserId = ''; safeSessionRemove(AUTH_SESSION_KEY);
+      hideBootSplash();
+      renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
+      return;
+    }
+    const hash = (location.hash || '').replace(/^#/, '');
+    page = hash && pageLabels[hash] ? hash : 'home';
+    document.getElementById('auth-gate').hidden = true;
+    document.querySelector('.app-shell').hidden = false;
+    render();
+    hideBootSplash();
+
+    let savedLock = null;
+    try { savedLock = JSON.parse(safeSessionGet(LOCK_STATE_KEY) || 'null'); } catch {}
+    if (savedLock?.locked && savedLock.userId === signedInUser.id) {
+      startAutoLockWatcher(true);
+      lockScreen(savedLock.reason || 'inactivity');
+    } else {
+      startAutoLockWatcher(true);
+    }
+  } else {
+    stopAutoLockWatcher();
+    clearScreenLock();
+    safeSessionRemove(AUTH_SESSION_KEY);
+    state.currentUserId = '';
+    renderAuthGate();
+    hideBootSplash();
+  }
+
+  // 2. Non-blocking background cloud hydration & live real-time stream setup
+  //    (Because cloudHydrated stays false until hydration completes, no stale overwrite can occur!)
+  window.requestPushStateToCloud = () => {
+    if (typeof pushStateToCloud === 'function' && state) pushStateToCloud(state);
+  };
+
+  (async () => {
+    try {
       if (typeof window.TideFirebase?.initFirebase === 'function') {
         await window.TideFirebase.initFirebase();
         window.TideFirebase.setWorkspace?.(bootWorkspaceId);
       }
+      // Abort if user already signed into / registered a different company
+      if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId) return;
+
       const [modResult, cloudProducts] = await Promise.all([
         typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, bootTemplate, true) : Promise.resolve(null),
         typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
       ]);
+
+      if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId) return;
+
+      let changed = false;
       if (modResult?.hydrated && modResult.state) {
+        const curUserId = state.currentUserId;
+        const curProds = state.products;
         state = modResult.state;
+        state.currentUserId = curUserId;
+        state.products = curProds;
+        changed = true;
       }
       if (Array.isArray(cloudProducts)) {
         const isPrimary = bootWorkspaceId === 'ws_primary';
@@ -9318,44 +9409,31 @@ async function initApp() {
         if (cloudProducts.length > 0) {
           if (isPrimary) localStorage.setItem(seedKey, 'true');
           state.products = cloudProducts;
-        } else if (hasSeeded) {
+          changed = true;
+        } else if (hasSeeded && (state.products || []).length > 0) {
           state.products = [];
+          changed = true;
         }
       }
-      await persistState(state, bootWorkspaceId);
-    })();
-    const timeoutGuard = new Promise(resolve => setTimeout(resolve, 6500));
-    await Promise.race([cloudBoot, timeoutGuard]);
-  } catch (err) {
-    console.warn('Cloud boot hydration skipped (running from local offline cache):', err);
-  }
 
-  activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
-  state.activeBranchId = activeBranch.id;
-  state.branch = activeBranch.name;
-  state.users.forEach(user => {
-    if (!user.branchId) user.branchId = activeBranch.id;
-    if (user.isBootstrap && !user.role) {
-      user.role = 'Owner / Administrator';
-      user.modules = ['*'];
-      user.permissions = { '*': ['*'] };
+      if (changed) {
+        normalizeBootState();
+        await persistState(state, bootWorkspaceId);
+        if (state.currentUserId) {
+          render();
+        }
+      }
+
+      attachActiveWorkspaceStreams();
+
+      if (typeof syncWorkspaceUsersToDirectory === 'function') {
+        syncWorkspaceUsersToDirectory(state.users, bootWorkspaceId, state.companyName).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('Background cloud hydration fell back to local cache:', err);
+      attachActiveWorkspaceStreams();
     }
-  });
-  if (!state.companyName || state.companyName === 'Kipepeo Traders' || /kipepeo/i.test(state.companyName)) {
-    state.companyName = 'My Company';
-  }
-
-  // 3. Attach Real-Time Multi-Device Listeners strictly scoped to this company workspace
-  window.requestPushStateToCloud = () => {
-    if (typeof pushStateToCloud === 'function' && state) pushStateToCloud(state);
-  };
-
-  attachActiveWorkspaceStreams();
-
-  // Keep global login directory up to date for this workspace's users
-  if (typeof syncWorkspaceUsersToDirectory === 'function') {
-    syncWorkspaceUsersToDirectory(state.users, bootWorkspaceId, state.companyName).catch(() => {});
-  }
+  })();
 
   // Auto-reconcile with cloud whenever a device comes back online
   window.addEventListener('online', async () => {
@@ -9378,57 +9456,6 @@ async function initApp() {
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(() => { });
-  }
-
-  const todayLabel = document.getElementById('today-label');
-  if (todayLabel) {
-    todayLabel.textContent = new Intl.DateTimeFormat('en-TZ', {
-      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
-      timeZone: 'Africa/Dar_es_Salaam'
-    }).format(new Date());
-  }
-  try {
-    const hasAdmin = await ensureAdministratorLogin();
-    if (!hasAdmin) { renderAuthGate('No administrator account is configured.'); return; }
-    // Persist locally during boot without triggering an unnecessary cloud overwrite
-    snapshotCurrentBranch();
-    persistState(state);
-  } catch (error) {
-    renderAuthGate(error.message || 'Secure sign-in could not be initialized.');
-    return;
-  }
-  let session = null;
-  try { session = JSON.parse(safeSessionGet(AUTH_SESSION_KEY) || 'null'); } catch { }
-  const signedInUser = state.users.find(user => user.id === session?.id && user.passwordHash === session?.passwordHash && user.status !== 'Inactive');
-  if (signedInUser) {
-    state.currentUserId = signedInUser.id;
-    if (!activateAssignedBranch(signedInUser)) {
-      state.currentUserId = ''; safeSessionRemove(AUTH_SESSION_KEY);
-      renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
-      return;
-    }
-    snapshotCurrentBranch();
-    persistState(state);
-    const hash = (location.hash || '').replace(/^#/, '');
-    page = hash && pageLabels[hash] ? hash : 'home';
-    document.getElementById('auth-gate').hidden = true;
-    document.querySelector('.app-shell').hidden = false;
-    render();
-    let savedLock = null;
-    try { savedLock = JSON.parse(safeSessionGet(LOCK_STATE_KEY) || 'null'); } catch {}
-    if (savedLock?.locked && savedLock.userId === signedInUser.id) {
-      startAutoLockWatcher(true);
-      lockScreen(savedLock.reason || 'inactivity');
-    } else {
-      startAutoLockWatcher(true);
-    }
-  } else {
-    stopAutoLockWatcher();
-    clearScreenLock();
-    safeSessionRemove(AUTH_SESSION_KEY);
-    state.currentUserId = '';
-    persistState(state);
-    renderAuthGate();
   }
 }
 

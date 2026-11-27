@@ -135,8 +135,9 @@
   }
 
   /**
-   * Fetch Firebase credentials from Vercel Serverless Function `/api/config`
-   * or fall back to window.__FIREBASE_CONFIG__ / localStorage / default
+   * Load Firebase credentials INSTANTLY from window / localStorage / fallback (0ms)
+   * and refresh from `/api/config` silently in the background so cold serverless starts
+   * never delay initial page rendering or Firestore connection.
    */
   async function loadConfig() {
     if (activeConfig) return activeConfig;
@@ -147,32 +148,32 @@
     }
 
     try {
-      if (typeof fetch === 'function' && location.protocol !== 'file:') {
-        const res = await fetch('/api/config', { cache: 'no-cache' });
-        if (res.ok) {
-          const cfg = await res.json();
-          if (cfg && cfg.projectId && cfg.apiKey) {
-            activeConfig = cfg;
-            return activeConfig;
-          }
-        }
-      }
-    } catch (e) {
-      console.info('Config API unavailable; using standard client credentials.');
-    }
-
-    try {
       const stored = localStorage.getItem('tide-firebase-config');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed && parsed.projectId) {
+        if (parsed && parsed.projectId && parsed.apiKey) {
           activeConfig = parsed;
-          return activeConfig;
         }
       }
     } catch {}
 
-    activeConfig = FALLBACK_CONFIG;
+    if (!activeConfig) {
+      activeConfig = FALLBACK_CONFIG;
+    }
+
+    // Refresh `/api/config` silently in the background without blocking startup
+    if (typeof fetch === 'function' && typeof location !== 'undefined' && location.protocol !== 'file:') {
+      fetch('/api/config', { cache: 'no-cache' })
+        .then(res => (res.ok ? res.json() : null))
+        .then(cfg => {
+          if (cfg && cfg.projectId && cfg.apiKey) {
+            activeConfig = cfg;
+            try { localStorage.setItem('tide-firebase-config', JSON.stringify(cfg)); } catch {}
+          }
+        })
+        .catch(() => {});
+    }
+
     return activeConfig;
   }
 
