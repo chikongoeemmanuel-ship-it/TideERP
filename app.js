@@ -5850,49 +5850,6 @@ function renderSettings() {
       </form>
     </section>
 
-    <!-- Real-time Cross-Device Cloud Sync -->
-    <section class="panel cloud-sync-panel" style="margin-top:20px">
-      <div class="settings-section">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-          <div>
-            <h2>Live Multi-Device Cloud Sync (PC ⇄ Phone)</h2>
-            <p class="panel-subtitle">Automatically synchronize products, sales, purchases, and payments in real time across all your computers and phones.</p>
-          </div>
-          <span class="status-pill ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? 'status-paid' : 'status-draft'}" style="font-size:11px">
-            ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? '● Live Cloud Connected' : '○ Standalone Local Mode'}
-          </span>
-        </div>
-        <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <button type="button" class="button primary" data-action="open-cloud-sync-dialog">
-            ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? '⚙ Manage Cloud Database' : '⚡ Connect Free Cloud Database (Firebase)'}
-          </button>
-          <button type="button" class="button" data-action="force-cloud-sync">⚡ Sync Now</button>
-          <button type="button" class="button small" data-action="force-reload-app">🔄 Clear Cache &amp; Reload</button>
-          ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected() ? `
-            <button type="button" class="button small" data-action="disconnect-cloud-sync" style="color:#ef4444">Disconnect</button>
-          ` : ''}
-        </div>
-        <small class="field-hint" style="display:block;margin-top:8px">
-          ${typeof isCloudSyncConnected === 'function' && isCloudSyncConnected()
-      ? '✓ Active: Any product, sale, or payment recorded on your PC or phone updates both devices automatically.'
-      : 'To enable automatic syncing between your PC and phone without transferring files, connect your free Google Firebase Firestore database.'}
-        </small>
-      </div>
-    </section>
-
-    <section class="panel data-sync-panel" style="margin-top:20px">
-      <div class="settings-section">
-        <h2>Data Backup &amp; Device Transfer (PC ⇄ Phone)</h2>
-        <p class="panel-subtitle">Export all products, sales, purchases, inventory, and customers to transfer between your PC and phone or save an offline backup.</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-          <button type="button" class="button primary" data-action="export-full-backup">📥 Download Full Backup (.json)</button>
-          <button type="button" class="button" data-action="trigger-restore-backup">📤 Restore Backup (.json)</button>
-          <input type="file" id="restore-backup-file" accept=".json,application/json" hidden>
-        </div>
-        <small class="field-hint" style="display:block;margin-top:8px">Tip: Download the backup file on your PC, send it to your phone (via WhatsApp, Email, or Drive), then click 'Restore Backup' on your phone to instantly sync all your products and records.</small>
-      </div>
-    </section>
-
     <section class="table-panel trash-panel" style="margin-top:20px">
       <div class="table-heading">
         <div><h2>Trash bin (Soft Deletes &amp; Recovery)</h2><p class="panel-subtitle">Restore accidentally deleted items directly back into active workflows.</p></div>
