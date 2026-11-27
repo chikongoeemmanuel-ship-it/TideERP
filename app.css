@@ -12454,3 +12454,200 @@ tr.row-revoked td strong {
   color: #ffffff;
   vertical-align: middle;
 }
+
+/* =========================================================
+   Automatic Inactivity Lock Screen & Countdown
+   ========================================================= */
+.app-shell.is-locked {
+  filter: blur(10px) saturate(0.75);
+  pointer-events: none;
+  user-select: none;
+  transition: filter 0.25s ease;
+}
+
+.footer-lock-button.is-warning {
+  border-color: #f59e0b !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+  color: #b45309 !important;
+}
+
+:root[data-theme="dark"] .footer-lock-button.is-warning {
+  color: #fbbf24 !important;
+  background: rgba(245, 158, 11, 0.2) !important;
+}
+
+.auto-lock-warning {
+  position: fixed;
+  bottom: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1400;
+  background: #1e293b;
+  color: #fef3c7;
+  border: 1px solid #f59e0b;
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  text-align: center;
+}
+
+.auto-lock-warning[hidden] {
+  display: none !important;
+}
+
+.screen-lock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.screen-lock-overlay[hidden] {
+  display: none !important;
+}
+
+.screen-lock-card {
+  width: min(410px, 100%);
+  background: var(--white, #ffffff);
+  color: var(--ink, #0f172a);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 18px;
+  padding: 28px 24px 24px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.42);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+:root[data-theme="dark"] .screen-lock-card {
+  background: #1a212b;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+.screen-lock-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+
+.screen-lock-badge {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #0082cf, #005f99);
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  box-shadow: 0 8px 20px rgba(0, 130, 207, 0.35);
+}
+
+.screen-lock-head h2 {
+  margin: 4px 0 0;
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.screen-lock-head p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted, #64748b);
+  line-height: 1.45;
+}
+
+.screen-lock-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: var(--bg-subtle, #f1f5f9);
+  border: 1px solid var(--line, #e2e8f0);
+}
+
+:root[data-theme="dark"] .screen-lock-user {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.screen-lock-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #0082cf;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.screen-lock-user-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.screen-lock-user-meta strong {
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.screen-lock-user-meta small {
+  font-size: 11.5px;
+  color: var(--muted, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.screen-lock-error {
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .screen-lock-error {
+  color: #fca5a5;
+}
+
+.screen-lock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.screen-lock-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.screen-lock-actions .button {
+  width: 100%;
+  justify-content: center;
+  height: 40px;
+}

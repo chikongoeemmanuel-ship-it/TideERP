@@ -1,6 +1,9 @@
 
 const THEME_KEY = 'tide-erp-theme';
 const AUTH_SESSION_KEY = 'tide-erp-auth-user';
+const LOCK_STATE_KEY = 'tide-erp-session-locked';
+const LAST_ACTIVITY_KEY = 'tide-erp-last-activity';
+const DEFAULT_AUTO_LOCK_MINUTES = 20;
 const ADMIN_LOGIN_EMAIL = 'chikongoeemmanuel@gmail.com';
 const ADMIN_LOGIN_USERNAME = 'Admin';
 const ADMIN_INITIAL_PASSWORD = 'Admin123';
@@ -55,6 +58,7 @@ const initialState = {
   currency: 'TZS',
   vatEnabled: true,
   vatRate: 18,
+  autoLockMinutes: 20,
   productCategories: ['General'],
   measurementUnits: ['Piece', 'Pack', 'Box', 'Kg', 'Litre'],
   productPackages: ['Single', 'Pack', 'Box', 'Carton'],
@@ -359,7 +363,7 @@ function canViewPage(module, user = currentWorkspaceUser()) {
 }
 
 function canPerformAction(action, element = null) {
-  if (['close-modal', 'view-attachment', 'delete-attachment', 'download-attachment', 'add-attachment', 'view-entry-attachments'].includes(action)) return true;
+  if (['close-modal', 'view-attachment', 'delete-attachment', 'download-attachment', 'add-attachment', 'view-entry-attachments', 'lock-screen', 'unlock-switch-account'].includes(action)) return true;
   const user = currentWorkspaceUser();
   if (!state.currentUserId || !user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
   if (user.isBootstrap) return true;
@@ -897,6 +901,7 @@ function createBlankWorkspaceState({ companyName, branchName = 'Main branch', cu
     currency: currency || 'TZS',
     vatEnabled: true,
     vatRate: 18,
+    autoLockMinutes: 20,
     productCategories: ['General'],
     measurementUnits: ['Piece', 'Pack', 'Box', 'Kg', 'Litre'],
     productPackages: ['Single', 'Pack', 'Box', 'Carton'],
@@ -1079,6 +1084,8 @@ async function handleRegister(form) {
     history.replaceState({ erpPage: 'home' }, '', '#home');
     document.getElementById('auth-gate').hidden = true;
     document.querySelector('.app-shell').hidden = false;
+    clearScreenLock();
+    startAutoLockWatcher();
     render();
     toast(`🎉 Welcome to Tide ERP! Fresh company workspace "${companyName}" created.`);
   } catch (err) {
@@ -1188,11 +1195,16 @@ async function handleLogin(form) {
   history.replaceState({ erpPage: 'home' }, '', '#home');
   document.getElementById('auth-gate').hidden = true;
   document.querySelector('.app-shell').hidden = false;
+  clearScreenLock();
+  startAutoLockWatcher();
   render();
 }
 
 function logout() {
+  stopAutoLockWatcher();
+  clearScreenLock();
   safeSessionRemove(AUTH_SESSION_KEY);
+  safeSessionRemove(LAST_ACTIVITY_KEY);
   state.currentUserId = '';
   state.posCart = [];
   posCart = [];
@@ -1203,6 +1215,250 @@ function logout() {
   persistState(state);
   document.getElementById('app-modal')?.close();
   renderAuthGate();
+}
+
+// =========================================================
+// Automatic Inactivity Lock Timer (Default: 20 minutes)
+// Persists lock across refresh and handles mobile sleep/wake
+// =========================================================
+let screenLocked = false;
+let screenLockReason = 'inactivity';
+let lastActivityAt = Date.now();
+let lastActivityPersistAt = 0;
+let autoLockIntervalId = null;
+let autoLockListenersAttached = false;
+
+function getAutoLockMinutes() {
+  const raw = state?.autoLockMinutes;
+  if (raw === 0) return 0;
+  const num = Number(raw);
+  if (Number.isFinite(num) && num >= 0) return num;
+  return DEFAULT_AUTO_LOCK_MINUTES;
+}
+
+function isScreenLocked() {
+  return Boolean(screenLocked);
+}
+
+function formatCountdown(ms) {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function hideAutoLockWarning() {
+  const banner = document.getElementById('auto-lock-warning');
+  if (banner) {
+    banner.hidden = true;
+    banner.textContent = '';
+  }
+}
+
+function updateLockCountdownUI(remainingMs = null) {
+  const btn = document.getElementById('lock-session-button');
+  const label = document.getElementById('footer-lock-countdown');
+  if (!btn || !label) return;
+  const mins = getAutoLockMinutes();
+  if (mins <= 0) {
+    label.textContent = 'Lock';
+    btn.classList.remove('is-warning');
+    btn.title = 'Auto-lock disabled (click to lock screen now)';
+    return;
+  }
+  const ms = remainingMs !== null ? remainingMs : Math.max(0, mins * 60 * 1000 - (Date.now() - lastActivityAt));
+  label.textContent = formatCountdown(ms);
+  const isWarning = ms <= 60000 && ms > 0;
+  btn.classList.toggle('is-warning', isWarning);
+  btn.title = `Auto-locks in ${formatCountdown(ms)} of inactivity (click to lock now)`;
+}
+
+function recordUserActivity() {
+  if (screenLocked || !state?.currentUserId) return;
+  const now = Date.now();
+  if (now - lastActivityPersistAt < 1000) return; // Throttle to once per second
+  lastActivityAt = now;
+  lastActivityPersistAt = now;
+  safeSessionSet(LAST_ACTIVITY_KEY, String(now));
+  hideAutoLockWarning();
+  updateLockCountdownUI(getAutoLockMinutes() * 60 * 1000);
+}
+
+function renderScreenLockOverlay(errorMsg = '') {
+  const overlay = document.getElementById('screen-lock-overlay');
+  if (!overlay) return;
+  const user = currentWorkspaceUser();
+  const displayName = user?.name || 'Administrator';
+  const roleLabel = isAdministratorUser(user) ? 'Owner / Administrator' : (user?.role || 'User');
+  const identifier = user?.email || user?.username || '';
+  const mins = getAutoLockMinutes();
+  const reasonText = screenLockReason === 'manual'
+    ? 'Screen locked manually to protect your workspace.'
+    : `Session automatically locked after ${mins || DEFAULT_AUTO_LOCK_MINUTES} minutes of inactivity.`;
+
+  overlay.innerHTML = `
+    <div class="screen-lock-card" role="dialog" aria-modal="true" aria-labelledby="screen-lock-title">
+      <div class="screen-lock-head">
+        <div class="screen-lock-badge" aria-hidden="true">🔒</div>
+        <h2 id="screen-lock-title">Session Locked</h2>
+        <p>${esc(reasonText)}<br><strong>${esc(state.companyName || 'My Company')}</strong> · ${esc(state.branch || 'Main branch')}</p>
+      </div>
+      <div class="screen-lock-user">
+        <span class="screen-lock-avatar">${esc(shortName(displayName))}</span>
+        <div class="screen-lock-user-meta">
+          <strong>${esc(displayName)}</strong>
+          <small>${esc(roleLabel)}${identifier ? ` · ${esc(identifier)}` : ''}</small>
+        </div>
+      </div>
+      ${errorMsg ? `<div class="screen-lock-error" role="alert">${esc(errorMsg)}</div>` : ''}
+      <form class="screen-lock-form" id="screen-lock-form" autocomplete="off">
+        <div class="field">
+          <label for="unlock-password">Enter your password to unlock</label>
+          <div class="input-wrap">
+            <input id="unlock-password" name="unlock-password" type="password" placeholder="Enter password" required autofocus>
+            <button type="button" class="pwd-visibility-toggle" aria-label="Show password" title="Show password">👁</button>
+          </div>
+        </div>
+        <div class="screen-lock-actions">
+          <button type="submit" class="button primary">🔓 Unlock Session</button>
+          <button type="button" class="button" data-action="unlock-switch-account">Switch Account / Sign Out</button>
+        </div>
+      </form>
+    </div>
+  `;
+  overlay.hidden = false;
+  setTimeout(() => document.getElementById('unlock-password')?.focus(), 40);
+}
+
+function lockScreen(reason = 'inactivity') {
+  if (!state?.currentUserId) return;
+  screenLocked = true;
+  screenLockReason = reason;
+  safeSessionSet(LOCK_STATE_KEY, JSON.stringify({
+    locked: true,
+    reason,
+    lockedAt: Date.now(),
+    userId: state.currentUserId
+  }));
+  hideAutoLockWarning();
+  document.getElementById('app-modal')?.close();
+  document.querySelector('.notifications-popover')?.remove();
+  document.querySelector('.branch-popover')?.remove();
+  const shell = document.querySelector('.app-shell');
+  if (shell) {
+    shell.classList.add('is-locked');
+    shell.setAttribute('aria-hidden', 'true');
+  }
+  renderScreenLockOverlay();
+}
+
+function clearScreenLock() {
+  screenLocked = false;
+  safeSessionRemove(LOCK_STATE_KEY);
+  hideAutoLockWarning();
+  const overlay = document.getElementById('screen-lock-overlay');
+  if (overlay) {
+    overlay.hidden = true;
+    overlay.innerHTML = '';
+  }
+  const shell = document.querySelector('.app-shell');
+  if (shell) {
+    shell.classList.remove('is-locked');
+    shell.removeAttribute('aria-hidden');
+  }
+}
+
+async function handleUnlockSubmit(form) {
+  const password = String(form.elements['unlock-password']?.value || '');
+  const user = currentWorkspaceUser();
+  if (!user || !user.id) {
+    clearScreenLock();
+    logout();
+    return;
+  }
+  let valid = false;
+  try {
+    valid = Boolean(user.status !== 'Inactive' && await verifyUserPassword(user, password));
+  } catch (err) {
+    renderScreenLockOverlay(err.message || 'Could not verify password.');
+    return;
+  }
+  if (!valid) {
+    renderScreenLockOverlay('Incorrect password. Please try again.');
+    return;
+  }
+  clearScreenLock();
+  lastActivityAt = Date.now();
+  lastActivityPersistAt = lastActivityAt;
+  safeSessionSet(LAST_ACTIVITY_KEY, String(lastActivityAt));
+  updateLockCountdownUI();
+  toast('🔓 Session unlocked');
+}
+
+function tickAutoLockTimer() {
+  if (!state?.currentUserId || screenLocked) return;
+  const mins = getAutoLockMinutes();
+  if (mins <= 0) {
+    hideAutoLockWarning();
+    updateLockCountdownUI();
+    return;
+  }
+  const timeoutMs = mins * 60 * 1000;
+  const elapsed = Date.now() - lastActivityAt;
+  const remaining = timeoutMs - elapsed;
+
+  if (remaining <= 0) {
+    lockScreen('inactivity');
+    return;
+  }
+
+  updateLockCountdownUI(remaining);
+
+  const banner = document.getElementById('auto-lock-warning');
+  if (banner) {
+    if (remaining <= 60000) {
+      const secs = Math.max(1, Math.ceil(remaining / 1000));
+      banner.textContent = `⏳ Auto-locking in ${secs}s due to inactivity — tap or press any key to stay active`;
+      banner.hidden = false;
+    } else if (!banner.hidden) {
+      banner.hidden = true;
+    }
+  }
+}
+
+function startAutoLockWatcher(preserveStoredTimestamp = false) {
+  if (!preserveStoredTimestamp) {
+    lastActivityAt = Date.now();
+    lastActivityPersistAt = lastActivityAt;
+    safeSessionSet(LAST_ACTIVITY_KEY, String(lastActivityAt));
+  } else {
+    const stored = Number(safeSessionGet(LAST_ACTIVITY_KEY) || 0);
+    lastActivityAt = stored > 0 ? stored : Date.now();
+  }
+
+  if (!autoLockListenersAttached) {
+    autoLockListenersAttached = true;
+    const events = ['pointerdown', 'mousedown', 'keydown', 'touchstart', 'scroll', 'input'];
+    events.forEach(ev => window.addEventListener(ev, recordUserActivity, { passive: true, capture: true }));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        tickAutoLockTimer();
+      }
+    });
+    window.addEventListener('focus', tickAutoLockTimer);
+  }
+
+  if (autoLockIntervalId) clearInterval(autoLockIntervalId);
+  autoLockIntervalId = setInterval(tickAutoLockTimer, 1000);
+  tickAutoLockTimer();
+}
+
+function stopAutoLockWatcher() {
+  if (autoLockIntervalId) {
+    clearInterval(autoLockIntervalId);
+    autoLockIntervalId = null;
+  }
+  hideAutoLockWarning();
 }
 
 function shortName(name = '') {
@@ -5568,6 +5824,26 @@ function renderSettings() {
           </div>
         </div>
 
+        <div class="settings-section">
+          <h2>Security &amp; Auto-Lock Timer</h2>
+          <div class="form-grid">
+            <div class="field">
+              <label for="setting-autolock-minutes">Automatically lock screen after inactivity</label>
+              <select id="setting-autolock-minutes" name="setting-autolock-minutes">
+                ${[5, 10, 15, 20, 30, 60, 0].map(m => {
+                  const cur = getAutoLockMinutes();
+                  const label = m === 0 ? 'Disabled (Never auto-lock)' : m === 20 ? '20 minutes (Recommended)' : `${m} minutes`;
+                  return `<option value="${m}" ${cur === m ? 'selected' : ''}>${label}</option>`;
+                }).join('')}
+              </select>
+              <small class="field-hint">Protects your workspace when unattended on PC or mobile. Your open screen and POS cart are preserved until you unlock.</small>
+            </div>
+            <div class="field" style="display:flex;align-items:flex-end">
+              <button type="button" class="button" data-action="lock-screen">🔒 Lock Screen Now</button>
+            </div>
+          </div>
+        </div>
+
         <div class="modal-actions">
           <button class="button primary" type="submit">Save settings</button>
         </div>
@@ -5643,6 +5919,14 @@ function saveCompanySettings(form) {
   if (isWorkspaceAdministrator() && paymentDetailsField) state.companyPaymentDetails = paymentDetailsField.value.trim();
   state.vatEnabled = form.querySelector('[name="setting-vat-enabled"]')?.checked ?? true;
   state.vatRate = Number(form.querySelector('[name="setting-vat-rate"]')?.value) || 18;
+  const autoLockField = form.querySelector('[name="setting-autolock-minutes"]');
+  if (autoLockField) {
+    const parsedLock = Number(autoLockField.value);
+    state.autoLockMinutes = Number.isFinite(parsedLock) && parsedLock >= 0 ? parsedLock : DEFAULT_AUTO_LOCK_MINUTES;
+    lastActivityAt = Date.now();
+    safeSessionSet(LAST_ACTIVITY_KEY, String(lastActivityAt));
+    updateLockCountdownUI();
+  }
   saveState();
   refreshCompanyLogo();
   render();
@@ -7275,6 +7559,8 @@ function handleAction(button) {
     case 'set-user-credentials': { const user = state.users.find(item => item.id === id); openUserCredentialsForm(user); break; }
     case 'my-account': openOwnCredentialsForm(); break;
     case 'logout': logout(); break;
+    case 'lock-screen': lockScreen('manual'); break;
+    case 'unlock-switch-account': clearScreenLock(); logout(); break;
     case 'edit-user-permissions': { const user = state.users.find(item => item.id === id); openUserPermissionsForm(user); break; }
     case 'toggle-user': {
       const user = state.users.find(u => u.id === id); if (!user || user.isBootstrap) { toast('The owner account cannot be deactivated'); break; }
@@ -8648,6 +8934,9 @@ document.addEventListener('submit', event => {
   } else if (event.target.id === 'register-form') {
     event.preventDefault();
     handleRegister(event.target);
+  } else if (event.target.id === 'screen-lock-form') {
+    event.preventDefault();
+    handleUnlockSubmit(event.target);
   } else if (event.target.id === 'company-settings-form') {
     event.preventDefault();
     if (!isWorkspaceAdministrator() && !userHasPermission('settings', 'edit-company')) { toast('You do not have permission to change company settings'); return; }
@@ -8890,6 +9179,7 @@ window.addEventListener('offline', updateConnection);
 
 // Keyboard shortcuts: / for POS search, Ctrl+K for general search
 document.addEventListener('keydown', event => {
+  if (isScreenLocked()) return;
   if (event.target.id === 'stocktake-search-input' && event.key === 'Enter') {
     event.preventDefault();
     const firstItem = document.querySelector('#stocktake-search-results .stocktake-search-item');
@@ -9167,7 +9457,17 @@ async function initApp() {
     document.getElementById('auth-gate').hidden = true;
     document.querySelector('.app-shell').hidden = false;
     render();
+    let savedLock = null;
+    try { savedLock = JSON.parse(safeSessionGet(LOCK_STATE_KEY) || 'null'); } catch {}
+    if (savedLock?.locked && savedLock.userId === signedInUser.id) {
+      startAutoLockWatcher(true);
+      lockScreen(savedLock.reason || 'inactivity');
+    } else {
+      startAutoLockWatcher(true);
+    }
   } else {
+    stopAutoLockWatcher();
+    clearScreenLock();
     safeSessionRemove(AUTH_SESSION_KEY);
     state.currentUserId = '';
     persistState(state);

@@ -191,6 +191,9 @@ function sanitizeState(restored, initialState) {
   if (!clean.currency) clean.currency = 'TZS';
   if (typeof clean.vatEnabled !== 'boolean') clean.vatEnabled = true;
   if (typeof clean.vatRate !== 'number') clean.vatRate = 18;
+  if (typeof clean.autoLockMinutes !== 'number' || !Number.isFinite(clean.autoLockMinutes) || clean.autoLockMinutes < 0) {
+    clean.autoLockMinutes = 20;
+  }
   return clean;
 }
 
@@ -224,7 +227,7 @@ const ERP_MODULE_DEFS = {
     'version', 'companyName', 'companyAddress', 'companyPhone', 'companyEmail',
     'companyPaymentDetails', 'companyAdminId', 'currency', 'vatEnabled', 'vatRate',
     'branches', 'users', 'productCategories', 'measurementUnits', 'productPackages',
-    'notificationSettings', 'branch', 'activeBranchId'
+    'notificationSettings', 'autoLockMinutes', 'branch', 'activeBranchId'
   ],
   assets: ['companyLogo'],
   parties: ['customers', 'suppliers'],

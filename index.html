@@ -14,7 +14,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="app.css?v=143">
+  <link rel="stylesheet" href="app.css?v=144">
 </head>
 
 <body>
@@ -83,6 +83,10 @@
             <span class="footer-icon-badge">🏢</span>
             <span class="footer-btn-text" id="footer-branch-label">Main branch</span>
           </button>
+          <button class="footer-action-button footer-lock-button" id="lock-session-button" data-action="lock-screen" type="button" aria-label="Lock screen now" title="Auto-lock timer (click to lock now)">
+            <span class="footer-icon-badge">🔒</span>
+            <span class="footer-btn-text font-mono" id="footer-lock-countdown">20:00</span>
+          </button>
         </div>
         <div class="footer-status-tag">
           <span class="footer-live-beacon"></span>
@@ -91,6 +95,8 @@
       </footer>
     </main>
   </div>
+  <section class="screen-lock-overlay" id="screen-lock-overlay" aria-live="polite" hidden></section>
+  <div class="auto-lock-warning" id="auto-lock-warning" hidden></div>
   <div class="toast-region" id="toast-region" popover="manual" aria-live="polite"></div>
   <dialog class="modal" id="app-modal">
     <form method="dialog" class="modal-card" id="modal-content"></form>
@@ -99,10 +105,10 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
   <script defer src="firebase.js?v=5"></script>
-  <script defer src="db.js?v=112"></script>
+  <script defer src="db.js?v=113"></script>
   <script defer src="tax.js?v=94"></script>
   <script defer src="trash.js?v=97"></script>
-  <script defer src="app.js?v=189"></script>
+  <script defer src="app.js?v=190"></script>
 </body>
 
 </html>
