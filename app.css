@@ -13052,3 +13052,218 @@ tr.row-revoked td strong {
   color: var(--muted);
   font-weight: 500;
 }
+
+/* =========================================================
+   Universal Table Power Bar (Sort, Group, Edit Columns, Print)
+   ========================================================= */
+.table-power-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--bg-subtle, #f8fafc);
+  border-top: 1px solid var(--line, #cbd8e6);
+  border-bottom: 1px solid var(--line, #cbd8e6);
+}
+
+:root[data-theme="dark"] .table-power-bar {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: #3a4d58;
+}
+
+.table-power-left,
+.table-power-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.table-power-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line, #cbd8e6);
+  background: var(--white, #ffffff);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .table-power-control {
+  background: #1e2428;
+  border-color: #3a4d58;
+  color: #e8f2f6;
+}
+
+.table-power-icon {
+  color: var(--brand-secondary);
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.table-power-select {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 2px 2px;
+  max-width: 195px;
+  cursor: pointer;
+  outline: none;
+}
+
+:root[data-theme="dark"] .table-power-select option {
+  background: #1e2428;
+  color: #e8f2f6;
+}
+
+.table-power-btn {
+  padding: 5px 10px !important;
+  font-size: 11px !important;
+  height: auto !important;
+  white-space: nowrap;
+}
+
+.col-hidden-by-user {
+  display: none !important;
+}
+
+.data-table thead th.th-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.data-table thead th.th-sortable:hover {
+  filter: brightness(1.18);
+}
+
+.data-table thead th .th-sort-ind {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 10px;
+  opacity: 0.55;
+  font-weight: 700;
+}
+
+.data-table thead th.th-sorted .th-sort-ind {
+  opacity: 1;
+  color: var(--brand-secondary);
+}
+
+.data-table tbody tr.table-group-row td {
+  background: rgba(10, 30, 54, 0.06) !important;
+  border-top: 2px solid var(--brand-primary) !important;
+  border-bottom: 1px solid var(--line) !important;
+  padding: 7px 12px !important;
+}
+
+:root[data-theme="dark"] .data-table tbody tr.table-group-row td {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-top-color: var(--brand-secondary) !important;
+}
+
+.table-group-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.table-group-count {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--brand-secondary-soft);
+  color: var(--brand-secondary);
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+/* Column Editor Modal */
+.col-editor-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.col-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 52vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.col-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line, #cbd8e6);
+  background: var(--bg-subtle, #f8fafc);
+}
+
+:root[data-theme="dark"] .col-editor-row {
+  background: #1e2428;
+  border-color: #3a4d58;
+}
+
+.col-editor-row.is-hidden-col {
+  opacity: 0.55;
+}
+
+.col-editor-check input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--brand-secondary);
+  cursor: pointer;
+}
+
+.col-editor-input-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.col-editor-name-input {
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line, #cbd8e6);
+  background: var(--white, #ffffff);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+:root[data-theme="dark"] .col-editor-name-input {
+  background: #252c31;
+  border-color: #3a4d58;
+  color: #f8fafc;
+}
+
+.col-editor-move {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+  .table-power-bar {
+    padding: 8px 10px;
+  }
+  .table-power-select {
+    max-width: 145px;
+  }
+}

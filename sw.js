@@ -1,5 +1,5 @@
-const CACHE = 'tide-erp-v203';
-const FILES = ['./', './index.html', './app.css', './firebase.js', './app.js', './db.js', './tax.js', './trash.js', './manifest.webmanifest', './tide.svg'];
+const CACHE = 'tide-erp-v204';
+const FILES = ['./', './index.html', './app.css', './firebase.js', './app.js', './db.js', './tax.js', './trash.js', './table-tools.js', './manifest.webmanifest', './tide.svg'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', event => {

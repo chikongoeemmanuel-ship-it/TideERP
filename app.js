@@ -2337,6 +2337,9 @@ function openModal(title, subtitle, content, confirmLabel = 'Save', extraAction 
   `;
   modal.classList.toggle('transaction-modal', /sales order|purchase order|pos sale|stock take|stocktake/i.test(title));
   form.querySelectorAll('[data-action]').forEach(button => { button.hidden = !canPerformAction(button.dataset.action, button); });
+  if (typeof window.TideTableTools?.enhanceAll === 'function') {
+    window.TideTableTools.enhanceAll(form);
+  }
   modal.showModal();
 }
 
@@ -6343,6 +6346,9 @@ function render() {
   refreshNotificationIndicator();
   updateConnection();
   syncBackButton();
+  if (typeof window.TideTableTools?.enhanceAll === 'function') {
+    window.TideTableTools.enhanceAll(content);
+  }
 }
 
 // Action Dispatcher
