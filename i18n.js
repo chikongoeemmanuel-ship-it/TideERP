@@ -639,7 +639,13 @@
     'Transferring from:': 'Inahamishwa kutoka:',
     'USB Scanner / Manual Barcode or SKU': 'Kiskani cha USB / Andika Msimbopau au SKU',
     '📷 Barcode Scanner': '📷 Kiskani cha Msimbopau',
+    'Point your phone/webcam at a product barcode or scan with a USB/Bluetooth barcode scanner to add straight to the POS cart.': 'Elekeza kamera ya simu/kompyuta kwenye msimbopau wa bidhaa au tumia kiskani cha USB/Bluetooth kuongeza moja kwa moja kwenye kikapu cha POS.',
+    'Point your phone/webcam at a barcode or scan with a USB scanner to find the product immediately.': 'Elekeza kamera kwenye msimbopau au tumia kiskani cha USB kupata bidhaa mara moja.',
+    'Initializing camera… You can also scan directly with any USB/Bluetooth barcode scanner below.': 'Inaanzisha kamera… Unaweza pia kuskani moja kwa moja na kiskani cha USB/Bluetooth hapa chini.',
+    'Camera unavailable in this browser — use a USB/Bluetooth scanner or type the barcode/SKU below.': 'Kamera haipatikani kwenye kivinjari hiki — tumia kiskani cha USB/Bluetooth au andika SKU hapa chini.',
+    'Camera permission declined or no camera found — use a USB/Bluetooth barcode scanner or type SKU below.': 'Ruhusa ya kamera imekataliwa au hakuna kamera — tumia kiskani cha USB/Bluetooth au andika SKU hapa chini.',
     '⇄ Transfer Stock Between Branches': '⇄ Hamisha Stoo Kati ya Matawi',
+    'Deducts stock from the current branch and immediately adds it to the destination branch in cloud storage.': 'Hupunguza stoo kutoka tawi hili na kuiongeza mara moja kwenye tawi lengwa mtandaoni.',
     'Order details': 'Maelezo ya Oda',
     'Purchase order details': 'Maelezo ya Oda ya Manunuzi',
 

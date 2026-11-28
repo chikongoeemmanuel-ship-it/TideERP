@@ -444,6 +444,10 @@
       renderPowerBar(table, tableKey, cols, fresh);
       if (typeof window.toast === 'function') window.toast('↺ List sorting and columns reset to default');
     });
+
+    if (typeof window.TideI18n?.applyDomTranslations === 'function') {
+      window.TideI18n.applyDomTranslations(bar);
+    }
   }
 
   function ensureColumnEditorDialog() {
