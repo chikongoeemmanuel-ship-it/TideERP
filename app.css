@@ -13576,6 +13576,10 @@ tr.row-revoked td strong {
 
 /* Phone UI Redesign & iPhone Safe-Area Support (<= 760px) */
 @media (max-width: 760px) {
+  html {
+    zoom: 1 !important;
+  }
+
   .app-shell,
   .auth-gate {
     min-height: 100dvh;
