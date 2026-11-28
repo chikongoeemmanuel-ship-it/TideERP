@@ -264,6 +264,8 @@ let cloudHydrated = false;
 let cloudSyncWorkspaceId = 'tideerp_global_workspace';
 let cloudSyncUnsubscribe = null;
 let isReceivingCloudBroadcast = false;
+let broadcastGuardTimer = null;
+let pendingCloudPush = null;
 let lastSyncedModuleHashes = {};
 
 function modulesCollectionRef(db, wsId = activeTenantWorkspaceId) {
@@ -284,6 +286,12 @@ function setActiveWorkspaceId(workspaceId) {
     clearTimeout(cloudSaveDebounce);
     cloudSaveDebounce = null;
   }
+  if (broadcastGuardTimer) {
+    clearTimeout(broadcastGuardTimer);
+    broadcastGuardTimer = null;
+  }
+  isReceivingCloudBroadcast = false;
+  pendingCloudPush = null;
   activeTenantWorkspaceId = nextWs;
   lastSyncedModuleHashes = {};
   cloudHydrated = false;
@@ -863,7 +871,18 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
             onRemoteUpdate(changedFields, latestDevice, changedModules);
           }
         } finally {
-          setTimeout(() => { isReceivingCloudBroadcast = false; }, 350);
+          if (broadcastGuardTimer) clearTimeout(broadcastGuardTimer);
+          broadcastGuardTimer = setTimeout(() => {
+            broadcastGuardTimer = null;
+            isReceivingCloudBroadcast = false;
+            if (pendingCloudPush && boundWsId === activeTenantWorkspaceId) {
+              const queued = pendingCloudPush;
+              pendingCloudPush = null;
+              pushStateToCloud(queued.state, queued.immediate, queued.forceAll);
+            } else {
+              pendingCloudPush = null;
+            }
+          }, 80);
         }
       }, (err) => {
         console.warn('Real-time ERP modules listener error:', err);
@@ -892,10 +911,20 @@ function mergeWorkspaceState(localState, remoteState) {
 
 let cloudSaveDebounce = null;
 async function pushStateToCloud(state, immediate = false, forceAll = false) {
-  if (!cloudSyncActive || !firestoreDb || isReceivingCloudBroadcast || !state) return;
+  if (!cloudSyncActive || !firestoreDb || !state) return;
   if (!cloudHydrated && !forceAll) return; // Never overwrite cloud before initial hydration!
+  if (isReceivingCloudBroadcast) {
+    // Queue local edits instead of dropping them during an incoming cloud broadcast
+    pendingCloudPush = {
+      state,
+      immediate: Boolean(immediate || pendingCloudPush?.immediate),
+      forceAll: Boolean(forceAll || pendingCloudPush?.forceAll)
+    };
+    return;
+  }
 
   const doPush = async () => {
+    const pushWsId = activeTenantWorkspaceId;
     try {
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
@@ -918,7 +947,7 @@ async function pushStateToCloud(state, immediate = false, forceAll = false) {
       if (dirtyModules.length === 0) return;
 
       const batch = firestoreDb.batch();
-      const modCol = modulesCollectionRef(firestoreDb, activeTenantWorkspaceId);
+      const modCol = modulesCollectionRef(firestoreDb, pushWsId);
       for (const item of dirtyModules) {
         const ref = modCol.doc(item.modName);
         batch.set(ref, {
@@ -928,14 +957,18 @@ async function pushStateToCloud(state, immediate = false, forceAll = false) {
           updatedBy: CLIENT_SESSION_ID,
           device
         }); // Full replace per module so deleted items stay deleted!
-        lastSyncedModuleHashes[item.modName] = item.hash;
       }
 
       await batch.commit();
-      if (forceAll) cloudHydrated = true;
-      console.info(`✓ Synced ${dirtyModules.length} ERP module(s) for ${activeTenantWorkspaceId}: ${dirtyModules.map(m => m.modName).join(', ')}`);
+      if (pushWsId === activeTenantWorkspaceId) {
+        for (const item of dirtyModules) {
+          lastSyncedModuleHashes[item.modName] = item.hash;
+        }
+        if (forceAll) cloudHydrated = true;
+      }
+      console.info(`✓ Synced ${dirtyModules.length} ERP module(s) for ${pushWsId}: ${dirtyModules.map(m => m.modName).join(', ')}`);
     } catch (err) {
-      console.warn('Live cloud ERP push failed (changes remain safely cached in IndexedDB):', err);
+      console.warn('Live cloud ERP push failed (changes remain safely cached in IndexedDB and will retry):', err);
     }
   };
 

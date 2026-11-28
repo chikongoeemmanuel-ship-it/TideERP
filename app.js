@@ -1572,6 +1572,13 @@ function snapshotCurrentBranch() {
   state.branchData[activeBranch.id] = data;
 }
 
+function getActiveWorkspaceTemplate(companyName = '') {
+  const wsId = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
+  return wsId === 'ws_primary'
+    ? initialState
+    : createBlankWorkspaceState({ companyName: companyName || state?.companyName || 'My Company' });
+}
+
 function syncProductToCloud(product) {
   if (!product || !product.id) return;
   if (typeof window.TideFirebase?.saveProduct === 'function') {
@@ -1581,8 +1588,16 @@ function syncProductToCloud(product) {
 
 function syncProductsBatchToCloud(products) {
   if (!Array.isArray(products) || !products.length) return;
+  const unique = [];
+  const seen = new Set();
+  for (const p of products) {
+    if (!p || !p.id || seen.has(p.id)) continue;
+    seen.add(p.id);
+    unique.push(p);
+  }
+  if (!unique.length) return;
   if (typeof window.TideFirebase?.batchSyncProducts === 'function') {
-    window.TideFirebase.batchSyncProducts(products);
+    window.TideFirebase.batchSyncProducts(unique);
   }
 }
 
@@ -2210,6 +2225,7 @@ function permanentlyDeleteParty(type, name) {
 }
 
 function erasePartyHistory(type, name) {
+  const changedProducts = [];
   if (type === 'Customer') {
     const directSales = state.sales.filter(sale => sale.customer === name);
     const orderIds = new Set([...state.orders.filter(order => order.customer === name).map(order => order.id), ...directSales.map(sale => sale.orderId).filter(Boolean)]);
@@ -2223,12 +2239,13 @@ function erasePartyHistory(type, name) {
       for (const line of order.items || []) {
         const product = state.products.find(item => item.id === line.productId);
         const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0));
-        if (product && qty) product.stock += qty;
+        if (product && qty) { product.stock += qty; changedProducts.push(product); }
       }
     }
     for (const sale of sales.filter(item => !orderIds.has(item.orderId) && !orderIds.has(item.id))) for (const line of sale.items || []) {
       const product = state.products.find(item => item.id === line.productId);
-      if (product) product.stock += Number(line.qty) || 0;
+      const qty = Number(line.qty) || 0;
+      if (product && qty) { product.stock += qty; changedProducts.push(product); }
     }
     state.orders = state.orders.filter(order => !orderIds.has(order.id));
     state.sales = state.sales.filter(sale => !sales.includes(sale));
@@ -2247,7 +2264,11 @@ function erasePartyHistory(type, name) {
       for (const line of purchase.lines || []) {
         const product = state.products.find(item => item.id === line.productId);
         if (!product) continue;
-        product.stock = Math.max(0, product.stock - Math.max(0, (Number(line.qty) || 0) - (returned.get(line.productId) || 0)));
+        const delta = Math.max(0, (Number(line.qty) || 0) - (returned.get(line.productId) || 0));
+        if (delta) {
+          product.stock = Math.max(0, product.stock - delta);
+          changedProducts.push(product);
+        }
       }
     }
     state.purchases = state.purchases.filter(purchase => !purchaseIds.has(purchase.id));
@@ -2256,6 +2277,7 @@ function erasePartyHistory(type, name) {
     state.stockMovements = state.stockMovements.filter(move => ![...purchaseIds].some(ref => String(move.reason || '').includes(ref)));
   }
   state.activityLog = (state.activityLog || []).filter(item => !String(item.details || '').includes(name));
+  return changedProducts;
 }
 
 function allocateCustomerAccountPayment(entry) {
@@ -3555,6 +3577,7 @@ function ensureOrderInvoice(order) {
 function finalizeSalesOrder(order) {
   if (!order || order.source === 'POS') return false;
   const wasDraft = order.status === 'Draft';
+  const changedProducts = [];
   if (wasDraft) {
     for (const line of order.items || []) {
       const product = state.products.find(item => item.id === line.productId);
@@ -3563,7 +3586,6 @@ function finalizeSalesOrder(order) {
         return false;
       }
     }
-    const changedProducts = [];
     for (const line of order.items || []) {
       const product = state.products.find(item => item.id === line.productId);
       if (!product) continue;
@@ -3586,7 +3608,7 @@ function finalizeSalesOrder(order) {
   }
   ensureOrderInvoice(order);
   saveState();
-  if (typeof changedProducts !== 'undefined' && changedProducts.length) {
+  if (changedProducts.length) {
     syncProductsBatchToCloud(changedProducts);
   }
   render();
@@ -4743,7 +4765,7 @@ function deleteProduct(id, button = null) {
   }
   const mode = button.dataset.deleteMode;
   document.getElementById('app-modal')?.close();
-  if (mode === 'erase-all') eraseProductHistory(id);
+  const affectedProducts = mode === 'erase-all' ? eraseProductHistory(id) : [];
   for (const record of [...state.orders, ...state.sales]) {
     for (const line of record.items || []) {
       if (line.productId === id && !line.product && !line.productName) line.product = product.name;
@@ -4761,11 +4783,14 @@ function deleteProduct(id, button = null) {
   if (mode === 'erase-all') state.activityLog = (state.activityLog || []).filter(item => item.reference !== id && !String(item.details || '').includes(product.name));
   recordActivity('Product deleted', mode === 'erase-all' ? `${product.name} · related records erased` : `${product.name} · previous records retained`, id);
   saveState();
+  const survivingAffected = affectedProducts.filter(p => p && p.id !== id);
+  if (survivingAffected.length) syncProductsBatchToCloud(survivingAffected);
   render();
   toast(mode === 'erase-all' ? 'Product and related transactions permanently erased' : 'Product deleted from the catalog; previous records were kept');
 }
 
 function eraseProductHistory(productId) {
+  const changedProducts = [];
   const orders = state.orders.filter(order => (order.items || []).some(line => line.productId === productId));
   const orderIds = new Set(orders.map(order => order.id));
   const sales = state.sales.filter(sale => (sale.items || []).some(line => line.productId === productId) || orderIds.has(sale.orderId) || orders.some(order => order.invoiceId === sale.id));
@@ -4777,12 +4802,13 @@ function eraseProductHistory(productId) {
     for (const line of order.items || []) {
       const product = state.products.find(item => item.id === line.productId);
       const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0));
-      if (product && qty) product.stock += qty;
+      if (product && qty) { product.stock += qty; changedProducts.push(product); }
     }
   }
   for (const sale of sales.filter(item => !orderIds.has(item.orderId) && !orderIds.has(item.id))) for (const line of sale.items || []) {
     const product = state.products.find(item => item.id === line.productId);
-    if (product) product.stock += Number(line.qty) || 0;
+    const qty = Number(line.qty) || 0;
+    if (product && qty) { product.stock += qty; changedProducts.push(product); }
   }
   const purchases = state.purchases.filter(purchase => (purchase.lines || []).some(line => line.productId === productId));
   const purchaseIds = new Set(purchases.map(purchase => purchase.id));
@@ -4793,7 +4819,7 @@ function eraseProductHistory(productId) {
     for (const line of purchase.lines || []) {
       const product = state.products.find(item => item.id === line.productId);
       const qty = Math.max(0, (Number(line.qty) || 0) - (returned.get(line.productId) || 0));
-      if (product && qty) product.stock = Math.max(0, product.stock - qty);
+      if (product && qty) { product.stock = Math.max(0, product.stock - qty); changedProducts.push(product); }
     }
   }
   const removedOrderIds = new Set([...orderIds, ...sales.map(sale => sale.orderId).filter(Boolean)]);
@@ -4814,6 +4840,7 @@ function eraseProductHistory(productId) {
   });
   const refs = new Set([...directRefs, ...removedSaleIds]);
   state.stockMovements = state.stockMovements.filter(move => ![...refs].some(ref => String(move.reason || '').includes(ref)));
+  return changedProducts;
 }
 
 // Purchases
@@ -6369,7 +6396,7 @@ function handleRemoteCloudSync(remoteFields, deviceName, changedModules = []) {
     updated[key] = value;
   }
 
-  const sanitized = sanitizeState(updated, initialState);
+  const sanitized = sanitizeState(updated, getActiveWorkspaceTemplate(updated.companyName));
   sanitized.products = curProducts; // Products stay synchronized via the dedicated 'products' collection
   sanitized.currentUserId = curId;
 
@@ -7223,12 +7250,14 @@ async function handleDialogSubmit(form) {
     Object.assign(updated, { customer, date, due: date, subtotal: totals.subtotal, discount: totals.discount, additionalCharges: totals.additional, total: totals.total, paid: totals.paid, paymentMethod: method, items, attachments: structuredClone(currentDraftAttachments) });
     if (wasInvoicedOrder) updated.status = 'Edited';
     if (updated.source === 'POS') updated.posMethod = method;
+    const changedProducts = [];
     if (finalized) {
       for (const productId of new Set([...oldQuantities.keys(), ...newQuantities.keys()])) {
         const product = state.products.find(item => item.id === productId);
         const before = product.stock, delta = (oldQuantities.get(productId) || 0) - (newQuantities.get(productId) || 0);
         if (!delta) continue;
         product.stock += delta;
+        changedProducts.push(product);
         state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date, before, after: product.stock, delta, reason: `Edited sale ${updated.id}`, user: currentWorkspaceUser().name });
       }
       const invoice = ensureOrderInvoice(updated);
@@ -7242,7 +7271,9 @@ async function handleDialogSubmit(form) {
       Object.assign(invoice, { customer, date, total: updated.total, paid: updated.paid, method, status: orderPaymentStatus(updated), items: updated.items, discount: updated.discount, additionalCharges: updated.additionalCharges });
     } else if (!editing) state.orders.unshift(updated);
     recordActivity(editing ? 'Sale/order updated' : 'Sales order created', `${customer} · ${money(totals.total)}`, updated.id);
-    saveState(); document.getElementById('app-modal').close(); setPage('sales'); toast(editing ? (wasInvoicedOrder ? 'Order updated · status is Edited until the invoice is printed again' : 'Sale updated') : 'Sales order saved as a draft'); return;
+    saveState();
+    if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
+    document.getElementById('app-modal').close(); setPage('sales'); toast(editing ? (wasInvoicedOrder ? 'Order updated · status is Edited until the invoice is printed again' : 'Sale updated') : 'Sales order saved as a draft'); return;
   }
   if (kind === 'record-payment') {
     const type = val('payment-party-type'), name = val('payment-party'), amount = Number(val('payment-amount')) || 0;
@@ -7301,14 +7332,19 @@ async function handleDialogSubmit(form) {
     }
 
     let appliedChanges = 0;
+    const changedProducts = [];
     const now = today();
     for (const u of updates) {
       const p = u.product;
       const before = u.before;
       const next = u.newStock;
       p.stock = next;
-      if (u.newExpiry !== u.oldExpiry) {
+      const expiryChanged = u.newExpiry !== u.oldExpiry;
+      if (expiryChanged) {
         p.expiryDate = u.newExpiry;
+      }
+      if (next !== before || expiryChanged) {
+        changedProducts.push(p);
       }
       appliedChanges++;
       if (next !== before) {
@@ -7364,6 +7400,7 @@ async function handleDialogSubmit(form) {
     state.stocktakeDraft = null;
     recordActivity('Stock take finalized', `${appliedChanges} product quantities directly updated · ${reason}`, 'STOCKTAKE');
     saveState();
+    if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
     document.getElementById('app-modal')?.close();
     render();
     toast(`Stock take applied! Directly updated stock for ${appliedChanges} products.`);
@@ -7386,6 +7423,7 @@ async function handleDialogSubmit(form) {
     const newReason = val('st-edit-reason') || st.reason;
     const countInputs = document.querySelectorAll('.st-edit-count');
     let modifiedProducts = 0;
+    const changedProducts = [];
 
     for (const input of countInputs) {
       const prodId = input.dataset.productId;
@@ -7399,10 +7437,12 @@ async function handleDialogSubmit(form) {
       const countDiff = newCount - oldCount;
 
       const p = state.products.find(prod => prod.id === prodId);
+      let touched = false;
       if (countDiff !== 0) {
         if (p) {
           const before = p.stock;
           p.stock = Math.max(0, p.stock + countDiff);
+          touched = true;
           state.stockMovements.unshift({
             id: idFor('STK', state.stockMovements),
             productId: p.id,
@@ -7422,7 +7462,11 @@ async function handleDialogSubmit(form) {
       item.delta = newCount - item.beforeStock;
       item.costImpact = item.delta * Number(p?.cost || 0);
       item.expiryDate = newExpiry;
-      if (p && newExpiry !== (p.expiryDate || '')) p.expiryDate = newExpiry;
+      if (p && newExpiry !== (p.expiryDate || '')) {
+        p.expiryDate = newExpiry;
+        touched = true;
+      }
+      if (p && touched) changedProducts.push(p);
     }
 
     st.matchedCount = st.items.filter(i => i.delta === 0).length;
@@ -7436,6 +7480,7 @@ async function handleDialogSubmit(form) {
 
     recordActivity('Stock take edited', `Corrected counts in session ${st.id} (${modifiedProducts} products updated)`, st.id);
     saveState();
+    if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
     document.getElementById('app-modal')?.close();
     render();
     toast(`Stock take session ${st.id} updated!`);
@@ -7450,10 +7495,12 @@ async function handleDialogSubmit(form) {
     const newReason = val('edit-movement-reason') || m.reason;
     const diff = newDelta - Number(m.delta || 0);
 
+    let affectedProduct = null;
     if (diff !== 0) {
       const p = state.products.find(prod => prod.id === m.productId || prod.name === m.product);
       if (p) {
         p.stock = Math.max(0, p.stock + diff);
+        affectedProduct = p;
       }
     }
 
@@ -7465,6 +7512,7 @@ async function handleDialogSubmit(form) {
 
     recordActivity('Stock adjustment edited', `Updated adjustment ${m.id} (${m.product})`, m.id);
     saveState();
+    if (affectedProduct) syncProductToCloud(affectedProduct);
     document.getElementById('app-modal')?.close();
     render();
     toast(`Stock adjustment ${m.id} updated!`);
@@ -7488,13 +7536,16 @@ async function handleDialogSubmit(form) {
     if (received) for (const productId of new Set([...oldQuantities.keys(), ...newQuantities.keys()])) { const product = state.products.find(item => item.id === productId); if (!product) { toast('A product on this purchase no longer exists'); return; } if (product.stock + (newQuantities.get(productId) || 0) - (oldQuantities.get(productId) || 0) < 0) { toast(`Cannot reduce ${product.name}; some received stock has already been sold or used`); return; } }
     const updated = purchase || { id: idFor('PO', state.purchases), status: 'Pending' };
     Object.assign(updated, { supplier, date, lines, subtotal: totals.subtotal, discount: totals.discount, additionalCharges: totals.additional, total: totals.total, paid: totals.paid, paymentMethod: method, attachments: structuredClone(currentDraftAttachments) });
-    if (received) for (const productId of new Set([...oldQuantities.keys(), ...newQuantities.keys()])) { const product = state.products.find(item => item.id === productId), before = product.stock, delta = (newQuantities.get(productId) || 0) - (oldQuantities.get(productId) || 0); if (!delta) continue; product.stock += delta; state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date, before, after: product.stock, delta, reason: `Edited received purchase ${updated.id}`, user: currentWorkspaceUser().name }); }
+    const changedProducts = [];
+    if (received) for (const productId of new Set([...oldQuantities.keys(), ...newQuantities.keys()])) { const product = state.products.find(item => item.id === productId), before = product.stock, delta = (newQuantities.get(productId) || 0) - (oldQuantities.get(productId) || 0); if (!delta) continue; product.stock += delta; changedProducts.push(product); state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date, before, after: product.stock, delta, reason: `Edited received purchase ${updated.id}`, user: currentWorkspaceUser().name }); }
     removeAccountEntries(entry => ['purchase', 'purchase-payment'].includes(entry.sourceType) && entry.sourceId === updated.id);
     postAccountEntry({ partyType: 'Supplier', party: supplier, date, type: 'Credit', amount: updated.total, memo: `Purchase order · ${updated.id}`, sourceType: 'purchase', sourceId: updated.id });
     if (updated.paid > 0) postAccountEntry({ partyType: 'Supplier', party: supplier, date, type: 'Debit', amount: updated.paid, memo: `Payment · ${method} · ${updated.id}`, sourceType: 'purchase-payment', sourceId: updated.id });
     if (!editing) state.purchases.unshift(updated);
     recordActivity(editing ? 'Purchase order updated' : 'Purchase order created', `${supplier} · ${money(totals.total)}`, updated.id);
-    saveState(); document.getElementById('app-modal').close(); setPage('purchases'); toast(editing ? 'Purchase order updated' : 'Purchase order saved'); return;
+    saveState();
+    if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
+    document.getElementById('app-modal').close(); setPage('purchases'); toast(editing ? 'Purchase order updated' : 'Purchase order saved'); return;
   }
   if (kind === 'purchase-payment') {
     const purchase = state.purchases.find(p => p.id === form.dataset.recordId), amount = Number(val('purchase-payment-amount')) || 0;
@@ -7561,7 +7612,9 @@ async function handleDialogSubmit(form) {
       sourceId: purchase.id
     });
     recordActivity('Supplier return recorded', `${purchase.supplier} · ${product?.name || productId} · ${qty}`, purchase.id);
-    saveState(); document.getElementById('app-modal').close(); render(); toast('Supplier return recorded'); return;
+    saveState();
+    if (product) syncProductToCloud(product);
+    document.getElementById('app-modal').close(); render(); toast('Supplier return recorded'); return;
   }
   if (kind === 'order-payment') {
     const order = state.orders.find(o => o.id === form.dataset.recordId), amount = Number(val('order-payment-amount')) || 0;
@@ -7948,9 +8001,11 @@ function handleAction(button) {
         ? `${linkedOrders.length} sales orders, ${linkedSales.length} invoices, ${linkedReturns.length} returns and ${linkedLedger} account entries`
         : `${linkedPurchases.length} purchase orders, ${linkedReturns.length} returns and ${linkedLedger} account entries`;
       if (!button.dataset.deleteMode) { openDeleteChoice(button, `Delete ${partyType.toLowerCase()} ${partyName}?`, `Keep ${details} in history, or permanently erase them with the profile.`, 'Delete profile, keep history', 'Erase profile and history'); break; }
-      if (button.dataset.deleteMode === 'erase-all') erasePartyHistory(partyType, partyName);
+      const affectedProducts = button.dataset.deleteMode === 'erase-all' ? erasePartyHistory(partyType, partyName) : [];
       permanentlyDeleteParty(partyType, partyName);
-      saveState(); render(); toast(button.dataset.deleteMode === 'erase-all' ? `${partyType} profile and linked records permanently erased` : `${partyType} profile deleted; linked transaction history retained`); break;
+      saveState();
+      if (affectedProducts.length) syncProductsBatchToCloud(affectedProducts);
+      render(); toast(button.dataset.deleteMode === 'erase-all' ? `${partyType} profile and linked records permanently erased` : `${partyType} profile deleted; linked transaction history retained`); break;
     }
     case 'view-customer-orders': openCustomerOrderHistory(button.dataset.partyName); break;
     case 'view-party-orders': openPartyOrderHistory(type, button.dataset.partyName); break;
@@ -8333,15 +8388,18 @@ function handleAction(button) {
       const entryMatches = entry => ['order', 'order-payment', 'sales', 'sales-payment'].includes(entry.sourceType) && [order.id, order.invoiceId].includes(entry.sourceId);
       const accountEntries = state.entries.filter(entryMatches);
       if (button.dataset.deleteMode === 'keep-history') archiveToTrashBin(state, order.source === 'POS' ? 'POS sale' : 'Sales order', { order, invoice, returns, accountEntries }, order.id, currentWorkspaceUser().name);
+      const changedProducts = [];
       if (adminOverride) {
         const restocked = new Map(); for (const ret of returns) if (ret.restocked) restocked.set(ret.productId, (restocked.get(ret.productId) || 0) + (Number(ret.qty) || 0));
-        for (const line of order.items || []) { const product = state.products.find(p => p.id === line.productId); if (!product) continue; const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0)); if (!qty) continue; const before = product.stock; product.stock += qty; state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: qty, reason: `Admin deleted sale ${id}`, user: currentWorkspaceUser().name }); }
+        for (const line of order.items || []) { const product = state.products.find(p => p.id === line.productId); if (!product) continue; const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0)); if (!qty) continue; const before = product.stock; product.stock += qty; changedProducts.push(product); state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: qty, reason: `Admin deleted sale ${id}`, user: currentWorkspaceUser().name }); }
         state.sales = state.sales.filter(sale => sale.id !== invoice?.id && sale.orderId !== order.id);
         for (const entry of state.entries) if (entry.sourceType === 'account-payment' && Array.isArray(entry.allocations)) entry.allocations = entry.allocations.filter(allocation => allocation.orderId !== order.id);
       }
       removeAccountEntries(entryMatches); state.returns = state.returns.filter(record => !returns.some(ret => ret.id === record.id));
       if (!adminOverride && invoice) state.sales = state.sales.filter(sale => sale.id !== invoice.id);
-      state.orders = state.orders.filter(o => o.id !== id); recordActivity(adminOverride ? 'Finalized sales order deleted by administrator' : 'Draft sales order deleted', id, id); saveState(); render(); toast(button.dataset.deleteMode === 'keep-history' ? 'Order bundle moved to Trash' : adminOverride ? 'Finalized order and linked records erased' : 'Draft order permanently erased'); break;
+      state.orders = state.orders.filter(o => o.id !== id); recordActivity(adminOverride ? 'Finalized sales order deleted by administrator' : 'Draft sales order deleted', id, id); saveState();
+      if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
+      render(); toast(button.dataset.deleteMode === 'keep-history' ? 'Order bundle moved to Trash' : adminOverride ? 'Finalized order and linked records erased' : 'Draft order permanently erased'); break;
     }
     case 'receive-purchase': {
       const purchase = state.purchases.find(p => p.id === id); if (!purchase || purchase.status !== 'Pending') break;
@@ -8380,12 +8438,15 @@ function handleAction(button) {
       const returns = (state.purchaseReturns || []).filter(record => record.purchaseId === id || record.purchaseOrderId === id);
       const accountEntries = state.entries.filter(entry => ['purchase', 'purchase-payment'].includes(entry.sourceType) && entry.sourceId === id);
       if (button.dataset.deleteMode === 'keep-history') archiveToTrashBin(state, 'Purchase order', { purchase, returns, accountEntries }, id, currentWorkspaceUser().name);
+      const changedProducts = [];
       if (adminOverride) {
         const returnedByProduct = new Map(); for (const ret of returns) returnedByProduct.set(ret.productId, (returnedByProduct.get(ret.productId) || 0) + (Number(ret.qty) || 0));
-        for (const line of purchase.lines || []) { const product = state.products.find(p => p.id === line.productId); if (!product) continue; const before = product.stock, qty = Math.max(0, (Number(line.qty) || 0) - (returnedByProduct.get(line.productId) || 0)); if (!qty) continue; product.stock = Math.max(0, product.stock - qty); state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: product.stock - before, reason: `Admin deleted received purchase ${id}`, user: currentWorkspaceUser().name }); }
+        for (const line of purchase.lines || []) { const product = state.products.find(p => p.id === line.productId); if (!product) continue; const before = product.stock, qty = Math.max(0, (Number(line.qty) || 0) - (returnedByProduct.get(line.productId) || 0)); if (!qty) continue; product.stock = Math.max(0, product.stock - qty); changedProducts.push(product); state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: today(), before, after: product.stock, delta: product.stock - before, reason: `Admin deleted received purchase ${id}`, user: currentWorkspaceUser().name }); }
       }
       removeAccountEntries(entry => ['purchase', 'purchase-payment'].includes(entry.sourceType) && entry.sourceId === id); state.purchaseReturns = (state.purchaseReturns || []).filter(record => !returns.some(ret => ret.id === record.id));
-      state.purchases = state.purchases.filter(p => p.id !== id); recordActivity(adminOverride ? 'Received purchase deleted by administrator' : 'Purchase order deleted', id, id); saveState(); render(); toast(button.dataset.deleteMode === 'keep-history' ? 'Purchase bundle moved to Trash' : adminOverride ? 'Received purchase and linked records erased' : 'Purchase order permanently erased'); break;
+      state.purchases = state.purchases.filter(p => p.id !== id); recordActivity(adminOverride ? 'Received purchase deleted by administrator' : 'Purchase order deleted', id, id); saveState();
+      if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
+      render(); toast(button.dataset.deleteMode === 'keep-history' ? 'Purchase bundle moved to Trash' : adminOverride ? 'Received purchase and linked records erased' : 'Purchase order permanently erased'); break;
     }
     case 'export-parties': {
       const list = type === 'Supplier' ? state.suppliers : state.customers;
@@ -8481,6 +8542,7 @@ function handleAction(button) {
       if (st.status === 'Revoked') { toast('This stock take session has already been revoked'); break; }
       if (!confirm(`Are you sure you want to REVOKE stock take session ${st.id}?\n\nThis will reverse all physical count adjustments back to their initial balances and record compensating adjustment entries.`)) break;
 
+      const changedProducts = [];
       for (const item of st.items || []) {
         const delta = Number(item.delta || 0);
         if (delta !== 0) {
@@ -8488,6 +8550,7 @@ function handleAction(button) {
           if (p) {
             const before = p.stock;
             p.stock = Math.max(0, p.stock - delta);
+            changedProducts.push(p);
             state.stockMovements.unshift({
               id: idFor('STK', state.stockMovements),
               productId: p.id,
@@ -8509,6 +8572,7 @@ function handleAction(button) {
 
       recordActivity('Stock take revoked', `Revoked all quantity adjustments for session ${st.id}`, st.id);
       saveState();
+      if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
       document.getElementById('app-modal')?.close();
       render();
       toast(`Stock take session ${st.id} revoked and stock reversed!`);
@@ -8526,12 +8590,16 @@ function handleAction(button) {
         revertStock = confirm(`Revert product stock quantities back to their pre-audit balances?\n\nOK = Revert stock balances\nCancel = Keep stock as is and delete record only`);
       }
 
+      const changedProducts = [];
       if (revertStock) {
         for (const item of st.items || []) {
           const delta = Number(item.delta || 0);
           if (delta !== 0) {
             const p = state.products.find(prod => prod.id === item.productId);
-            if (p) p.stock = Math.max(0, p.stock - delta);
+            if (p) {
+              p.stock = Math.max(0, p.stock - delta);
+              changedProducts.push(p);
+            }
           }
         }
       }
@@ -8540,6 +8608,7 @@ function handleAction(button) {
       state.stocktakes = state.stocktakes.filter(s => s.id !== st.id);
       recordActivity('Stock take deleted', `Deleted session ${st.id}${revertStock ? ' (stock reverted)' : ''}`, st.id);
       saveState();
+      if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
       document.getElementById('app-modal')?.close();
       render();
       toast(`Stock take session ${st.id} deleted (archived to Trash)`);
@@ -8582,6 +8651,7 @@ function handleAction(button) {
 
       recordActivity('Stock adjustment revoked', `Revoked adjustment ${m.id} for ${m.product}`, m.id);
       saveState();
+      if (p) syncProductToCloud(p);
       render();
       toast(`Adjustment ${m.id} revoked and stock reversed!`);
       break;
@@ -8598,15 +8668,20 @@ function handleAction(button) {
         revertStock = confirm(`Revert the ${Number(m.delta) > 0 ? '+' : ''}${m.delta} stock quantity change for ${m.product}?\n\nOK = Revert stock\nCancel = Keep stock as is and delete record only`);
       }
 
+      let revertedProduct = null;
       if (revertStock) {
         const p = state.products.find(prod => prod.id === m.productId || prod.name === m.product);
-        if (p) p.stock = Math.max(0, p.stock - Number(m.delta || 0));
+        if (p) {
+          p.stock = Math.max(0, p.stock - Number(m.delta || 0));
+          revertedProduct = p;
+        }
       }
 
       archiveToTrashBin(state, 'Stock movement', m, `Adjustment ${m.id} (${m.product})`, currentWorkspaceUser().name);
       state.stockMovements = state.stockMovements.filter(item => item.id !== m.id);
       recordActivity('Stock movement deleted', `Deleted adjustment ${m.id}${revertStock ? ' (stock reverted)' : ''}`, m.id);
       saveState();
+      if (revertedProduct) syncProductToCloud(revertedProduct);
       render();
       toast(`Adjustment record ${m.id} deleted (archived to Trash)`);
       break;
@@ -8624,26 +8699,44 @@ function handleAction(button) {
       const archived = state.trashBin.find(item => item.id === id);
       const res = restoreFromTrash(state, id);
       if (res.success) {
+        const changedProducts = [];
         for (const entry of archived?.data?.accountEntries || []) {
           const account = (entry.partyType === 'Supplier' ? state.suppliers : state.customers).find(item => item.name === entry.party);
           if (account) account.balance += entryBalanceDelta(entry.partyType, entry.type, Number(entry.amount) || 0);
         }
-        if (archived?.type === 'Sales order' || archived?.type === 'POS sale') {
+        if (archived?.type === 'Product') {
+          const restoredProd = state.products.find(p => p.id === archived.data?.id);
+          if (restoredProd) changedProducts.push(restoredProd);
+        } else if (archived?.type === 'Sales order' || archived?.type === 'POS sale') {
           const order = archived.data.order || archived.data;
           const restocked = new Map();
           for (const ret of archived.data.returns || []) if (ret.restocked) restocked.set(ret.productId, (restocked.get(ret.productId) || 0) + (Number(ret.qty) || 0));
           for (const line of order.items || []) {
             const product = state.products.find(item => item.id === line.productId);
-            if (product) product.stock = Math.max(0, product.stock - Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0)));
+            const qty = Math.max(0, (Number(line.qty) || 0) - (restocked.get(line.productId) || 0));
+            if (product && qty) {
+              product.stock = Math.max(0, product.stock - qty);
+              changedProducts.push(product);
+            }
           }
         } else if (archived?.type === 'Purchase order') {
           const purchase = archived.data.purchase || archived.data;
           if (purchase.status === 'Received') for (const line of purchase.lines || []) {
             const product = state.products.find(item => item.id === line.productId);
-            if (product) product.stock += Number(line.qty) || 0;
+            const qty = Number(line.qty) || 0;
+            if (product && qty) {
+              product.stock += qty;
+              changedProducts.push(product);
+            }
+          }
+        } else if (archived?.type === 'Workspace user') {
+          const restoredUser = archived.data?.user || archived.data;
+          if (restoredUser && typeof registerAccountInDirectory === 'function') {
+            registerAccountInDirectory(restoredUser, getActiveWorkspaceId(), state.companyName).catch(() => {});
           }
         }
         saveState();
+        if (changedProducts.length) syncProductsBatchToCloud(changedProducts);
         render();
         toast(res.message);
       } else {
@@ -8704,8 +8797,9 @@ function handleAction(button) {
       }
       if (!toDelete.length) { selectedProductIds.clear(); render(); break; }
 
+      const affectedProducts = [];
       if (bulkMode === 'erase-all') {
-        for (const pid of idSet) eraseProductHistory(pid);
+        for (const pid of idSet) affectedProducts.push(...eraseProductHistory(pid));
       }
       for (const record of [...state.orders, ...state.sales]) {
         for (const line of record.items || []) {
@@ -8730,6 +8824,8 @@ function handleAction(button) {
       recordActivity('Bulk product delete', `${toDelete.length} product${toDelete.length !== 1 ? 's' : ''} removed`);
       selectedProductIds.clear();
       saveState();
+      const survivingAffected = affectedProducts.filter(p => p && !idSet.has(p.id));
+      if (survivingAffected.length) syncProductsBatchToCloud(survivingAffected);
       render();
 
       if (typeof window.TideFirebase?.batchDeleteProducts === 'function') {
@@ -8833,8 +8929,9 @@ function handleAction(button) {
           if (typeof window.TideFirebase?.initFirebase === 'function') {
             await window.TideFirebase.initFirebase();
           }
+          const wsTemplate = getActiveWorkspaceTemplate();
           const [cloudModRes, cloudProds] = await Promise.all([
-            typeof pullFullCloudState === 'function' ? pullFullCloudState(state, initialState) : Promise.resolve(null),
+            typeof pullFullCloudState === 'function' ? pullFullCloudState(state, wsTemplate) : Promise.resolve(null),
             typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
           ]);
 
@@ -10051,7 +10148,7 @@ async function initApp() {
     try {
       if (typeof pushStateToCloud === 'function') await pushStateToCloud(state, true);
       if (typeof pullFullCloudState === 'function') {
-        const res = await pullFullCloudState(state, initialState);
+        const res = await pullFullCloudState(state, getActiveWorkspaceTemplate());
         if (res?.hydrated && res.state) {
           const curId = state.currentUserId;
           const curProds = state.products;
