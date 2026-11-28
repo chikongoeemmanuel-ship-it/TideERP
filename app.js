@@ -126,6 +126,9 @@ let reportPaymentDirectionFilter = '';
 let reportPaymentMethodFilter = '';
 let inventoryMovementTypeFilter = '';
 let inventoryFilter = '';
+let productsPage = 1;
+let productsPageSize = 100;
+let searchRenderDebounce = null;
 let tableQuery = '';
 let selectedProductIds = new Set();
 let inventoryExpiryTab = 'attention';
@@ -140,7 +143,6 @@ let purchaseDateTo = '';
 let expenseStatusFilter = '';
 let expenseDateFrom = '';
 let expenseDateTo = '';
-let orderMenuPortal = null;
 let pendingCompanyLogo = '';
 let authErrorMessage = '';
 
@@ -377,7 +379,8 @@ function canPerformAction(action, element = null) {
     case 'lock-screen': case 'my-account': case 'new-notice': case 'test-notification-sound':
     case 'jump-to-expiry': case 'filter-expiry-tab': case 'set-report-tab':
     case 'apply-date-range': case 'clear-date-range': case 'clear-sales-filters':
-    case 'force-cloud-sync': case 'force-reload-app': case 'open-cloud-sync-dialog':
+    case 'force-cloud-sync': case 'force-reload-app':
+    case 'products-page-prev': case 'products-page-next':
     case 'view-attachment': case 'download-attachment': case 'view-entry-attachments': case 'add-attachment':
       return true;
     case 'delete-attachment':
@@ -460,8 +463,6 @@ function canPerformAction(action, element = null) {
     case 'new-branch': return user.isBootstrap || (isAdministratorUser(user) && require('branches', 'manage'));
     case 'open-branch': return userCanManageAllBranches(user) && require('branches', 'open');
     case 'select-transaction-product': case 'remove-transaction-product': return element?.dataset?.kind === 'purchase' ? require('purchases', 'create') : require('sales', 'create');
-    case 'export-full-backup': case 'trigger-restore-backup': case 'disconnect-cloud-sync':
-      return user.isBootstrap || isAdministratorUser(user);
     default: return false;
   }
 }
@@ -4398,7 +4399,15 @@ function handleStocktakeSearch(term) {
 
 // Product Management
 function renderProductManagement() {
-  const rows = inventoryRowsFiltered();
+  const rows = sortProducts(inventoryRowsFiltered());
+  const totalFiltered = rows.length;
+  const pageSize = Number(productsPageSize) || 0;
+  const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(totalFiltered / pageSize)) : 1;
+  productsPage = Math.max(1, Math.min(productsPage, totalPages));
+  const startIdx = pageSize > 0 ? (productsPage - 1) * pageSize : 0;
+  const visibleRows = pageSize > 0 ? rows.slice(startIdx, startIdx + pageSize) : rows;
+  const showStart = totalFiltered ? startIdx + 1 : 0;
+  const showEnd = startIdx + visibleRows.length;
   const selectedCount = selectedProductIds.size;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -4455,7 +4464,7 @@ function renderProductManagement() {
             <option value="has-expiry" ${inventoryFilter === 'has-expiry' ? 'selected' : ''}>All with expiry dates (${allWithExpiry.length})</option>
           </select>
         </div>
-        <span class="muted" id="inventory-result-count" style="font-size:11px">${rows.length} of ${state.products.length} products</span>
+        <span class="muted" id="inventory-result-count" style="font-size:11px">${totalFiltered ? `Showing ${showStart}–${showEnd} of ${totalFiltered}` : '0'} (${state.products.length} total)</span>
         <div id="bulk-product-bar" class="bulk-action-bar" ${selectedCount > 0 ? 'style="display:flex"' : 'hidden style="display:none"'}>
           <span id="bulk-product-count" class="muted" style="font-size:11px">${selectedCount > 0 ? `${selectedCount} product${selectedCount !== 1 ? 's' : ''} selected` : ''}</span>
           <button class="button small danger-action" data-action="bulk-delete-products">Delete selected</button>
@@ -4466,9 +4475,31 @@ function renderProductManagement() {
           <thead>
             <tr><th style="width:36px"><input type="checkbox" id="select-all-products" title="Select all" style="cursor:pointer"></th><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Cost</th><th>Stock</th><th>Status</th><th>Actions</th></tr>
           </thead>
-          <tbody id="inventory-table-body">${inventoryRows(rows)}</tbody>
+          <tbody id="inventory-table-body">${inventoryRows(visibleRows)}</tbody>
         </table>
       </div>
+      ${totalFiltered > 50 || pageSize > 0 ? `
+        <div class="table-pagination-bar" id="products-pagination-bar">
+          <div class="pagination-meta">
+            <span>Showing <strong>${showStart}–${showEnd}</strong> of <strong>${totalFiltered}</strong> products</span>
+            <label class="pagination-size-label">Per page:
+              <select class="select-control small" id="products-page-size" aria-label="Products per page">
+                <option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option>
+                <option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option>
+                <option value="250" ${pageSize === 250 ? 'selected' : ''}>250</option>
+                <option value="0" ${pageSize === 0 ? 'selected' : ''}>All (${totalFiltered})</option>
+              </select>
+            </label>
+          </div>
+          ${pageSize > 0 && totalPages > 1 ? `
+            <div class="pagination-controls">
+              <button type="button" class="button small" data-action="products-page-prev" ${productsPage <= 1 ? 'disabled' : ''}>← Prev</button>
+              <span class="pagination-page-label">Page ${productsPage} of ${totalPages}</span>
+              <button type="button" class="button small" data-action="products-page-next" ${productsPage >= totalPages ? 'disabled' : ''}>Next →</button>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
     </section>
 
     ${renderExpiryManagementSection()}
@@ -6669,30 +6700,6 @@ function handleRemoteCloudSync(remoteFields, deviceName, changedModules = []) {
   toast(`☁️ Live update from ${deviceName || 'another device'} (${label})`);
 }
 
-function openCloudSyncDialog() {
-  const currentConfig = typeof getStoredFirebaseConfig === 'function' ? getStoredFirebaseConfig() : null;
-  const configJson = currentConfig ? JSON.stringify(currentConfig, null, 2) : '';
-  const content = `
-    <div style="display:flex;flex-direction:column;gap:12px">
-      <div class="inline-note" style="line-height:1.45;font-size:11.5px">
-        <strong>Automatic Multi-Device Synchronization (PC ⇄ Phone)</strong><br>
-        Connect your free Google Firebase Firestore database below so changes made on your PC (new products, sales, purchases, payments) are automatically visible on your phone in real time.
-      </div>
-      <div class="field">
-        <label for="firebase-config-text">Firebase Web Configuration</label>
-        <textarea id="firebase-config-text" name="firebase-config-text" rows="7" style="font-family:monospace;font-size:10.5px" placeholder='{\n  "apiKey": "AIzaSy...",\n  "authDomain": "myproject.firebaseapp.com",\n  "projectId": "myproject",\n  "storageBucket": "myproject.appspot.com",\n  "messagingSenderId": "...",\n  "appId": "..."\n}'>${esc(configJson)}</textarea>
-        <small class="field-hint">Copy from Firebase Console: <strong>Project Settings > General > Your apps (Web) > firebaseConfig</strong></small>
-      </div>
-      <div class="field">
-        <label for="firebase-workspace-id">Shared Sync Channel (Company ID)</label>
-        <input type="text" id="firebase-workspace-id" name="firebase-workspace-id" value="${esc(state.companyName ? state.companyName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase() : 'main-workspace')}" placeholder="e.g. my_company">
-        <small class="field-hint">Must be identical on both PC and phone to connect to the same workspace.</small>
-      </div>
-    </div>
-  `;
-  openDialog('cloud-sync', 'Connect Live Cloud Database', 'Real-time multi-device sync with Google Firebase.', content, 'Save & Connect Cloud');
-}
-
 function openProductForm(product = null) {
   const p = product || { name: '', id: '', category: 'General', price: 0, cost: 0, stock: 0, low: 5, unit: 'Piece', status: 'Active', expiryDate: '', batchNumber: '' };
   const content = `<div class="form-grid">
@@ -7312,48 +7319,6 @@ async function handleDialogSubmit(form) {
   const data = new FormData(form);
   const kind = form.dataset.dialogKind;
   const val = key => String(data.get(key) || '').trim();
-
-  if (kind === 'cloud-sync') {
-    const rawConfig = form.elements['firebase-config-text']?.value?.trim();
-    const wsId = form.elements['firebase-workspace-id']?.value?.trim() || 'main-workspace';
-    if (!rawConfig) {
-      toast('Please paste your Firebase configuration');
-      return;
-    }
-    let parsed = null;
-    try {
-      parsed = JSON.parse(rawConfig);
-    } catch {
-      // Safe non-eval parser for pasted Firebase JS config snippets (allowlisted keys only)
-      const allowedKeys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'measurementId', 'databaseURL'];
-      const extracted = {};
-      for (const key of allowedKeys) {
-        const match = rawConfig.match(new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`));
-        if (match && match[1]) extracted[key] = match[1].trim();
-      }
-      if (extracted.projectId && extracted.apiKey) {
-        parsed = extracted;
-      } else {
-        toast('Invalid format. Please paste a valid Firebase JSON configuration object.');
-        return;
-      }
-    }
-    if (!parsed || !parsed.projectId) {
-      toast('Configuration must include at least "projectId" and "apiKey"');
-      return;
-    }
-    saveStoredFirebaseConfig(parsed);
-    const ok = initCloudSync(wsId, handleRemoteCloudSync);
-    if (ok) {
-      pushStateToCloud(state);
-      toast('⚡ Live Cloud Sync Connected! Syncing across devices...');
-      closeModal();
-      render();
-    } else {
-      toast('Could not connect to Firebase with provided credentials');
-    }
-    return;
-  }
 
   if (kind === 'save-order-discrepancy') {
     const orderId = form.dataset.recordId;
@@ -9265,25 +9230,15 @@ function handleAction(button) {
       toast('Stock take audit sessions exported to CSV');
       break;
     }
-    case 'export-full-backup': {
-      const backupData = JSON.stringify(state, null, 2);
-      const blob = new Blob([backupData], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `tide-erp-backup-${today()}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      toast('Full workspace backup downloaded successfully');
+    case 'products-page-prev': {
+      if (productsPage > 1) { productsPage--; render(); }
       break;
     }
-    case 'trigger-restore-backup': {
-      document.getElementById('restore-backup-file')?.click();
+    case 'products-page-next': {
+      productsPage++;
+      render();
       break;
     }
-    case 'open-cloud-sync-dialog': openCloudSyncDialog(); break;
     case 'force-cloud-sync': {
       toast('Refreshing active branch ERP from cloud database...');
       (async () => {
@@ -9307,13 +9262,6 @@ function handleAction(button) {
     }
     case 'force-reload-app': {
       forceReloadApp();
-      break;
-    }
-    case 'disconnect-cloud-sync': {
-      if (!confirm('Disconnect live cloud sync? App will switch back to local offline mode.')) break;
-      saveStoredFirebaseConfig(null);
-      toast('Cloud sync disconnected. App is in local mode.');
-      render();
       break;
     }
     case 'export-stock-movements': {
@@ -9948,12 +9896,18 @@ document.addEventListener('input', event => {
   if (summary) transactionLineTotals(summary.dataset.transactionSummary);
   if (event.target.id === 'table-search') {
     tableQuery = event.target.value;
-    render();
-    const input = document.getElementById('table-search');
-    if (input) {
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
+    productsPage = 1;
+    if (searchRenderDebounce) clearTimeout(searchRenderDebounce);
+    const delay = tableQuery === '' ? 0 : 160;
+    searchRenderDebounce = setTimeout(() => {
+      searchRenderDebounce = null;
+      render();
+      const input = document.getElementById('table-search');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }, delay);
   }
   if (event.target.id === 'setting-primary-color' || event.target.id === 'setting-secondary-color') {
     const pVal = document.getElementById('setting-primary-color')?.value || DEFAULT_BRAND_COLORS.primary;
@@ -9970,12 +9924,17 @@ document.addEventListener('input', event => {
   }
   if (event.target.id === 'report-search') {
     reportSearchQuery = event.target.value;
-    render();
-    const input = document.getElementById('report-search');
-    if (input) {
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
+    if (searchRenderDebounce) clearTimeout(searchRenderDebounce);
+    const delay = reportSearchQuery === '' ? 0 : 160;
+    searchRenderDebounce = setTimeout(() => {
+      searchRenderDebounce = null;
+      render();
+      const input = document.getElementById('report-search');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }, delay);
   }
   if (event.target.id === 'pos-search') {
     const term = event.target.value.toLowerCase();
@@ -10041,7 +10000,8 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'report-payment-direction') { reportPaymentDirectionFilter = event.target.value; render(); }
   if (event.target.id === 'report-payment-method') { reportPaymentMethodFilter = event.target.value; render(); }
-  if (event.target.id === 'inventory-filter') { inventoryFilter = event.target.value; render(); }
+  if (event.target.id === 'inventory-filter') { inventoryFilter = event.target.value; productsPage = 1; render(); }
+  if (event.target.id === 'products-page-size') { productsPageSize = Number(event.target.value) || 0; productsPage = 1; render(); }
   if (event.target.id === 'inventory-movement-filter') { inventoryMovementTypeFilter = event.target.value; render(); }
   if (event.target.id === 'company-logo-file' && event.target.files?.[0]) {
     processCompanyLogoFile(event.target.files[0]);
@@ -10088,29 +10048,6 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'product-csv-file' && event.target.files?.[0]) {
     const reader = new FileReader(); reader.onload = () => importProductsCSV(String(reader.result || '')); reader.readAsText(event.target.files[0]); event.target.value = '';
-  }
-  if (event.target.id === 'restore-backup-file' && event.target.files?.[0]) {
-    const file = event.target.files[0];
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const text = String(reader.result || '');
-        const backup = JSON.parse(text);
-        if (!backup || typeof backup !== 'object' || !Array.isArray(backup.products)) {
-          toast('Invalid backup file. Must be a Tide ERP .json backup.');
-          return;
-        }
-        if (!confirm(`Restore backup "${file.name}"? This will sync ${backup.products.length} products and all workspace records to this device.`)) return;
-        Object.assign(state, backup);
-        await saveState();
-        toast('Backup restored successfully! Refreshing...');
-        setTimeout(() => location.reload(), 600);
-      } catch (err) {
-        toast('Failed to restore backup: ' + (err.message || 'Corrupt file'));
-      }
-    };
-    reader.readAsText(file);
-    event.target.value = '';
   }
   if (event.target.id === 'stocktake-select-category') {
     const cat = event.target.value;
@@ -10462,14 +10399,14 @@ async function initApp() {
       // Abort if user already signed into / registered a different company or switched branch
       if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId || activeBranch?.id !== bootBranchId) return;
 
-      const [modResult, cloudProducts] = await Promise.all([
-        typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, bootTemplate, true) : Promise.resolve(null),
-        typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
-      ]);
+      // Hydrate modular ERP docs once, then let streamProducts() be the single authoritative
+      // real-time product loader (eliminates duplicate full-collection reads on every refresh!)
+      const modResult = typeof hydrateFromCloud === 'function'
+        ? await hydrateFromCloud(state, bootTemplate, true)
+        : null;
 
       if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId || activeBranch?.id !== bootBranchId) return;
 
-      let changed = false;
       if (modResult?.hydrated && modResult.state) {
         const curUserId = state.currentUserId;
         const curProds = state.products;
@@ -10478,23 +10415,6 @@ async function initApp() {
         state.currentUserId = curUserId;
         state.products = curProds;
         state.branchData = { ...prevBranchData, ...(state.branchData || {}) };
-        changed = true;
-      }
-      if (Array.isArray(cloudProducts)) {
-        const isPrimaryMainBranch = bootWorkspaceId === 'ws_primary' && bootBranchId === 'BR-MAIN';
-        const seedKey = isPrimaryMainBranch ? 'tide_products_seeded_v2' : `tide_products_seeded_${bootWorkspaceId}_${bootBranchId}`;
-        const hasSeeded = !isPrimaryMainBranch || Boolean(localStorage.getItem(seedKey));
-        if (cloudProducts.length > 0) {
-          if (isPrimaryMainBranch) localStorage.setItem(seedKey, 'true');
-          state.products = cloudProducts;
-          changed = true;
-        } else if (hasSeeded && (state.products || []).length > 0) {
-          state.products = [];
-          changed = true;
-        }
-      }
-
-      if (changed) {
         normalizeBootState();
         snapshotCurrentBranch();
         applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
@@ -10506,8 +10426,15 @@ async function initApp() {
 
       attachActiveWorkspaceStreams();
 
+      // Only sync user directory entries to Firestore when users/company actually changed
       if (typeof syncWorkspaceUsersToDirectory === 'function') {
-        syncWorkspaceUsersToDirectory(state.users, bootWorkspaceId, state.companyName).catch(() => {});
+        const dirFingerprint = `${state.companyName || ''}|${(state.users || []).map(u => `${u.id}:${u.username || ''}:${u.email || ''}:${u.status || ''}:${(u.passwordHash || '').slice(0, 12)}`).join(';')}`;
+        const dirKey = `tide-dir-sync-hash_${bootWorkspaceId}`;
+        if (safeStorageGet(dirKey) !== dirFingerprint) {
+          syncWorkspaceUsersToDirectory(state.users, bootWorkspaceId, state.companyName)
+            .then(() => safeStorageSet(dirKey, dirFingerprint))
+            .catch(() => {});
+        }
       }
     } catch (err) {
       console.warn('Background cloud hydration fell back to local cache:', err);
