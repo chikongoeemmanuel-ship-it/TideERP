@@ -32,6 +32,7 @@
   let productsUnsubscribe = null;
   let activeConfig = null;
   let activeWorkspaceId = 'ws_primary';
+  let activeBranchId = 'BR-MAIN';
   let bulkMutationCount = 0;
   let pendingStreamCallback = null;
   let pendingStreamProducts = null;
@@ -48,6 +49,7 @@
       pendingStreamProducts = null;
       pendingStreamSnapshot = null;
       activeWorkspaceId = nextId;
+      activeBranchId = 'BR-MAIN';
     }
     return activeWorkspaceId;
   }
@@ -56,11 +58,35 @@
     return activeWorkspaceId;
   }
 
-  function productsCollectionRef(db) {
-    if (!activeWorkspaceId || activeWorkspaceId === 'ws_primary') {
-      return db.collection('products');
+  function setBranch(branchId) {
+    const nextBranch = String(branchId || 'BR-MAIN').trim() || 'BR-MAIN';
+    if (nextBranch !== activeBranchId) {
+      if (productsUnsubscribe) {
+        try { productsUnsubscribe(); } catch {}
+        productsUnsubscribe = null;
+      }
+      pendingStreamProducts = null;
+      pendingStreamSnapshot = null;
+      activeBranchId = nextBranch;
     }
-    return db.collection('tide_erp_tenants').doc(activeWorkspaceId).collection('products');
+    return activeBranchId;
+  }
+
+  function getBranch() {
+    return activeBranchId;
+  }
+
+  function productsCollectionRef(db, wsId = activeWorkspaceId, branchId = activeBranchId) {
+    const isPrimaryWs = !wsId || wsId === 'ws_primary';
+    const isMainBranch = !branchId || branchId === 'BR-MAIN';
+    if (isPrimaryWs) {
+      return isMainBranch
+        ? db.collection('products')
+        : db.collection('tide_erp_branches').doc(branchId).collection('products');
+    }
+    return isMainBranch
+      ? db.collection('tide_erp_tenants').doc(wsId).collection('products')
+      : db.collection('tide_erp_tenants').doc(wsId).collection('branches').doc(branchId).collection('products');
   }
 
   /**
@@ -363,11 +389,12 @@
     }
     pendingStreamCallback = onUpdate;
     const boundWorkspaceId = activeWorkspaceId;
+    const boundBranchId = activeBranchId;
 
     try {
-      productsUnsubscribe = productsCollectionRef(db).onSnapshot(
+      productsUnsubscribe = productsCollectionRef(db, boundWorkspaceId, boundBranchId).onSnapshot(
         snapshot => {
-          if (boundWorkspaceId !== activeWorkspaceId) return;
+          if (boundWorkspaceId !== activeWorkspaceId || boundBranchId !== activeBranchId) return;
           const products = [];
           snapshot.forEach(doc => {
             const data = doc.data();
@@ -390,7 +417,7 @@
           if (typeof onError === 'function') onError(err);
         }
       );
-      console.info(`✓ Real-time products stream active for workspace: ${boundWorkspaceId}`);
+      console.info(`✓ Real-time products stream active for workspace: ${boundWorkspaceId} / branch: ${boundBranchId}`);
       return productsUnsubscribe;
     } catch (err) {
       console.error('Failed to attach products onSnapshot listener:', err);
@@ -407,6 +434,9 @@
     if (!Array.isArray(productsArray) || !productsArray.length) {
       return { synced: 0, total: 0, failed: 0 };
     }
+
+    const targetWsId = activeWorkspaceId;
+    const targetBranchId = activeBranchId;
 
     return enqueueProductBatch(async () => {
       let db = getDb();
@@ -428,7 +458,7 @@
       let synced = 0;
       let failed = 0;
 
-      const colRef = productsCollectionRef(db);
+      const colRef = productsCollectionRef(db, targetWsId, targetBranchId);
       beginBulkOp();
       try {
         for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -477,6 +507,9 @@
       return { deleted: 0, total: 0, failed: 0 };
     }
 
+    const targetWsId = activeWorkspaceId;
+    const targetBranchId = activeBranchId;
+
     return enqueueProductBatch(async () => {
       let db = getDb();
       if (!db) db = await initFirebase();
@@ -495,7 +528,7 @@
       let deleted = 0;
       let failed = 0;
 
-      const colRef = productsCollectionRef(db);
+      const colRef = productsCollectionRef(db, targetWsId, targetBranchId);
       beginBulkOp();
       try {
         for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -539,6 +572,8 @@
     getDb,
     setWorkspace,
     getWorkspace,
+    setBranch,
+    getBranch,
     toDocId,
     isBulkOpActive,
     saveProduct,

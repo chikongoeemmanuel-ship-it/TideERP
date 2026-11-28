@@ -230,38 +230,68 @@ const DEFAULT_FIREBASE_CONFIG = {
 };
 
 const MODULES_COLLECTION = 'tide_erp_modules';
+const PRIMARY_BRANCHES_COLLECTION = 'tide_erp_branches';
+const DEFAULT_BRANCH_ID = 'BR-MAIN';
 const LEGACY_WORKSPACES_COLLECTION = 'tide_erp_workspaces';
 const CLIENT_SESSION_ID = 'sess_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
 
-// Every non-product field of the ERP mapped to its own clean Firestore document
-const ERP_MODULE_DEFS = {
+// Shared company-wide modules (synced at workspace level across all branches)
+// Note: `branch` and `activeBranchId` are intentionally device-local so switching branches
+// on one device never hijacks another device's active branch!
+const SHARED_MODULE_DEFS = {
   core: [
     'version', 'companyName', 'companyAddress', 'companyPhone', 'companyEmail',
     'companyPaymentDetails', 'companyAdminId', 'currency', 'vatEnabled', 'vatRate',
     'branches', 'users', 'productCategories', 'measurementUnits', 'productPackages',
-    'notificationSettings', 'autoLockMinutes', 'themeColors', 'notificationSound', 'branch', 'activeBranchId'
+    'notificationSettings', 'autoLockMinutes', 'themeColors', 'notificationSound'
   ],
   assets: ['companyLogo'],
+  notices: ['notices'],
+  system_logs: ['activityLog']
+};
+
+// Branch-isolated modules (stored per-branch in Firestore; BR-MAIN keeps root module paths
+// for 100% backwards compatibility while every secondary branch has its own subcollection)
+const BRANCH_MODULE_DEFS = {
   parties: ['customers', 'suppliers'],
   sales: ['orders', 'sales', 'returns'],
   purchases: ['purchases', 'purchaseReturns'],
   expenses: ['expenses'],
-  notices: ['notices'],
   accounting: ['entries'],
   inventory_logs: ['stockMovements', 'stocktakes', 'stocktakeDraft'],
-  system_logs: ['activityLog', 'trashBin', 'queue'],
-  branch_data: ['branchData']
+  branch_trash: ['trashBin', 'queue']
 };
+
+const ERP_MODULE_DEFS = { ...SHARED_MODULE_DEFS, ...BRANCH_MODULE_DEFS };
 
 let firestoreDb = null;
 let cloudSyncActive = false;
 let cloudHydrated = false;
 let cloudSyncWorkspaceId = 'tideerp_global_workspace';
 let cloudSyncUnsubscribe = null;
+let branchSyncUnsubscribe = null;
 let isReceivingCloudBroadcast = false;
 let broadcastGuardTimer = null;
 let pendingCloudPush = null;
 let lastSyncedModuleHashes = {};
+let activeTenantBranchId = (() => {
+  try {
+    return localStorage.getItem(`tide-erp-active-branch_${activeTenantWorkspaceId}`) || DEFAULT_BRANCH_ID;
+  } catch {
+    return DEFAULT_BRANCH_ID;
+  }
+})();
+
+function getActiveBranchId(wsId = activeTenantWorkspaceId) {
+  if (wsId === activeTenantWorkspaceId && activeTenantBranchId) {
+    return activeTenantBranchId;
+  }
+  try {
+    return localStorage.getItem(`tide-erp-active-branch_${wsId || DEFAULT_WORKSPACE_ID}`) || DEFAULT_BRANCH_ID;
+  } catch {
+    return DEFAULT_BRANCH_ID;
+  }
+}
 
 function modulesCollectionRef(db, wsId = activeTenantWorkspaceId) {
   const cleanWs = String(wsId || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
@@ -271,11 +301,55 @@ function modulesCollectionRef(db, wsId = activeTenantWorkspaceId) {
   return db.collection(TENANTS_COLLECTION).doc(cleanWs).collection('modules');
 }
 
+function branchModulesCollectionRef(db, wsId = activeTenantWorkspaceId, branchId = activeTenantBranchId) {
+  const cleanWs = String(wsId || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
+  const cleanBranch = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  if (cleanBranch === DEFAULT_BRANCH_ID) {
+    return modulesCollectionRef(db, cleanWs);
+  }
+  if (cleanWs === DEFAULT_WORKSPACE_ID) {
+    return db.collection(PRIMARY_BRANCHES_COLLECTION).doc(cleanBranch).collection('modules');
+  }
+  return db.collection(TENANTS_COLLECTION).doc(cleanWs).collection('branches').doc(cleanBranch).collection('modules');
+}
+
+function setActiveBranchId(branchId, wsId = activeTenantWorkspaceId) {
+  const nextBranch = String(branchId || DEFAULT_BRANCH_ID).trim() || DEFAULT_BRANCH_ID;
+  const targetWs = String(wsId || activeTenantWorkspaceId || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
+  const changed = nextBranch !== activeTenantBranchId;
+  if (changed) {
+    if (branchSyncUnsubscribe) {
+      try { branchSyncUnsubscribe(); } catch {}
+      branchSyncUnsubscribe = null;
+    }
+    if (cloudSaveDebounce) {
+      clearTimeout(cloudSaveDebounce);
+      cloudSaveDebounce = null;
+    }
+    pendingCloudPush = null;
+    activeTenantBranchId = nextBranch;
+    // Clear only branch-scoped hashes so switching branches re-hydrates cleanly
+    for (const modName of Object.keys(BRANCH_MODULE_DEFS)) {
+      delete lastSyncedModuleHashes[modName];
+    }
+    cloudHydrated = false;
+  }
+  try { localStorage.setItem(`tide-erp-active-branch_${targetWs}`, nextBranch); } catch {}
+  if (typeof window !== 'undefined' && typeof window.TideFirebase?.setBranch === 'function') {
+    window.TideFirebase.setBranch(nextBranch);
+  }
+  return nextBranch;
+}
+
 function setActiveWorkspaceId(workspaceId) {
   const nextWs = String(workspaceId || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
   if (cloudSyncUnsubscribe) {
     try { cloudSyncUnsubscribe(); } catch {}
     cloudSyncUnsubscribe = null;
+  }
+  if (branchSyncUnsubscribe) {
+    try { branchSyncUnsubscribe(); } catch {}
+    branchSyncUnsubscribe = null;
   }
   if (cloudSaveDebounce) {
     clearTimeout(cloudSaveDebounce);
@@ -288,11 +362,13 @@ function setActiveWorkspaceId(workspaceId) {
   isReceivingCloudBroadcast = false;
   pendingCloudPush = null;
   activeTenantWorkspaceId = nextWs;
+  activeTenantBranchId = getActiveBranchId(nextWs);
   lastSyncedModuleHashes = {};
   cloudHydrated = false;
   try { localStorage.setItem(ACTIVE_WORKSPACE_KEY, nextWs); } catch {}
   if (typeof window !== 'undefined' && typeof window.TideFirebase?.setWorkspace === 'function') {
     window.TideFirebase.setWorkspace(nextWs);
+    window.TideFirebase.setBranch?.(activeTenantBranchId);
   }
   return nextWs;
 }
@@ -636,57 +712,131 @@ async function hydrateFromCloud(localState, initialState, preferServer = true) {
   }
 
   try {
-    const modCol = modulesCollectionRef(db, activeTenantWorkspaceId);
-    let snap;
-    if (preferServer) {
-      try {
-        snap = await modCol.get({ source: 'server' });
-      } catch {
-        snap = await modCol.get();
+    const wsId = activeTenantWorkspaceId;
+    const branchId = activeTenantBranchId || DEFAULT_BRANCH_ID;
+    const isMainBranch = branchId === DEFAULT_BRANCH_ID;
+
+    const sharedCol = modulesCollectionRef(db, wsId);
+    const branchCol = branchModulesCollectionRef(db, wsId, branchId);
+
+    const fetchCol = async (col) => {
+      if (preferServer) {
+        try { return await col.get({ source: 'server' }); } catch { return await col.get(); }
       }
-    } else {
-      snap = await modCol.get();
+      return await col.get();
+    };
+
+    const [sharedSnap, branchSnap] = isMainBranch
+      ? [await fetchCol(sharedCol), null]
+      : await Promise.all([fetchCol(sharedCol), fetchCol(branchCol)]);
+
+    // Abort if workspace or branch changed while request was in flight
+    if (wsId !== activeTenantWorkspaceId || branchId !== (activeTenantBranchId || DEFAULT_BRANCH_ID)) {
+      return { hydrated: false, state: localState, source: 'stale-switch' };
     }
 
     // Case 1: Unified modular ERP data exists in cloud — use as authoritative truth
-    if (snap && !snap.empty) {
+    if (sharedSnap && !sharedSnap.empty) {
       const merged = structuredClone(localState || initialState);
       const moduleHashes = {};
+      let legacyBranchDataDoc = null;
+      let legacySystemTrash = null;
+      let hasBranchTrashDoc = false;
 
-      snap.forEach(doc => {
+      sharedSnap.forEach(doc => {
         const modName = doc.id;
-        if (!ERP_MODULE_DEFS[modName]) return;
         const docData = doc.data();
         if (!docData || !docData.data || typeof docData.data !== 'object') return;
-        for (const [k, v] of Object.entries(docData.data)) {
-          if (k === 'products' || k === 'currentUserId') continue;
-          if (k === 'branchData') {
-            merged.branchData = stripProductsFromBranchData(v);
-          } else {
-            merged[k] = v;
+
+        if (modName === 'branch_data' && docData.data.branchData) {
+          legacyBranchDataDoc = stripProductsFromBranchData(docData.data.branchData);
+          return;
+        }
+
+        // Apply shared workspace modules always; apply branch modules from sharedSnap ONLY for BR-MAIN
+        const isShared = Boolean(SHARED_MODULE_DEFS[modName]);
+        const isBranch = Boolean(BRANCH_MODULE_DEFS[modName]);
+        if (!isShared && !(isMainBranch && isBranch)) return;
+
+        if (modName === 'system_logs' && isMainBranch) {
+          if (Array.isArray(docData.data.trashBin) || Array.isArray(docData.data.queue)) {
+            legacySystemTrash = {
+              trashBin: Array.isArray(docData.data.trashBin) ? docData.data.trashBin : [],
+              queue: Array.isArray(docData.data.queue) ? docData.data.queue : []
+            };
           }
+        }
+        if (modName === 'branch_trash' && isMainBranch) {
+          hasBranchTrashDoc = true;
+        }
+
+        for (const [k, v] of Object.entries(docData.data)) {
+          if (k === 'products' || k === 'currentUserId' || k === 'branch' || k === 'activeBranchId') continue;
+          if (!isMainBranch && (k === 'trashBin' || k === 'queue')) continue;
+          merged[k] = v;
         }
         try {
           moduleHashes[modName] = JSON.stringify(docData.data);
         } catch {}
       });
 
+      if (isMainBranch && !hasBranchTrashDoc && legacySystemTrash) {
+        merged.trashBin = legacySystemTrash.trashBin;
+        merged.queue = legacySystemTrash.queue;
+      }
+
+      // Secondary branch isolation: read strictly from branches/{branchId}/modules!
+      if (!isMainBranch) {
+        const branchFieldKeys = Object.values(BRANCH_MODULE_DEFS).flat();
+        if (branchSnap && !branchSnap.empty) {
+          // Reset branch fields to clean defaults first so BR-MAIN fields can NEVER bleed in
+          for (const k of branchFieldKeys) {
+            merged[k] = k === 'stocktakeDraft' ? null : [];
+          }
+          branchSnap.forEach(doc => {
+            const modName = doc.id;
+            if (!BRANCH_MODULE_DEFS[modName]) return;
+            const docData = doc.data();
+            if (!docData || !docData.data || typeof docData.data !== 'object') return;
+            for (const [k, v] of Object.entries(docData.data)) {
+              if (k === 'products' || k === 'currentUserId') continue;
+              merged[k] = v;
+            }
+            try {
+              moduleHashes[modName] = JSON.stringify(docData.data);
+            } catch {}
+          });
+        } else {
+          // Brand-new or pre-migration secondary branch: load legacy branchData[branchId] if any, else blank!
+          const legacySlice = legacyBranchDataDoc?.[branchId] || localState?.branchData?.[branchId] || null;
+          for (const k of branchFieldKeys) {
+            if (legacySlice && legacySlice[k] !== undefined) {
+              merged[k] = structuredClone(legacySlice[k]);
+            } else {
+              merged[k] = k === 'stocktakeDraft' ? null : [];
+            }
+          }
+        }
+      }
+
       const clean = sanitizeState(merged, initialState);
       clean.products = Array.isArray(localState?.products) ? localState.products : [];
       clean.currentUserId = localState?.currentUserId || '';
 
       // Preserve this device's active branch if it still exists
-      if (localState?.activeBranchId && (clean.branches || []).some(b => b.id === localState.activeBranchId)) {
-        clean.activeBranchId = localState.activeBranchId;
-        const b = clean.branches.find(x => x.id === localState.activeBranchId);
-        if (b) clean.branch = b.name;
+      const resolvedBranch = (clean.branches || []).find(b => b.id === branchId && b.status !== 'Inactive')
+        || (clean.branches || []).find(b => b.status !== 'Inactive')
+        || clean.branches?.[0];
+      if (resolvedBranch) {
+        clean.activeBranchId = resolvedBranch.id;
+        clean.branch = resolvedBranch.name;
       }
 
       lastSyncedModuleHashes = { ...lastSyncedModuleHashes, ...moduleHashes };
       cloudHydrated = true;
       cloudSyncActive = true;
       updateCloudStatusUI('connected');
-      console.info(`✓ Hydrated entire ERP from cloud (${snap.size} modules)`);
+      console.info(`✓ Hydrated ERP from cloud (ws=${wsId}, branch=${branchId}, shared=${sharedSnap.size}${branchSnap ? `, branchDocs=${branchSnap.size}` : ''})`);
       return { hydrated: true, state: clean, source: 'cloud-modules' };
     }
 
@@ -808,83 +958,102 @@ function initCloudSync(workspaceId, onRemoteUpdate) {
       cloudSyncUnsubscribe();
       cloudSyncUnsubscribe = null;
     }
+    if (branchSyncUnsubscribe) {
+      branchSyncUnsubscribe();
+      branchSyncUnsubscribe = null;
+    }
 
-    // Real-time listener on ALL ERP modules for the ACTIVE tenant workspace
     const boundWsId = activeTenantWorkspaceId;
-    cloudSyncUnsubscribe = modulesCollectionRef(firestoreDb, boundWsId)
-      .onSnapshot((snapshot) => {
-        if (boundWsId !== activeTenantWorkspaceId) return;
-        updateCloudStatusUI('connected');
-        if (snapshot.empty) return;
+    const boundBranchId = activeTenantBranchId || DEFAULT_BRANCH_ID;
+    const isMainBranch = boundBranchId === DEFAULT_BRANCH_ID;
 
-        // Ignore local optimistic echoes originating from this exact browser tab
-        if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
+    const handleSnapshot = (snapshot, allowedDefs) => {
+      if (boundWsId !== activeTenantWorkspaceId || boundBranchId !== (activeTenantBranchId || DEFAULT_BRANCH_ID)) return;
+      updateCloudStatusUI('connected');
+      if (snapshot.empty) return;
+      if (snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
 
-        const changedFields = {};
-        const changedModules = [];
-        let latestDevice = 'another device';
+      const changedFields = {};
+      const changedModules = [];
+      let latestDevice = 'another device';
 
-        snapshot.forEach((doc) => {
-          const modName = doc.id;
-          if (!ERP_MODULE_DEFS[modName]) return;
-          const remote = doc.data();
-          if (!remote || !remote.data || typeof remote.data !== 'object') return;
+      snapshot.forEach((doc) => {
+        const modName = doc.id;
+        if (!allowedDefs[modName]) return;
+        const remote = doc.data();
+        if (!remote || !remote.data || typeof remote.data !== 'object') return;
 
-          // Skip our own session's echoes
-          if (remote.updatedBy === CLIENT_SESSION_ID) {
-            try { lastSyncedModuleHashes[modName] = JSON.stringify(remote.data); } catch {}
-            return;
-          }
-
-          let remoteHash = '';
-          try { remoteHash = JSON.stringify(remote.data); } catch { return; }
-
-          if (remoteHash === lastSyncedModuleHashes[modName]) {
-            return; // Identical to what we already have
-          }
-
-          lastSyncedModuleHashes[modName] = remoteHash;
-          changedModules.push(modName);
-          if (remote.device) latestDevice = remote.device;
-
-          for (const [k, v] of Object.entries(remote.data)) {
-            if (k === 'products' || k === 'currentUserId') continue;
-            if (k === 'branchData') {
-              changedFields.branchData = stripProductsFromBranchData(v);
-            } else {
-              changedFields[k] = v;
-            }
-          }
-        });
-
-        if (changedModules.length === 0) return;
-
-        cloudHydrated = true;
-        isReceivingCloudBroadcast = true;
-        try {
-          if (typeof onRemoteUpdate === 'function') {
-            onRemoteUpdate(changedFields, latestDevice, changedModules);
-          }
-        } finally {
-          if (broadcastGuardTimer) clearTimeout(broadcastGuardTimer);
-          broadcastGuardTimer = setTimeout(() => {
-            broadcastGuardTimer = null;
-            isReceivingCloudBroadcast = false;
-            if (pendingCloudPush && boundWsId === activeTenantWorkspaceId) {
-              const queued = pendingCloudPush;
-              pendingCloudPush = null;
-              pushStateToCloud(queued.state, queued.immediate, queued.forceAll);
-            } else {
-              pendingCloudPush = null;
-            }
-          }, 80);
+        if (remote.updatedBy === CLIENT_SESSION_ID) {
+          try { lastSyncedModuleHashes[modName] = JSON.stringify(remote.data); } catch {}
+          return;
         }
-      }, (err) => {
-        console.warn('Real-time ERP modules listener error:', err);
-        updateCloudStatusUI('error', err);
+
+        let remoteHash = '';
+        try { remoteHash = JSON.stringify(remote.data); } catch { return; }
+
+        if (remoteHash === lastSyncedModuleHashes[modName]) {
+          return;
+        }
+
+        lastSyncedModuleHashes[modName] = remoteHash;
+        changedModules.push(modName);
+        if (remote.device) latestDevice = remote.device;
+
+        for (const [k, v] of Object.entries(remote.data)) {
+          if (k === 'products' || k === 'currentUserId' || k === 'branch' || k === 'activeBranchId' || k === 'branchData') continue;
+          if (!isMainBranch && modName === 'system_logs' && (k === 'trashBin' || k === 'queue')) continue;
+          changedFields[k] = v;
+        }
       });
 
-    console.info(`✓ Live unified ERP stream active across all ${Object.keys(ERP_MODULE_DEFS).length} modules`);
+      if (changedModules.length === 0) return;
+
+      cloudHydrated = true;
+      isReceivingCloudBroadcast = true;
+      try {
+        if (typeof onRemoteUpdate === 'function') {
+          onRemoteUpdate(changedFields, latestDevice, changedModules);
+        }
+      } finally {
+        if (broadcastGuardTimer) clearTimeout(broadcastGuardTimer);
+        broadcastGuardTimer = setTimeout(() => {
+          broadcastGuardTimer = null;
+          isReceivingCloudBroadcast = false;
+          if (pendingCloudPush && boundWsId === activeTenantWorkspaceId && boundBranchId === (activeTenantBranchId || DEFAULT_BRANCH_ID)) {
+            const queued = pendingCloudPush;
+            pendingCloudPush = null;
+            pushStateToCloud(queued.state, queued.immediate, queued.forceAll);
+          } else {
+            pendingCloudPush = null;
+          }
+        }, 80);
+      }
+    };
+
+    // 1. Listener on shared workspace modules (and BR-MAIN branch modules when on BR-MAIN)
+    const sharedAllowed = isMainBranch ? ERP_MODULE_DEFS : SHARED_MODULE_DEFS;
+    cloudSyncUnsubscribe = modulesCollectionRef(firestoreDb, boundWsId)
+      .onSnapshot(
+        (snapshot) => handleSnapshot(snapshot, sharedAllowed),
+        (err) => {
+          console.warn('Real-time shared ERP modules listener error:', err);
+          updateCloudStatusUI('error', err);
+        }
+      );
+
+    // 2. For secondary branches, attach dedicated isolated listener on branches/{branchId}/modules
+    if (!isMainBranch) {
+      branchSyncUnsubscribe = branchModulesCollectionRef(firestoreDb, boundWsId, boundBranchId)
+        .onSnapshot(
+          (snapshot) => handleSnapshot(snapshot, BRANCH_MODULE_DEFS),
+          (err) => {
+            console.warn(`Real-time branch (${boundBranchId}) modules listener error:`, err);
+            updateCloudStatusUI('error', err);
+          }
+        );
+    }
+
+    console.info(`✓ Live isolated ERP stream active (ws=${boundWsId}, branch=${boundBranchId})`);
     return true;
   } catch (err) {
     console.error('Failed to initialize unified ERP cloud sync:', err);
@@ -920,6 +1089,7 @@ async function pushStateToCloud(state, immediate = false, forceAll = false) {
 
   const doPush = async () => {
     const pushWsId = activeTenantWorkspaceId;
+    const pushBranchId = activeTenantBranchId || DEFAULT_BRANCH_ID;
     try {
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
@@ -936,32 +1106,35 @@ async function pushStateToCloud(state, immediate = false, forceAll = false) {
           console.warn(`Skipping oversized module '${modName}' (${hash.length} bytes)`);
           continue;
         }
-        dirtyModules.push({ modName, data, hash });
+        const isBranchScoped = Boolean(BRANCH_MODULE_DEFS[modName]);
+        dirtyModules.push({ modName, data, hash, isBranchScoped });
       }
 
       if (dirtyModules.length === 0) return;
 
       const batch = firestoreDb.batch();
-      const modCol = modulesCollectionRef(firestoreDb, pushWsId);
+      const sharedCol = modulesCollectionRef(firestoreDb, pushWsId);
+      const branchCol = branchModulesCollectionRef(firestoreDb, pushWsId, pushBranchId);
       for (const item of dirtyModules) {
-        const ref = modCol.doc(item.modName);
+        const ref = (item.isBranchScoped ? branchCol : sharedCol).doc(item.modName);
         batch.set(ref, {
           data: item.data,
           updatedAtMs: nowMs,
           updatedAt: nowIso,
           updatedBy: CLIENT_SESSION_ID,
+          branchId: item.isBranchScoped ? pushBranchId : 'SHARED',
           device
         }); // Full replace per module so deleted items stay deleted!
       }
 
       await batch.commit();
-      if (pushWsId === activeTenantWorkspaceId) {
+      if (pushWsId === activeTenantWorkspaceId && pushBranchId === (activeTenantBranchId || DEFAULT_BRANCH_ID)) {
         for (const item of dirtyModules) {
           lastSyncedModuleHashes[item.modName] = item.hash;
         }
         if (forceAll) cloudHydrated = true;
       }
-      console.info(`✓ Synced ${dirtyModules.length} ERP module(s) for ${pushWsId}: ${dirtyModules.map(m => m.modName).join(', ')}`);
+      console.info(`✓ Synced ${dirtyModules.length} ERP module(s) for ${pushWsId}/${pushBranchId}: ${dirtyModules.map(m => m.modName).join(', ')}`);
     } catch (err) {
       console.warn('Live cloud ERP push failed (changes remain safely cached in IndexedDB and will retry):', err);
     }

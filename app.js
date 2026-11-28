@@ -932,7 +932,9 @@ function createBlankWorkspaceState({ companyName, branchName = 'Main branch', cu
 
 function attachActiveWorkspaceStreams() {
   const wsId = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
-  const seedKey = wsId === 'ws_primary' ? 'tide_products_seeded_v2' : `tide_products_seeded_${wsId}`;
+  const branchId = activeBranch?.id || (typeof getActiveBranchId === 'function' ? getActiveBranchId(wsId) : 'BR-MAIN');
+  const isPrimaryMainBranch = wsId === 'ws_primary' && branchId === 'BR-MAIN';
+  const seedKey = isPrimaryMainBranch ? 'tide_products_seeded_v2' : `tide_products_seeded_${wsId}_${branchId}`;
 
   if (typeof initCloudSync === 'function') {
     initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
@@ -943,34 +945,97 @@ function attachActiveWorkspaceStreams() {
       if (typeof window.TideFirebase?.setWorkspace === 'function') {
         window.TideFirebase.setWorkspace(wsId);
       }
+      if (typeof window.TideFirebase?.setBranch === 'function') {
+        window.TideFirebase.setBranch(branchId);
+      }
       window.TideFirebase.streamProducts((remoteProducts) => {
         if (!Array.isArray(remoteProducts)) return;
         const currentWs = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
-        if (currentWs !== wsId) return;
+        const currentBranch = activeBranch?.id || 'BR-MAIN';
+        if (currentWs !== wsId || currentBranch !== branchId) return;
         if (typeof window.TideFirebase?.isBulkOpActive === 'function' && window.TideFirebase.isBulkOpActive()) return;
 
-        // Only legacy primary workspace may do a one-time seed from local cache if cloud is empty.
-        // Newly created isolated company workspaces always treat 0 products in cloud as authoritative.
-        const isPrimary = wsId === 'ws_primary';
-        const hasSeeded = !isPrimary || Boolean(localStorage.getItem(seedKey));
-        if (isPrimary && remoteProducts.length === 0 && !hasSeeded && (state.products || []).length > 0) {
+        // Only legacy primary workspace Main Branch may do a one-time seed from local cache if cloud is empty.
+        // All other workspaces and all secondary branches treat 0 products in cloud as authoritative.
+        const hasSeeded = !isPrimaryMainBranch || Boolean(localStorage.getItem(seedKey));
+        if (isPrimaryMainBranch && remoteProducts.length === 0 && !hasSeeded && (state.products || []).length > 0) {
           localStorage.setItem(seedKey, 'true');
           window.TideFirebase.batchSyncProducts(state.products);
           return;
         }
 
         if (remoteProducts.length > 0) {
-          if (isPrimary) localStorage.setItem(seedKey, 'true');
+          if (isPrimaryMainBranch) localStorage.setItem(seedKey, 'true');
           state.products = remoteProducts;
+          snapshotCurrentBranch();
           persistState(state, wsId);
           render();
         } else if (hasSeeded) {
           state.products = [];
+          snapshotCurrentBranch();
           persistState(state, wsId);
           render();
         }
       });
     }).catch(err => console.warn('Product stream setup error:', err));
+  }
+}
+
+async function hydrateActiveBranchFromCloud(targetBranchId) {
+  const wsId = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
+  const branchId = targetBranchId || activeBranch?.id || 'BR-MAIN';
+  try {
+    if (typeof window.TideFirebase?.initFirebase === 'function') {
+      await window.TideFirebase.initFirebase();
+      window.TideFirebase.setWorkspace?.(wsId);
+      window.TideFirebase.setBranch?.(branchId);
+    }
+    if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== wsId || activeBranch?.id !== branchId) {
+      return false;
+    }
+
+    const wsTemplate = getActiveWorkspaceTemplate();
+    const [modResult, cloudProducts] = await Promise.all([
+      typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, wsTemplate, true) : Promise.resolve(null),
+      typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
+    ]);
+
+    if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== wsId || activeBranch?.id !== branchId) {
+      return false;
+    }
+
+    if (modResult?.hydrated && modResult.state) {
+      const curUserId = state.currentUserId;
+      const prevBranchData = state.branchData || {};
+      state = modResult.state;
+      state.currentUserId = curUserId;
+      state.branchData = { ...prevBranchData, ...(state.branchData || {}) };
+      activeBranch = state.branches.find(b => b.id === branchId && b.status !== 'Inactive') || activeBranch;
+      state.activeBranchId = activeBranch.id;
+      state.branch = activeBranch.name;
+    }
+
+    if (Array.isArray(cloudProducts)) {
+      const isPrimaryMainBranch = wsId === 'ws_primary' && branchId === 'BR-MAIN';
+      const seedKey = isPrimaryMainBranch ? 'tide_products_seeded_v2' : `tide_products_seeded_${wsId}_${branchId}`;
+      const hasSeeded = !isPrimaryMainBranch || Boolean(localStorage.getItem(seedKey));
+      if (cloudProducts.length > 0) {
+        if (isPrimaryMainBranch) localStorage.setItem(seedKey, 'true');
+        state.products = cloudProducts;
+      } else if (hasSeeded) {
+        state.products = [];
+      }
+    }
+
+    snapshotCurrentBranch();
+    await persistState(state, wsId);
+    attachActiveWorkspaceStreams();
+    if (state.currentUserId) render();
+    return true;
+  } catch (err) {
+    console.warn(`Branch cloud hydration (${branchId}) fell back to local cache:`, err);
+    attachActiveWorkspaceStreams();
+    return false;
   }
 }
 
@@ -1055,6 +1120,9 @@ async function handleRegister(form) {
     // 2. Detach previous workspace streams & switch to the new isolated workspace
     if (typeof setActiveWorkspaceId === 'function') {
       setActiveWorkspaceId(newWorkspaceId);
+    }
+    if (typeof setActiveBranchId === 'function') {
+      setActiveBranchId(branchId, newWorkspaceId);
     }
     state = freshState;
     activeBranch = state.branches[0];
@@ -1182,12 +1250,19 @@ async function handleLogin(form) {
   posDraftOrderId = '';
   tableQuery = '';
   selectedProductIds.clear();
+  const prevBranchId = activeBranch?.id;
   if (!activateAssignedBranch(user)) {
     state.currentUserId = '';
     renderAuthGate('This account has no active assigned branch. Ask an administrator to assign it to an active branch.');
     return;
   }
   const activeWs = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : targetWsId;
+  if (activeBranch?.id && activeBranch.id !== prevBranchId) {
+    if (typeof setActiveBranchId === 'function') {
+      setActiveBranchId(activeBranch.id, activeWs);
+    }
+    hydrateActiveBranchFromCloud(activeBranch.id);
+  }
   safeSessionSet(AUTH_SESSION_KEY, JSON.stringify({
     id: user.id,
     passwordHash: user.passwordHash,
@@ -1553,9 +1628,11 @@ function activateAssignedBranch(user = currentWorkspaceUser()) {
     activeBranch = branch;
     const saved = state.branchData?.[branch.id] || {};
     branchCollections.forEach(key => {
-      if (key === 'products') return; // Products are managed globally via Firestore 'products' collection
       state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : []));
     });
+    if (typeof setActiveBranchId === 'function') {
+      setActiveBranchId(branch.id);
+    }
   }
   state.activeBranchId = branch.id;
   state.branch = branch.name;
@@ -6456,13 +6533,14 @@ function handleRemoteCloudSync(remoteFields, deviceName, changedModules = []) {
 
   const updated = { ...state };
   for (const [key, value] of Object.entries(remoteFields)) {
-    if (key === 'products' || key === 'currentUserId') continue;
+    if (key === 'products' || key === 'currentUserId' || key === 'branch' || key === 'activeBranchId' || key === 'branchData') continue;
     updated[key] = value;
   }
 
   const sanitized = sanitizeState(updated, getActiveWorkspaceTemplate(updated.companyName));
-  sanitized.products = curProducts; // Products stay synchronized via the dedicated 'products' collection
+  sanitized.products = curProducts; // Products stay synchronized via the active branch's dedicated 'products' collection
   sanitized.currentUserId = curId;
+  sanitized.branchData = state.branchData || {};
 
   // Keep this device on its active branch if it still exists
   if (curBranchId && (sanitized.branches || []).some(b => b.id === curBranchId)) {
@@ -6476,6 +6554,7 @@ function handleRemoteCloudSync(remoteFields, deviceName, changedModules = []) {
   }
 
   state = sanitized;
+  snapshotCurrentBranch();
   applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
   persistState(state);
   refreshBranchSwitcher();
@@ -7066,15 +7145,33 @@ function switchBranch(id) {
   const branch = state.branches.find(b => b.id === id && b.status !== 'Inactive'); if (!branch) return;
   if (!accessibleBranches().some(item => item.id === branch.id)) { toast('You can only open your assigned branch workspace'); return; }
   if (branch.id === activeBranch.id) return;
-  snapshotCurrentBranch(); activeBranch = branch;
+
+  // 1. Save outgoing branch snapshot locally (including its products for instant offline return)
+  snapshotCurrentBranch();
+  activeBranch = branch;
+
+  // 2. Load target branch's isolated local cache (including its own products — zero cross-branch bleed!)
   const saved = state.branchData?.[id] || {};
   branchCollections.forEach(key => {
-    if (key === 'products') return; // Products are managed globally via Firestore 'products' collection
     state[key] = structuredClone(saved[key] !== undefined ? saved[key] : (key === 'stocktakeDraft' ? null : []));
   });
-  state.activeBranchId = branch.id; state.branch = branch.name; saveState();
+  state.activeBranchId = branch.id;
+  state.branch = branch.name;
+  posCart = [];
+  posDraftOrderId = '';
+  selectedProductIds.clear();
+
+  // 3. Re-scope cloud sync & product stream to the target branch BEFORE saving locally
+  if (typeof setActiveBranchId === 'function') {
+    setActiveBranchId(branch.id);
+  }
+  persistState(state);
+
   if (!canViewPage(page)) page = 'dashboard';
   pageHistory.length = 0; history.pushState({ erpPage: page }, '', `#${page}`); render(); toast(`Switched to ${branch.name}`);
+
+  // 4. Hydrate target branch's authoritative cloud data & attach isolated real-time streams
+  hydrateActiveBranchFromCloud(branch.id);
 }
 
 async function handleDialogSubmit(form) {
@@ -7846,7 +7943,9 @@ async function handleDialogSubmit(form) {
   }
   if (kind === 'new-branch') {
     const name = val('branch-name'); if (!name) { toast('Enter a branch name'); return; }
-    const branch = { id: idFor('BR', state.branches), name, status: 'Active' }; state.branches.push(branch); state.branchData[branch.id] = Object.fromEntries(branchCollections.map(k => [k, []]));
+    const branch = { id: idFor('BR', state.branches), name, status: 'Active' };
+    state.branches.push(branch);
+    state.branchData[branch.id] = Object.fromEntries(branchCollections.map(k => [k, k === 'stocktakeDraft' ? null : []]));
     saveState(); document.getElementById('app-modal').close(); render(); toast('Branch added'); return;
   }
   if (kind === 'save-expense') {
@@ -8988,38 +9087,19 @@ function handleAction(button) {
     }
     case 'open-cloud-sync-dialog': openCloudSyncDialog(); break;
     case 'force-cloud-sync': {
-      toast('Refreshing entire ERP from cloud database...');
+      toast('Refreshing active branch ERP from cloud database...');
       (async () => {
         try {
-          if (typeof window.TideFirebase?.initFirebase === 'function') {
-            await window.TideFirebase.initFirebase();
+          const ok = await hydrateActiveBranchFromCloud(activeBranch?.id || 'BR-MAIN');
+          if (ok) {
+            refreshBranchSwitcher();
+            refreshNotificationIndicator();
+            updateConnection();
+            render();
+            toast(`✓ ${activeBranch?.name || 'Branch'} synced (${state.products.length} products, ${state.customers.length} customers, ${state.sales.length} sales)`);
+          } else {
+            toast('Could not reach cloud — using local offline cache');
           }
-          const wsTemplate = getActiveWorkspaceTemplate();
-          const [cloudModRes, cloudProds] = await Promise.all([
-            typeof pullFullCloudState === 'function' ? pullFullCloudState(state, wsTemplate) : Promise.resolve(null),
-            typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
-          ]);
-
-          if (cloudModRes?.hydrated && cloudModRes.state) {
-            const curId = state.currentUserId;
-            state = cloudModRes.state;
-            state.currentUserId = curId;
-            activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || activeBranch;
-            state.activeBranchId = activeBranch.id;
-            state.branch = activeBranch.name;
-          }
-          if (Array.isArray(cloudProds)) {
-            state.products = cloudProds;
-          }
-          persistState(state);
-          if (typeof initCloudSync === 'function') {
-            initCloudSync('tideerp_global_workspace', handleRemoteCloudSync);
-          }
-          refreshBranchSwitcher();
-          refreshNotificationIndicator();
-          updateConnection();
-          render();
-          toast(`✓ Entire ERP synced (${state.products.length} products, ${state.customers.length} customers, ${state.sales.length} sales)`);
         } catch (err) {
           console.warn('Manual full ERP sync failed:', err);
           toast('Could not reach cloud — using local offline cache');
@@ -10089,9 +10169,16 @@ async function initApp() {
   state.currentUserId = '';
 
   const normalizeBootState = () => {
-    activeBranch = state.branches.find(b => b.id === state.activeBranchId) || state.branches[0] || { id: 'BR-MAIN', name: 'Main branch' };
+    const preferredBranchId = (typeof getActiveBranchId === 'function' ? getActiveBranchId(bootWorkspaceId) : '') || state.activeBranchId;
+    activeBranch = state.branches.find(b => b.id === preferredBranchId && b.status !== 'Inactive')
+      || state.branches.find(b => b.id === state.activeBranchId && b.status !== 'Inactive')
+      || state.branches[0]
+      || { id: 'BR-MAIN', name: 'Main branch' };
     state.activeBranchId = activeBranch.id;
     state.branch = activeBranch.name;
+    if (typeof setActiveBranchId === 'function') {
+      setActiveBranchId(activeBranch.id, bootWorkspaceId);
+    }
     state.users.forEach(user => {
       if (!user.branchId) user.branchId = activeBranch.id;
       if (user.isBootstrap && !user.role) {
@@ -10171,35 +10258,39 @@ async function initApp() {
 
   (async () => {
     try {
+      const bootBranchId = activeBranch?.id || 'BR-MAIN';
       if (typeof window.TideFirebase?.initFirebase === 'function') {
         await window.TideFirebase.initFirebase();
         window.TideFirebase.setWorkspace?.(bootWorkspaceId);
+        window.TideFirebase.setBranch?.(bootBranchId);
       }
-      // Abort if user already signed into / registered a different company
-      if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId) return;
+      // Abort if user already signed into / registered a different company or switched branch
+      if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId || activeBranch?.id !== bootBranchId) return;
 
       const [modResult, cloudProducts] = await Promise.all([
         typeof hydrateFromCloud === 'function' ? hydrateFromCloud(state, bootTemplate, true) : Promise.resolve(null),
         typeof window.TideFirebase?.getProducts === 'function' ? window.TideFirebase.getProducts(true) : Promise.resolve(null)
       ]);
 
-      if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId) return;
+      if ((typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary') !== bootWorkspaceId || activeBranch?.id !== bootBranchId) return;
 
       let changed = false;
       if (modResult?.hydrated && modResult.state) {
         const curUserId = state.currentUserId;
         const curProds = state.products;
+        const prevBranchData = state.branchData || {};
         state = modResult.state;
         state.currentUserId = curUserId;
         state.products = curProds;
+        state.branchData = { ...prevBranchData, ...(state.branchData || {}) };
         changed = true;
       }
       if (Array.isArray(cloudProducts)) {
-        const isPrimary = bootWorkspaceId === 'ws_primary';
-        const seedKey = isPrimary ? 'tide_products_seeded_v2' : `tide_products_seeded_${bootWorkspaceId}`;
-        const hasSeeded = !isPrimary || Boolean(localStorage.getItem(seedKey));
+        const isPrimaryMainBranch = bootWorkspaceId === 'ws_primary' && bootBranchId === 'BR-MAIN';
+        const seedKey = isPrimaryMainBranch ? 'tide_products_seeded_v2' : `tide_products_seeded_${bootWorkspaceId}_${bootBranchId}`;
+        const hasSeeded = !isPrimaryMainBranch || Boolean(localStorage.getItem(seedKey));
         if (cloudProducts.length > 0) {
-          if (isPrimary) localStorage.setItem(seedKey, 'true');
+          if (isPrimaryMainBranch) localStorage.setItem(seedKey, 'true');
           state.products = cloudProducts;
           changed = true;
         } else if (hasSeeded && (state.products || []).length > 0) {
@@ -10210,7 +10301,8 @@ async function initApp() {
 
       if (changed) {
         normalizeBootState();
-  applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
+        snapshotCurrentBranch();
+        applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
         await persistState(state, bootWorkspaceId);
         if (state.currentUserId) {
           render();
