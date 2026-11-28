@@ -176,16 +176,11 @@ function sanitizeState(restored, initialState) {
   if (!clean.users.length) {
     clean.users = structuredClone(initialState.users);
   }
-  for (const u of clean.users) {
-    if (u.name === 'Amina Mwinyi' || u.name === 'Amina' || /amina/i.test(u.name || '')) {
-      u.name = 'Administrator';
-    }
-  }
   for (const p of clean.products) {
     if (typeof p.expiryDate !== 'string') p.expiryDate = '';
     if (typeof p.batchNumber !== 'string') p.batchNumber = '';
   }
-  if (!clean.companyName || clean.companyName === 'Kipepeo Traders' || /kipepeo/i.test(clean.companyName || '')) {
+  if (!clean.companyName || !String(clean.companyName).trim()) {
     clean.companyName = 'My Company';
   }
   if (!clean.currency) clean.currency = 'TZS';

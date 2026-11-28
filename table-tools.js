@@ -60,9 +60,7 @@
   function extractCellFullText(td) {
     if (!td) return '';
     const clone = td.cloneNode(true);
-    clone.querySelectorAll('details, button, input').forEach(el => {
-      if (el.tagName === 'DETAILS' && el.classList.contains('order-actions')) el.remove();
-    });
+    clone.querySelectorAll('details, button, input, select, textarea, .row-actions, .order-actions-menu').forEach(el => el.remove());
     return (clone.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
@@ -126,8 +124,21 @@
     return heading.replace(/\s+/g, ' ').trim();
   }
 
+  function getAppContext() {
+    if (typeof window.getTidePrintContext === 'function') {
+      try { return window.getTidePrintContext() || {}; } catch {}
+    }
+    return {
+      state: (typeof window.state === 'object' && window.state) ? window.state : {},
+      page: typeof window.page === 'string' ? window.page : '',
+      activeBranch: null,
+      currentUser: typeof window.currentWorkspaceUser === 'function' ? window.currentWorkspaceUser() : null
+    };
+  }
+
   function buildTableKey(table, indexOnPage) {
-    const pageId = (typeof window.page === 'string' && window.page) || (location.hash || '#home').replace(/^#/, '') || 'home';
+    const ctx = getAppContext();
+    const pageId = (typeof ctx.page === 'string' && ctx.page) || (location.hash || '#home').replace(/^#/, '') || 'home';
     const inModal = Boolean(table.closest('#app-modal'));
     const ths = Array.from(table.querySelectorAll('thead tr th'));
     const sig = ths.map(th => getHeaderCleanText(th).toLowerCase().replace(/[^a-z0-9]/g, '')).join('_').slice(0, 64);
@@ -589,14 +600,15 @@
     }
 
     const title = getTableTitle(table);
-    const st = (typeof window.state === 'object' && window.state) ? window.state : {};
+    const ctx = getAppContext();
+    const st = (ctx.state && typeof ctx.state === 'object') ? ctx.state : {};
     const companyName = st.companyName || 'My Company';
-    const branchName = st.branch || 'Main branch';
+    const branchName = ctx.activeBranch?.name || st.branch || 'Main branch';
     const companyMeta = [st.companyAddress, st.companyPhone, st.companyEmail].filter(Boolean).join(' · ');
-    const companyLogo = st.companyLogo || '';
-    const primaryColor = st.themeColors?.primary || '#0a1e36';
-    const secondaryColor = st.themeColors?.secondary || '#ff6a00';
-    const currentUser = (typeof window.currentWorkspaceUser === 'function' ? window.currentWorkspaceUser()?.name : '') || 'Administrator';
+    const companyLogo = (typeof st.companyLogo === 'string' && /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(st.companyLogo)) ? st.companyLogo : '';
+    const primaryColor = /^#[0-9a-fA-F]{6}$/.test(st.themeColors?.primary || '') ? st.themeColors.primary : '#0a1e36';
+    const secondaryColor = /^#[0-9a-fA-F]{6}$/.test(st.themeColors?.secondary || '') ? st.themeColors.secondary : '#ff6a00';
+    const currentUser = ctx.currentUser?.name || (typeof window.currentWorkspaceUser === 'function' ? window.currentWorkspaceUser()?.name : '') || 'Administrator';
     const printedAt = new Intl.DateTimeFormat('en-TZ', {
       day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
       timeZone: 'Africa/Dar_es_Salaam'

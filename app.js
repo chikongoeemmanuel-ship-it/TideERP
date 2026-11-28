@@ -126,6 +126,7 @@ let reportSearchQuery = '';
 let reportPaymentDirectionFilter = '';
 let reportPaymentMethodFilter = '';
 let inventoryMovementTypeFilter = '';
+let inventoryFilter = '';
 let tableQuery = '';
 let selectedProductIds = new Set();
 let inventoryExpiryTab = 'attention';
@@ -1107,7 +1108,6 @@ async function ensureAdministratorLogin() {
   if (!admin) return false;
   if (!admin.username) admin.username = ADMIN_LOGIN_USERNAME;
   if (!admin.email) admin.email = ADMIN_LOGIN_EMAIL;
-  if (admin.name === 'Amina Mwinyi' || admin.name === 'Amina' || /amina/i.test(admin.name || '')) admin.name = 'Administrator';
   if (!admin.initialAdminLoginSeeded || !admin.passwordHash || !admin.passwordSalt) {
     await setUserPassword(admin, ADMIN_INITIAL_PASSWORD);
     admin.initialAdminLoginSeeded = true;
@@ -4287,14 +4287,14 @@ function renderProductManagement() {
         <div class="toolbar-left">
           <label class="search-box"><input id="table-search" placeholder="Search product name, SKU, category, batch…" value="${esc(tableQuery)}"></label>
           <select class="select-control" id="inventory-filter">
-            <option value="">All products</option>
-            <option value="low">Low stock</option>
-            <option value="healthy">In stock</option>
-            <option value="draft">Drafts</option>
-            <option value="active">Active</option>
-            <option value="expired">Expired (${expiredProducts.length})</option>
-            <option value="expiring-soon">Expiring in ≤ 30 days (${expiring30Products.length})</option>
-            <option value="has-expiry">All with expiry dates (${allWithExpiry.length})</option>
+            <option value="" ${inventoryFilter === '' ? 'selected' : ''}>All products</option>
+            <option value="low" ${inventoryFilter === 'low' ? 'selected' : ''}>Low stock</option>
+            <option value="healthy" ${inventoryFilter === 'healthy' ? 'selected' : ''}>In stock</option>
+            <option value="draft" ${inventoryFilter === 'draft' ? 'selected' : ''}>Drafts</option>
+            <option value="active" ${inventoryFilter === 'active' ? 'selected' : ''}>Active</option>
+            <option value="expired" ${inventoryFilter === 'expired' ? 'selected' : ''}>Expired (${expiredProducts.length})</option>
+            <option value="expiring-soon" ${inventoryFilter === 'expiring-soon' ? 'selected' : ''}>Expiring in ≤ 30 days (${expiring30Products.length})</option>
+            <option value="has-expiry" ${inventoryFilter === 'has-expiry' ? 'selected' : ''}>All with expiry dates (${allWithExpiry.length})</option>
           </select>
         </div>
         <span class="muted" id="inventory-result-count" style="font-size:11px">${rows.length} of ${state.products.length} products</span>
@@ -4504,7 +4504,7 @@ function renderInventory() {
 
 function inventoryRowsFiltered() {
   const term = tableQuery.toLowerCase();
-  const filter = document.getElementById('inventory-filter')?.value || '';
+  const filter = inventoryFilter || '';
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -4526,7 +4526,7 @@ function inventoryRowsFiltered() {
       const exp = new Date(p.expiryDate);
       exp.setHours(0, 0, 0, 0);
       const diff = Math.round((exp - today) / (1000 * 60 * 60 * 24));
-      return diff <= 30;
+      return diff >= 0 && diff <= 30;
     }
     if (filter === 'has-expiry') {
       return Boolean(p.expiryDate);
@@ -5355,6 +5355,9 @@ function viewStocktakeSession(sessionId) {
   if (modal && form) {
     form.innerHTML = modalContent;
     delete form.dataset.dialogKind;
+    if (typeof window.TideTableTools?.enhanceAll === 'function') {
+      window.TideTableTools.enhanceAll(form);
+    }
     modal.showModal();
   }
 }
@@ -5559,6 +5562,9 @@ function viewProductSalesHistory(productId) {
   if (modal && form) {
     form.innerHTML = modalContent;
     delete form.dataset.dialogKind;
+    if (typeof window.TideTableTools?.enhanceAll === 'function') {
+      window.TideTableTools.enhanceAll(form);
+    }
     modal.showModal();
   }
 }
@@ -5641,6 +5647,9 @@ function viewProductPurchaseHistory(productId) {
   if (modal && form) {
     form.innerHTML = modalContent;
     delete form.dataset.dialogKind;
+    if (typeof window.TideTableTools?.enhanceAll === 'function') {
+      window.TideTableTools.enhanceAll(form);
+    }
     modal.showModal();
   }
 }
@@ -6279,6 +6288,60 @@ function renderSettings() {
   `;
 }
 
+function processCompanyLogoFile(file) {
+  if (!file) return;
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+  if (!allowedTypes.includes(file.type)) {
+    toast('Please choose a PNG, JPEG, or WebP logo image');
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    toast('Logo file must be 5 MB or smaller');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const rawDataUrl = String(reader.result || '');
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxDim = 240;
+        let width = img.naturalWidth || img.width || maxDim;
+        let height = img.naturalHeight || img.height || maxDim;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.max(1, Math.round(width * ratio));
+          height = Math.max(1, Math.round(height * ratio));
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const outType = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+        let compressed = outType === 'image/jpeg'
+          ? canvas.toDataURL('image/jpeg', 0.82)
+          : canvas.toDataURL('image/png');
+        if (compressed.length > 120000) {
+          compressed = canvas.toDataURL('image/jpeg', 0.78);
+        }
+        pendingCompanyLogo = compressed;
+      } catch {
+        pendingCompanyLogo = rawDataUrl;
+      }
+      const preview = document.getElementById('company-logo-preview');
+      if (preview) {
+        preview.innerHTML = `<img src="${esc(pendingCompanyLogo)}" alt="Logo preview">`;
+      }
+      toast('Logo uploaded — click "Save settings" to apply');
+    };
+    img.onerror = () => toast('Could not read the selected image file');
+    img.src = rawDataUrl;
+  };
+  reader.onerror = () => toast('Could not read the selected image file');
+  reader.readAsDataURL(file);
+}
+
 function saveCompanySettings(form) {
   const name = form.querySelector('[name="company-name"]').value.trim();
   if (!name) { toast('Enter a business name'); return; }
@@ -6286,6 +6349,7 @@ function saveCompanySettings(form) {
   state.companyPhone = form.querySelector('[name="company-phone"]')?.value.trim() || '';
   state.companyEmail = form.querySelector('[name="company-email"]')?.value.trim() || '';
   state.companyAddress = form.querySelector('[name="company-address"]')?.value.trim() || '';
+  state.companyLogo = pendingCompanyLogo || '';
   const paymentDetailsField = form.querySelector('[name="company-payment-details"]');
   if (isWorkspaceAdministrator() && paymentDetailsField) state.companyPaymentDetails = paymentDetailsField.value.trim();
   state.vatEnabled = form.querySelector('[name="setting-vat-enabled"]')?.checked ?? true;
@@ -6492,12 +6556,13 @@ function openPartyOrderHistory(type, name) {
 }
 
 function openPaymentForm(partyType = '', partyName = '') {
-  const names = (partyType === 'Supplier' ? state.suppliers : state.customers).map(p => p.name);
-  const partyOptions = names.length ? names : ['Walk-in customer'];
+  const resolvedType = partyType === 'Supplier' ? 'Supplier' : 'Customer';
+  const names = (resolvedType === 'Supplier' ? state.suppliers : state.customers).map(p => p.name);
+  const partyOptions = names.length ? names : [resolvedType === 'Supplier' ? 'No suppliers yet' : 'Walk-in customer'];
   const accountIsFixed = Boolean(partyType && partyName);
   const accountFields = accountIsFixed
     ? `<input type="hidden" name="payment-party-type" value="${esc(partyType)}"><input type="hidden" name="payment-party" value="${esc(partyName)}"><div class="field full"><label>Payment account</label><div class="accounting-fixed-account">${esc(partyType)} · ${esc(partyName)}</div></div>`
-    : `${selectField('payment-party-type', 'Account type', ['Customer', 'Supplier'], partyType || 'Customer')}${selectField('payment-party', 'Account', partyOptions, partyName || partyOptions[0])}`;
+    : `${selectField('payment-party-type', 'Account type', ['Customer', 'Supplier'], resolvedType)}${selectField('payment-party', 'Account', partyOptions, partyName || partyOptions[0])}`;
   const content = `${accountFields}<div class="form-grid">${inputField('payment-amount', 'Amount (TZS)', '', 'number', true)}${selectField('payment-method', 'Method', ['Cash', 'M-Pesa', 'Bank transfer', 'Card'])}${inputField('payment-date', 'Date', '', 'date', true, today())}${inputField('payment-memo', 'Note', 'Optional reference')}</div>${renderAttachmentUploader([], 'record-payment')}`;
   openDialog('record-payment', 'Record payment', 'Record money received from a customer or paid to a supplier.', content);
 }
@@ -8460,7 +8525,7 @@ function handleAction(button) {
       ]);
       toast('Product template downloaded with pricing and expiration sample rows');
       break;
-    case 'remove-company-logo': state.companyLogo = ''; saveState(); render(); toast('Company logo removed'); break;
+    case 'remove-company-logo': state.companyLogo = ''; pendingCompanyLogo = ''; saveState(); refreshCompanyLogo(); render(); toast('Company logo removed'); break;
     case 'product-stock-history': {
       const product = state.products.find(p => p.id === id); if (!product) break;
       const rows = state.stockMovements.filter(m => m.productId === id).map(m => `<tr><td>${dateLabel(m.date)}</td><td>${esc(m.reason)}</td><td>${m.before}</td><td>${m.after}</td><td>${m.delta > 0 ? '+' : ''}${m.delta}</td></tr>`).join('') || emptyRow(5, 'No stock movements recorded');
@@ -9698,7 +9763,21 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'report-payment-direction') { reportPaymentDirectionFilter = event.target.value; render(); }
   if (event.target.id === 'report-payment-method') { reportPaymentMethodFilter = event.target.value; render(); }
+  if (event.target.id === 'inventory-filter') { inventoryFilter = event.target.value; render(); }
   if (event.target.id === 'inventory-movement-filter') { inventoryMovementTypeFilter = event.target.value; render(); }
+  if (event.target.id === 'company-logo-file' && event.target.files?.[0]) {
+    processCompanyLogoFile(event.target.files[0]);
+    event.target.value = '';
+  }
+  if (event.target.id === 'payment-party-type') {
+    const partyType = event.target.value;
+    const partySelect = document.getElementById('payment-party');
+    if (partySelect) {
+      const names = (partyType === 'Supplier' ? state.suppliers : state.customers).map(p => p.name);
+      const opts = names.length ? names : [partyType === 'Supplier' ? 'No suppliers yet' : 'Walk-in customer'];
+      partySelect.innerHTML = opts.map(opt => `<option value="${esc(opt)}">${esc(opt)}</option>`).join('');
+    }
+  }
   if (event.target.matches('[data-permission-module]')) {
     const group = event.target.closest('fieldset');
     group?.querySelectorAll('input[name="user-permission"]').forEach(input => { input.checked = event.target.checked; });
@@ -10021,11 +10100,17 @@ async function initApp() {
         user.permissions = { '*': ['*'] };
       }
     });
-    if (!state.companyName || state.companyName === 'Kipepeo Traders' || /kipepeo/i.test(state.companyName)) {
+    if (!state.companyName || !String(state.companyName).trim()) {
       state.companyName = 'My Company';
     }
   };
   normalizeBootState();
+  window.getTidePrintContext = () => ({
+    state,
+    page,
+    activeBranch,
+    currentUser: typeof currentWorkspaceUser === 'function' ? currentWorkspaceUser() : null
+  });
   applyBrandColors(state.themeColors?.primary, state.themeColors?.secondary, true);
 
   const todayLabel = document.getElementById('today-label');
