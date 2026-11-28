@@ -2374,7 +2374,7 @@ function allocateCustomerAccountPayment(entry) {
     const invoice = state.sales.find(sale => sale.id === order.invoiceId);
     if (invoice) {
       invoice.paid = order.paid;
-      invoice.status = orderPaymentStatus(order);
+      invoice.status = orderPaymentStatus(order) === 'Fully paid' ? 'Paid' : 'Pending';
     }
   }
   entry.allocations = allocations;
@@ -3093,7 +3093,7 @@ function renderDashboard() {
   const metrics = [];
   if (canSales || canReports) {
     metrics.push(metric('Total sales', money(monthSales), '↗', `${dashboardRange} · across all channels`));
-    metrics.push(metric('Orders', String(state.orders.length + state.sales.length), '▤', 'Orders & POS transactions'));
+    metrics.push(metric('Orders', String(salesOrderRows().length), '▤', 'Orders & POS transactions'));
   }
   if (canCustomers || canAccounting) {
     metrics.push(metric('To collect', money(receivable), '◷', `${state.customers.filter(c => c.balance > 0).length} customers · outstanding`, 'down'));
@@ -3267,7 +3267,10 @@ function savePOSDraft() {
   if (!posCart.length) return;
   const total = posCart.reduce((sum, line) => sum + line.qty * line.price, 0);
   const draftId = posDraftOrderId || idFor('POS-DRAFT', state.orders);
-  const items = posCart.map(l => ({ productId: l.id, product: l.name, qty: l.qty, unitPrice: l.price }));
+  const items = posCart.map(l => {
+    const prod = state.products.find(p => p.id === l.id);
+    return { productId: l.id, product: l.name, qty: l.qty, unitPrice: l.price, unitCost: Number(prod?.cost) || 0 };
+  });
   const existing = state.orders.find(o => o.id === draftId);
   const order = {
     ...(existing || {}),
@@ -3339,7 +3342,10 @@ function completePOS() {
     }
   }
 
-  const items = posCart.map(l => ({ productId: l.id, product: l.name, qty: l.qty, unitPrice: l.price }));
+  const items = posCart.map(l => {
+    const prod = state.products.find(p => p.id === l.id);
+    return { productId: l.id, product: l.name, qty: l.qty, unitPrice: l.price, unitCost: Number(prod?.cost) || 0 };
+  });
   const sale = {
     id: saleId, orderId: saleId, customer, date: today(),
     total, method, status: method === 'Credit' ? 'Pending' : 'Paid',
@@ -3438,7 +3444,7 @@ function salesOrderRows() {
     id: s.id, source: 'POS', customer: s.customer, date: s.date, due: s.date,
     total: s.total, items: s.items || [], status: 'Final',
     finalAt: s.date ? new Date(`${s.date}T12:00:00`).toISOString() : new Date().toISOString(),
-    paid: s.status === 'Paid' ? s.total : 0, posMethod: s.method, paymentMethod: s.method, invoiceId: s.id,
+    paid: (s.status === 'Paid' || s.status === 'Fully paid') ? s.total : (Number(s.paid) || 0), posMethod: s.method, paymentMethod: s.method, invoiceId: s.id,
     discrepancies: s.discrepancies || []
   }));
   return [...state.orders, ...legacyPOS];
@@ -3666,6 +3672,9 @@ function finalizeSalesOrder(order) {
     for (const line of order.items || []) {
       const product = state.products.find(item => item.id === line.productId);
       if (!product) continue;
+      if (line.unitCost === undefined || !Number.isFinite(Number(line.unitCost))) {
+        line.unitCost = Number(product.cost) || 0;
+      }
       const before = product.stock;
       product.stock -= Number(line.qty) || 0;
       state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId: product.id, product: product.name, date: order.date || today(), before, after: product.stock, delta: product.stock - before, reason: `Sales order ${order.id}`, user: currentWorkspaceUser().name });
@@ -5288,26 +5297,38 @@ function reportPeriodData() {
   const range = reportDateRange();
   const sales = state.sales.filter(sale => sale.date >= range.start && sale.date <= range.end);
   const purchases = state.purchases.filter(purchase => purchase.date >= range.start && purchase.date <= range.end);
+  const expenses = (state.expenses || []).filter(ex => ex && ex.date >= range.start && ex.date <= range.end);
   const salesTotal = sales.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
   const purchaseTotal = purchases.reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0);
+  const expensesTotal = expenses.reduce((sum, ex) => sum + (Number(ex.amount) || 0), 0);
+  const expensesPaid = (state.expenses || [])
+    .filter(ex => ex && ex.paid && (ex.paymentDate || ex.date) >= range.start && (ex.paymentDate || ex.date) <= range.end)
+    .reduce((sum, ex) => sum + (Number(ex.amount) || 0), 0);
   const paymentSources = new Set(['account-payment', 'order-payment', 'sales-payment', 'purchase-payment']);
   const periodPayments = state.entries.filter(entry => paymentSources.has(entry.sourceType) && entry.date >= range.start && entry.date <= range.end);
   const customerReceipts = periodPayments.filter(entry => entry.partyType === 'Customer' && entry.type === 'Credit');
   const supplierPayments = periodPayments.filter(entry => entry.partyType === 'Supplier' && entry.type === 'Debit');
-  const collected = customerReceipts.length ? customerReceipts.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0) : sales.reduce((sum, sale) => sum + (Number.isFinite(Number(sale.paid)) ? Number(sale.paid) : (sale.status === 'Paid' ? Number(sale.total) || 0 : 0)), 0);
-  const supplierPaid = supplierPayments.length ? supplierPayments.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0) : purchases.reduce((sum, purchase) => sum + (Number(purchase.paid) || 0), 0);
-  const hasTransactionHistory = state.sales.length > 0 || state.purchases.length > 0;
-  const netCollected = hasTransactionHistory ? collected - supplierPaid : 0;
+  const collected = customerReceipts.length
+    ? customerReceipts.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)
+    : sales.reduce((sum, sale) => sum + (Number.isFinite(Number(sale.paid)) ? Number(sale.paid) : ((sale.status === 'Paid' || sale.status === 'Fully paid') ? Number(sale.total) || 0 : 0)), 0);
+  const supplierPaid = supplierPayments.length
+    ? supplierPayments.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)
+    : purchases.reduce((sum, purchase) => sum + (Number(purchase.paid) || 0), 0);
+  const hasTransactionHistory = state.sales.length > 0 || state.purchases.length > 0 || (state.expenses || []).length > 0;
+  const netCollected = hasTransactionHistory ? collected - supplierPaid - expensesPaid : 0;
   let cogsTotal = 0;
   for (const sale of sales) {
     for (const item of sale.items || []) {
       const prod = state.products.find(p => p.id === item.productId);
-      const unitCost = Number(prod?.cost) || 0;
+      const unitCost = (item.unitCost !== undefined && Number.isFinite(Number(item.unitCost)))
+        ? Number(item.unitCost)
+        : (Number(prod?.cost) || 0);
       cogsTotal += (Number(item.qty) || 0) * unitCost;
     }
   }
   const grossProfit = salesTotal - cogsTotal;
-  return { ...range, sales, purchases, salesTotal, purchaseTotal, collected, supplierPaid, netCollected, cogsTotal, grossProfit };
+  const netProfit = grossProfit - expensesTotal;
+  return { ...range, sales, purchases, expenses, salesTotal, purchaseTotal, expensesTotal, expensesPaid, collected, supplierPaid, netCollected, cogsTotal, grossProfit, netProfit };
 }
 
 function reportBuckets(data) {
@@ -5747,10 +5768,13 @@ function extractPaymentMethodFromMemo(memo = '') {
 function collectAllPaymentRecords() {
   const records = [];
   const entries = Array.isArray(state.entries) ? state.entries : [];
+  // Exclude non-cash credit/debit adjustments (returns & balance reconciliations) from cash flow totals
+  const nonCashSources = new Set(['sales-return', 'purchase-return', 'reconciliation']);
 
-  // From ledger entries
+  // From ledger entries (real cash/mobile/bank payments only)
   for (const e of entries) {
-    if (e.sourceType === 'order-payment' || (e.partyType === 'Customer' && e.type === 'Credit' && Number(e.amount) > 0)) {
+    if (nonCashSources.has(e.sourceType)) continue;
+    if (e.sourceType === 'order-payment' || e.sourceType === 'sales-payment' || (e.partyType === 'Customer' && e.type === 'Credit' && Number(e.amount) > 0)) {
       records.push({
         id: e.id,
         date: e.date,
@@ -5827,6 +5851,7 @@ function renderProductSalesReport() {
   const productStats = state.products.map(product => {
     let unitsSold = 0;
     let revenue = 0;
+    let cogs = 0;
     let orderCount = 0;
     for (const order of validOrders) {
       const items = order.items || [];
@@ -5835,13 +5860,16 @@ function renderProductSalesReport() {
         orderCount++;
         for (const line of matchLines) {
           const qty = Number(line.qty || 0);
-          const price = Number(line.unitPrice || product.price || 0);
+          const price = Number(line.unitPrice ?? product.price ?? 0);
+          const lineCost = (line.unitCost !== undefined && Number.isFinite(Number(line.unitCost)))
+            ? Number(line.unitCost)
+            : Number(product.cost || 0);
           unitsSold += qty;
           revenue += qty * price;
+          cogs += qty * lineCost;
         }
       }
     }
-    const cogs = unitsSold * Number(product.cost || 0);
     const grossProfit = revenue - cogs;
     const margin = revenue > 0 ? ((grossProfit / revenue) * 100).toFixed(1) : '0.0';
     const avgPrice = unitsSold > 0 ? Math.round(revenue / unitsSold) : product.price;
@@ -6041,7 +6069,7 @@ function renderPaymentReport() {
   return `
     <section class="summary-strip">
       <div class="summary-mini"><small>Total Inflows (Received from Customers)</small><strong style="color:#16a34a">${money(totalInflows)}</strong></div>
-      <div class="summary-mini"><small>Total Outflows (Paid to Suppliers)</small><strong style="color:#ef233c">${money(totalOutflows)}</strong></div>
+      <div class="summary-mini"><small>Total Outflows (Suppliers &amp; Expenses)</small><strong style="color:#ef233c">${money(totalOutflows)}</strong></div>
       <div class="summary-mini"><small>Net Cash Movement</small><strong style="color:${netCash >= 0 ? '#16a34a' : '#ef233c'}">${netCash < 0 ? '− ' : ''}${money(Math.abs(netCash))}</strong></div>
       <div class="summary-mini"><small>Total Transactions</small><strong>${records.length}</strong></div>
     </section>
@@ -6049,11 +6077,11 @@ function renderPaymentReport() {
     <section class="table-panel">
       <div class="toolbar">
         <div class="toolbar-left">
-          <label class="search-box"><input id="report-search" placeholder="Search customer, supplier, reference, memo…" value="${esc(reportSearchQuery)}"></label>
+          <label class="search-box"><input id="report-search" placeholder="Search customer, supplier, expense, reference, memo…" value="${esc(reportSearchQuery)}"></label>
           <select class="select-control" id="report-payment-direction">
             <option value="" ${!reportPaymentDirectionFilter ? 'selected' : ''}>All Payments (In &amp; Out)</option>
             <option value="inflow" ${reportPaymentDirectionFilter === 'inflow' ? 'selected' : ''}>↓ Received from Customers</option>
-            <option value="outflow" ${reportPaymentDirectionFilter === 'outflow' ? 'selected' : ''}>↑ Paid to Suppliers</option>
+            <option value="outflow" ${reportPaymentDirectionFilter === 'outflow' ? 'selected' : ''}>↑ Paid out (Suppliers &amp; Expenses)</option>
           </select>
           <select class="select-control" id="report-payment-method">
             <option value="" ${!reportPaymentMethodFilter ? 'selected' : ''}>All Methods</option>
@@ -6091,7 +6119,7 @@ function renderPaymentReport() {
                   </td>
                   <td>
                     <strong>${esc(r.party)}</strong>
-                    <br><small class="muted">${isInflow ? 'Customer (Received from)' : 'Supplier (Paid to)'}</small>
+                    <br><small class="muted">${isInflow ? 'Customer (Received from)' : r.partyType === 'Expense' ? 'Operating Expense (Paid out)' : 'Supplier (Paid to)'}</small>
                   </td>
                   <td>
                     <strong style="color:${isInflow ? '#16a34a' : '#ef233c'}">
@@ -6163,7 +6191,7 @@ function renderReports() {
   const data = reportPeriodData();
   const paymentGroups = new Map();
   data.sales.forEach(sale => { const method = sale.method || 'Other'; paymentGroups.set(method, (paymentGroups.get(method) || 0) + (Number(sale.total) || 0)); });
-  const revenueMix = [['Sales revenue', data.salesTotal], ['Purchase orders', data.purchaseTotal]];
+  const revenueMix = [['Sales revenue', data.salesTotal], ['Purchase orders', data.purchaseTotal], ['Operating expenses', data.expensesTotal]];
   const receivable = accountOutstandingTotal('Customer');
   const payable = accountOutstandingTotal('Supplier');
   const periodLabel = reportPeriod === 'weekly' ? 'Weekly' : reportPeriod === 'annual' ? 'Annual' : 'Monthly';
@@ -6172,10 +6200,10 @@ function renderReports() {
     ${heading('Financial Reports', 'Visual financial summaries with weekly, monthly, and annual reporting periods.', `<button class="button" data-action="export-financial-report">↓ Export ${periodLabel.toLowerCase()} report</button>`)}
     ${navHtml}
     <div class="report-period-toolbar"><div><span class="report-period-label">Report period</span><div class="report-period-tabs">${[['weekly', 'Weekly'], ['monthly', 'Monthly'], ['annual', 'Annual']].map(([key, label]) => `<button type="button" class="report-period-tab ${reportPeriod === key ? 'active' : ''}" data-action="set-report-period" data-period="${key}">${label}</button>`).join('')}</div></div><p>${esc(data.label)} · ${dateLabel(data.start)} – ${dateLabel(data.end)}</p></div>
-    <section class="metric-grid report-metrics">${metric('Sales revenue', money(data.salesTotal), '↗', `${periodLabel} · ${data.sales.length} transactions`)}${metric('Purchases', money(data.purchaseTotal), '▤', `${periodLabel} · ${data.purchases.length} orders`)}${metric('Net cash movement', `${data.netCollected < 0 ? '− ' : ''}${money(data.netCollected)}`, '⇄', `Collected less paid · ${periodLabel}`, data.netCollected < 0 ? 'down' : 'up')}${metric('Open receivables', money(receivable), '◷', 'All customer accounts')}</section>
+    <section class="metric-grid report-metrics">${metric('Sales revenue', money(data.salesTotal), '↗', `${periodLabel} · ${data.sales.length} transactions`)}${metric('Operating expenses', money(data.expensesTotal), '🧾', `${periodLabel} · ${data.expenses.length} recorded`)}${metric('Net profit', `${data.netProfit < 0 ? '− ' : ''}${money(Math.abs(data.netProfit))}`, '◈', `Gross profit less expenses · ${periodLabel}`, data.netProfit < 0 ? 'down' : 'up')}${metric('Net cash movement', `${data.netCollected < 0 ? '− ' : ''}${money(Math.abs(data.netCollected))}`, '⇄', `Collected less suppliers & expenses`, data.netCollected < 0 ? 'down' : 'up')}</section>
     <section class="panel financial-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Sales and purchases</h2><p class="panel-subtitle">${esc(periodLabel)} comparison by ${reportPeriod === 'weekly' ? 'day' : reportPeriod === 'annual' ? 'month' : 'week'}.</p></div><div class="report-chart-legend"><span><i style="background:#087f9d"></i>Sales</span><span><i style="background:#ff8c42"></i>Purchases</span></div></div>${renderFinancialBarChart(data)}</section>
-    <section class="report-pie-grid">${reportPieCard('Sales by payment method', `${periodLabel} sales value`, [...paymentGroups], 'Sales')}${reportPieCard('Revenue and purchases', `${periodLabel} transaction mix`, revenueMix, 'Total value')}</section>
-    <section class="table-panel financial-summary-table"><div class="table-heading"><div><h2>Financial summary</h2><p class="panel-subtitle">${esc(data.label)} and current account balances.</p></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Measure</th><th>Amount</th><th>Basis</th></tr></thead><tbody><tr><td><strong>Sales revenue</strong></td><td>${money(data.salesTotal)}</td><td>${periodLabel} transactions</td></tr><tr><td><strong>Cost of goods sold (COGS)</strong></td><td>${money(data.cogsTotal)}</td><td>${periodLabel} inventory cost</td></tr><tr><td><strong>Gross profit</strong></td><td>${money(data.grossProfit)}</td><td>Revenue less COGS</td></tr><tr><td><strong>Customer payments collected</strong></td><td>${money(data.collected)}</td><td>${periodLabel} receipts</td></tr><tr><td><strong>Purchases ordered</strong></td><td>${money(data.purchaseTotal)}</td><td>${periodLabel} purchase orders</td></tr><tr><td><strong>Supplier payments made</strong></td><td>${money(data.supplierPaid)}</td><td>${periodLabel} payments</td></tr><tr><td><strong>Supplier payables</strong></td><td>${money(payable)}</td><td>Current balance</td></tr></tbody></table></div></section>
+    <section class="report-pie-grid">${reportPieCard('Sales by payment method', `${periodLabel} sales value`, [...paymentGroups], 'Sales')}${reportPieCard('Revenue, purchases & expenses', `${periodLabel} transaction mix`, revenueMix, 'Total value')}</section>
+    <section class="table-panel financial-summary-table"><div class="table-heading"><div><h2>Financial summary</h2><p class="panel-subtitle">${esc(data.label)} and current account balances.</p></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Measure</th><th>Amount</th><th>Basis</th></tr></thead><tbody><tr><td><strong>Sales revenue</strong></td><td>${money(data.salesTotal)}</td><td>${periodLabel} transactions</td></tr><tr><td><strong>Cost of goods sold (COGS)</strong></td><td>${money(data.cogsTotal)}</td><td>${periodLabel} cost at sale</td></tr><tr><td><strong>Gross profit</strong></td><td>${money(data.grossProfit)}</td><td>Revenue less COGS</td></tr><tr><td><strong>Operating expenses</strong></td><td>${money(data.expensesTotal)}</td><td>${periodLabel} recorded expenses (${data.expenses.length})</td></tr><tr><td><strong>Net profit</strong></td><td><strong>${data.netProfit < 0 ? '− ' : ''}${money(Math.abs(data.netProfit))}</strong></td><td>Gross profit less operating expenses</td></tr><tr><td><strong>Customer payments collected</strong></td><td>${money(data.collected)}</td><td>${periodLabel} receipts</td></tr><tr><td><strong>Purchases ordered</strong></td><td>${money(data.purchaseTotal)}</td><td>${periodLabel} purchase orders</td></tr><tr><td><strong>Supplier payments made</strong></td><td>${money(data.supplierPaid)}</td><td>${periodLabel} supplier outflows</td></tr><tr><td><strong>Operating expenses paid</strong></td><td>${money(data.expensesPaid)}</td><td>${periodLabel} paid expense outflows</td></tr><tr><td><strong>Net cash movement</strong></td><td><strong>${data.netCollected < 0 ? '− ' : ''}${money(Math.abs(data.netCollected))}</strong></td><td>Receipts less supplier &amp; expense payouts</td></tr><tr><td><strong>Customer receivables</strong></td><td>${money(receivable)}</td><td>Current open balance</td></tr><tr><td><strong>Supplier payables</strong></td><td>${money(payable)}</td><td>Current open balance</td></tr></tbody></table></div></section>
     <div class="report-cards"><article class="report-card"><h3>Inventory Valuation</h3><p>Current on-hand stock valuation at cost.</p><button class="button" data-action="export-inventory">Export Inventory CSV</button></article><article class="report-card"><h3>General Activity Ledger</h3><p>Complete customer and supplier account transactions.</p><button class="button" data-action="export-ledger">Export Ledger CSV</button></article></div>
   `;
 }
@@ -6467,8 +6495,11 @@ function saveCompanySettings(form) {
 // Master Render Function
 function render() {
   if (!state.currentUserId) { renderAuthGate(authErrorMessage); return; }
-  ageFinalOrders();
-  reconcileCustomerAccountPayments();
+  const aged = ageFinalOrders();
+  const reconciled = reconcileCustomerAccountPayments();
+  if (aged || reconciled) {
+    saveState();
+  }
 
   const content = document.getElementById('page-content');
   const user = currentWorkspaceUser();
@@ -6985,9 +7016,36 @@ function openOrderPayment(id) {
   document.getElementById('modal-content').dataset.recordId = id;
 }
 
+function remainingReturnableOrderQty(order, productId) {
+  if (!order) return 0;
+  const orderedQty = (order.items || [])
+    .filter(l => l.productId === productId)
+    .reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+  const refs = new Set([order.id, order.invoiceId].filter(Boolean));
+  const alreadyReturned = (state.returns || [])
+    .filter(r => refs.has(r.saleId) && r.productId === productId)
+    .reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+  return Math.max(0, orderedQty - alreadyReturned);
+}
+
+function remainingReturnablePurchaseQty(purchase, productId) {
+  if (!purchase) return 0;
+  const receivedQty = (purchase.lines || [])
+    .filter(l => l.productId === productId)
+    .reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+  const alreadyReturned = (state.purchaseReturns || [])
+    .filter(r => (r.purchaseId === purchase.id || r.purchaseOrderId === purchase.id) && r.productId === productId)
+    .reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+  return Math.max(0, receivedQty - alreadyReturned);
+}
+
 function openOrderReturn(id) {
   const order = state.orders.find(o => o.id === id); if (!order) return;
-  const lines = (order.items || []).map(l => { const p = state.products.find(x => x.id === l.productId); return p ? `${p.id} · ${p.name}` : l.productId; });
+  const lines = (order.items || []).map(l => {
+    const p = state.products.find(x => x.id === l.productId);
+    const rem = remainingReturnableOrderQty(order, l.productId);
+    return `${l.productId} · ${p ? p.name : (l.product || l.productId)} (returnable: ${rem})`;
+  });
   openDialog('order-return', 'Manage return', `Record returned items for ${esc(order.id)}.`, `${selectField('return-product', 'Product', lines)}${inputField('return-qty', 'Quantity returned', '', 'number', true, 1)}${inputField('return-reason', 'Reason', 'Optional note')}<div class="field"><label><input type="checkbox" name="return-restock" checked> Restock returned items</label></div>`, 'Save return');
   document.getElementById('modal-content').dataset.recordId = id;
 }
@@ -7136,7 +7194,11 @@ function openOrderDiscrepancies(id) {
 
 function openPurchaseReturn(id) {
   const purchase = state.purchases.find(p => p.id === id); if (!purchase) return;
-  const lines = (purchase.lines || []).map(l => { const p = state.products.find(x => x.id === l.productId); return p ? `${p.id} · ${p.name}` : l.productId; });
+  const lines = (purchase.lines || []).map(l => {
+    const p = state.products.find(x => x.id === l.productId);
+    const rem = remainingReturnablePurchaseQty(purchase, l.productId);
+    return `${l.productId} · ${p ? p.name : (l.product || l.productId)} (returnable: ${rem})`;
+  });
   openDialog('purchase-return', 'Supplier return', `Record returned items to ${esc(purchase.supplier)} for ${esc(purchase.id)}.`, `${selectField('purchase-return-product', 'Product', lines)}${inputField('purchase-return-qty', 'Quantity returned', '', 'number', true, 1)}${inputField('purchase-return-reason', 'Reason', 'Optional note')}`, 'Record return');
   document.getElementById('modal-content').dataset.recordId = id;
 }
@@ -7379,7 +7441,20 @@ async function handleDialogSubmit(form) {
     const order = editing ? state.orders.find(item => item.id === form.dataset.recordId) : null;
     if (editing && !order) { toast('This sales order could not be found'); return; }
     const totals = transactionLineTotals('order');
-    const items = totals.lines.map(row => { const productId = row.dataset.productId, product = state.products.find(item => item.id === productId); return { productId, product: product?.name || productId, qty: Number(row.querySelector('[data-line-qty]').value) || 0, unitPrice: Number(row.querySelector('[data-line-price]').value) || 0 }; });
+    const existingCostMap = new Map();
+    if (editing && order?.items) {
+      for (const prev of order.items) {
+        if (prev.productId && prev.unitCost !== undefined && Number.isFinite(Number(prev.unitCost))) {
+          existingCostMap.set(prev.productId, Number(prev.unitCost));
+        }
+      }
+    }
+    const items = totals.lines.map(row => {
+      const productId = row.dataset.productId;
+      const product = state.products.find(item => item.id === productId);
+      const unitCost = existingCostMap.has(productId) ? existingCostMap.get(productId) : (Number(product?.cost) || 0);
+      return { productId, product: product?.name || productId, qty: Number(row.querySelector('[data-line-qty]').value) || 0, unitPrice: Number(row.querySelector('[data-line-price]').value) || 0, unitCost };
+    });
     if (!items.length || items.some(line => line.qty <= 0)) { toast('Search for and add at least one product with a valid quantity'); return; }
     if (totals.discount > totals.subtotal) { toast('Discount cannot be greater than the products subtotal'); return; }
     if (totals.paid > totals.total) { toast('Amount paid cannot be greater than the order total'); return; }
@@ -7430,7 +7505,7 @@ async function handleDialogSubmit(form) {
         const directPaid = Math.max(0, updated.paid - allocated);
         if (directPaid > 0) postAccountEntry({ partyType: 'Customer', party: customer, date, type: 'Credit', amount: directPaid, memo: `Payment · ${method} · ${updated.id}`, sourceType: pos ? 'sales-payment' : 'order-payment', sourceId: updated.id, relatedId: updated.invoiceId || updated.id });
       }
-      Object.assign(invoice, { customer, date, total: updated.total, paid: updated.paid, method, status: orderPaymentStatus(updated), items: updated.items, discount: updated.discount, additionalCharges: updated.additionalCharges });
+      Object.assign(invoice, { customer, date, total: updated.total, paid: updated.paid, method, status: orderPaymentStatus(updated) === 'Fully paid' ? 'Paid' : 'Pending', items: updated.items, discount: updated.discount, additionalCharges: updated.additionalCharges });
     } else if (!editing) state.orders.unshift(updated);
     recordActivity(editing ? 'Sale/order updated' : 'Sales order created', `${customer} · ${money(totals.total)}`, updated.id);
     saveState();
@@ -7701,7 +7776,10 @@ async function handleDialogSubmit(form) {
     const changedProducts = [];
     if (received) for (const productId of new Set([...oldQuantities.keys(), ...newQuantities.keys()])) { const product = state.products.find(item => item.id === productId), before = product.stock, delta = (newQuantities.get(productId) || 0) - (oldQuantities.get(productId) || 0); if (!delta) continue; product.stock += delta; changedProducts.push(product); state.stockMovements.unshift({ id: idFor('STK', state.stockMovements), productId, product: product.name, date, before, after: product.stock, delta, reason: `Edited received purchase ${updated.id}`, user: currentWorkspaceUser().name }); }
     removeAccountEntries(entry => ['purchase', 'purchase-payment'].includes(entry.sourceType) && entry.sourceId === updated.id);
-    postAccountEntry({ partyType: 'Supplier', party: supplier, date, type: 'Credit', amount: updated.total, memo: `Purchase order · ${updated.id}`, sourceType: 'purchase', sourceId: updated.id });
+    // Only post Supplier payable (Credit) once goods are actually Received (prevents phantom debt on Pending POs)
+    if (updated.status === 'Received') {
+      postAccountEntry({ partyType: 'Supplier', party: supplier, date, type: 'Credit', amount: updated.total, memo: `Purchase order · ${updated.id}`, sourceType: 'purchase', sourceId: updated.id });
+    }
     if (updated.paid > 0) postAccountEntry({ partyType: 'Supplier', party: supplier, date, type: 'Debit', amount: updated.paid, memo: `Payment · ${method} · ${updated.id}`, sourceType: 'purchase-payment', sourceId: updated.id });
     if (!editing) state.purchases.unshift(updated);
     recordActivity(editing ? 'Purchase order updated' : 'Purchase order created', `${supplier} · ${money(totals.total)}`, updated.id);
@@ -7727,10 +7805,15 @@ async function handleDialogSubmit(form) {
   if (kind === 'purchase-return') {
     const purchase = state.purchases.find(p => p.id === form.dataset.recordId);
     if (!purchase) { toast('Purchase order not found'); return; }
+    if (purchase.status !== 'Received') { toast('Only received purchase orders can have items returned'); return; }
     const productId = val('purchase-return-product').split(' · ')[0];
     const line = purchase.lines?.find(l => l.productId === productId);
     const qty = Math.max(1, Number(val('purchase-return-qty')) || 1);
-    if (!line || qty > line.qty) { toast('Return quantity must be within the received quantity'); return; }
+    const remaining = remainingReturnablePurchaseQty(purchase, productId);
+    if (!line || remaining <= 0 || qty > remaining) {
+      toast(remaining <= 0 ? 'All received units of this product have already been returned' : `Only ${remaining} unit(s) remain returnable on this purchase`);
+      return;
+    }
     const product = state.products.find(p => p.id === productId);
     if (product) {
       const before = product.stock;
@@ -7794,7 +7877,11 @@ async function handleDialogSubmit(form) {
   }
   if (kind === 'order-return') {
     const order = state.orders.find(o => o.id === form.dataset.recordId), productId = val('return-product').split(' · ')[0], line = order?.items?.find(i => i.productId === productId), qty = Math.max(1, Number(val('return-qty')) || 1);
-    if (!order || !line || qty > line.qty) { toast('Return quantity must be within the original sale quantity'); return; }
+    const remaining = remainingReturnableOrderQty(order, productId);
+    if (!order || !line || remaining <= 0 || qty > remaining) {
+      toast(remaining <= 0 ? 'All sold units of this product have already been returned' : `Only ${remaining} unit(s) remain returnable on this sale`);
+      return;
+    }
     const product = state.products.find(p => p.id === productId);
     const restock = Boolean(data.get('return-restock'));
     if (restock && product) {
@@ -9038,7 +9125,23 @@ function handleAction(button) {
       const receivables = accountOutstandingTotal('Customer');
       const payables = accountOutstandingTotal('Supplier');
       const methodTotals = new Map(); report.sales.forEach(sale => { const method = sale.method || 'Other'; methodTotals.set(method, (methodTotals.get(method) || 0) + (Number(sale.total) || 0)); });
-      downloadCSV(`tide-financial-${reportPeriod}-${today()}.csv`, [['Report', report.label], ['From', report.start], ['To', report.end], [], ['Measure', 'Amount TZS'], ['Sales revenue', report.salesTotal], ['Customer payments collected', report.collected], ['Purchases ordered', report.purchaseTotal], ['Supplier payments made', report.supplierPaid], ['Net cash movement', report.netCollected], ['Customer receivables', receivables], ['Supplier payables', payables], [], ['Sales by payment method', 'Amount TZS'], ...Array.from(methodTotals)]);
+      downloadCSV(`tide-financial-${reportPeriod}-${today()}.csv`, [
+        ['Report', report.label], ['From', report.start], ['To', report.end], [],
+        ['Measure', 'Amount TZS'],
+        ['Sales revenue', report.salesTotal],
+        ['Cost of goods sold (COGS)', report.cogsTotal],
+        ['Gross profit', report.grossProfit],
+        ['Operating expenses', report.expensesTotal],
+        ['Net profit', report.netProfit],
+        ['Customer payments collected', report.collected],
+        ['Purchases ordered', report.purchaseTotal],
+        ['Supplier payments made', report.supplierPaid],
+        ['Operating expenses paid', report.expensesPaid],
+        ['Net cash movement', report.netCollected],
+        ['Customer receivables', receivables],
+        ['Supplier payables', payables], [],
+        ['Sales by payment method', 'Amount TZS'], ...Array.from(methodTotals)
+      ]);
       break;
     }
     case 'export-inventory':
