@@ -745,7 +745,7 @@
   }
 
   function enhanceTable(table, indexOnPage) {
-    if (!table || !table.querySelector('thead tr th') || !table.querySelector('tbody')) return;
+    if (!table || table.dataset.noPowerBar === 'true' || !table.querySelector('thead tr th') || !table.querySelector('tbody')) return;
     const cols = inspectColumns(table);
     const dataCols = cols.filter(c => !c.isCheckbox && !c.isAction);
     if (dataCols.length < 2) return;

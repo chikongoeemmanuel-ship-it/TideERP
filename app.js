@@ -138,6 +138,8 @@ let searchRenderDebounce = null;
 let tableQuery = '';
 let selectedProductIds = new Set();
 let inventoryExpiryTab = 'attention';
+let priceListConfig = null;
+let priceListPickerQuery = '';
 let salesStatusFilter = '';
 let salesPaymentFilter = '';
 let salesDeliveryFilter = '';
@@ -384,6 +386,7 @@ function canPerformAction(action, element = null) {
   switch (action) {
     case 'lock-screen': case 'my-account': case 'new-notice': case 'test-notification-sound':
     case 'jump-to-expiry': case 'filter-expiry-tab': case 'set-report-tab':
+    case 'jump-to-pricelist':
     case 'apply-date-range': case 'clear-date-range': case 'clear-sales-filters':
     case 'force-cloud-sync': case 'force-reload-app':
     case 'products-page-prev': case 'products-page-next':
@@ -432,6 +435,11 @@ function canPerformAction(action, element = null) {
     case 'import-products': return require('inventory', 'bulk-import');
     case 'download-product-template': return require('inventory', 'export');
     case 'export-expiry-report': return require('inventory', 'export');
+    case 'pricelist-pick-samples': case 'pricelist-use-selected': case 'pricelist-select-all-filtered':
+    case 'pricelist-clear-samples': case 'pricelist-reset-overrides': case 'pricelist-toggle-item':
+      return require('inventory', 'view');
+    case 'pricelist-download-pdf': case 'pricelist-download-csv': case 'pricelist-download-html':
+      return require('inventory', 'export') || require('inventory', 'view');
     case 'write-off-expired': return require('inventory', 'adjust-stock');
     case 'clearance-discount': case 'edit-expiry': return require('inventory', 'edit-products');
     case 'view-purchase': return require('purchases', 'view');
@@ -4832,7 +4840,8 @@ function renderProductManagement() {
   const expiryAlertsCount = expiredProducts.length + expiring30Products.length;
 
   return `
-    ${heading('Product Management', 'Manage product catalog, pricing, cost, barcodes, batch expiration, and CSV bulk tools.', `
+    ${heading('Product Management', 'Manage product catalog, pricing, cost, barcodes, custom price lists, batch expiration, and CSV bulk tools.', `
+      <button class="button" data-action="jump-to-pricelist">🏷 Price list</button>
       <button class="button" data-action="export-inventory">↓ Export CSV</button>
       <button class="button" data-action="import-products">↑ Upload CSV</button>
       <button class="button" data-action="download-product-template">↓ CSV template</button>
@@ -4869,6 +4878,7 @@ function renderProductManagement() {
         <span class="muted" id="inventory-result-count" style="font-size:11px">${totalFiltered ? `Showing ${showStart}–${showEnd} of ${totalFiltered}` : '0'} (${state.products.length} total)</span>
         <div id="bulk-product-bar" class="bulk-action-bar" ${selectedCount > 0 ? 'style="display:flex"' : 'hidden style="display:none"'}>
           <span id="bulk-product-count" class="muted" style="font-size:11px">${selectedCount > 0 ? `${selectedCount} product${selectedCount !== 1 ? 's' : ''} selected` : ''}</span>
+          <button class="button small" data-action="pricelist-use-selected">🏷 Add to Price List</button>
           <button class="button small danger-action" data-action="bulk-delete-products">Delete selected</button>
         </div>
       </div>
@@ -4903,6 +4913,8 @@ function renderProductManagement() {
         </div>
       ` : ''}
     </section>
+
+    ${renderPriceListBuilderSection()}
 
     ${renderExpiryManagementSection()}
   `;
@@ -5216,6 +5228,647 @@ function inventoryRows(rows) {
       </tr>
     `;
   }).join('') || emptyRow(9, 'No matching products');
+}
+
+function priceListStorageKey() {
+  const wsId = typeof getActiveWorkspaceId === 'function' ? getActiveWorkspaceId() : 'ws_primary';
+  return `tide-pricelist-cfg_${wsId}`;
+}
+
+function getPriceListConfig() {
+  const wsKey = priceListStorageKey();
+  if (!priceListConfig || priceListConfig._wsKey !== wsKey) {
+    let saved = null;
+    try { saved = JSON.parse(safeStorageGet(wsKey) || 'null'); } catch {}
+    priceListConfig = {
+      _wsKey: wsKey,
+      title: saved?.title || 'Official Price List',
+      subtitle: saved?.subtitle || 'Prices are subject to change without prior notice. All prices in local currency.',
+      mode: ['all', 'in-stock', 'category', 'samples'].includes(saved?.mode) ? saved.mode : 'all',
+      category: saved?.category || '',
+      sort: ['name-asc', 'name-desc', 'cat-asc', 'price-asc', 'price-desc'].includes(saved?.sort) ? saved.sort : 'cat-asc',
+      adjustPct: Number.isFinite(Number(saved?.adjustPct)) ? Number(saved.adjustPct) : 0,
+      rounding: [0, 100, 500, 1000].includes(Number(saved?.rounding)) ? Number(saved.rounding) : 0,
+      sampleIds: Array.isArray(saved?.sampleIds) ? saved.sampleIds : [],
+      overrides: (saved?.overrides && typeof saved.overrides === 'object') ? saved.overrides : {},
+      columns: {
+        sku: saved?.columns?.sku !== false,
+        category: saved?.columns?.category !== false,
+        unit: saved?.columns?.unit !== false,
+        standardPrice: Boolean(saved?.columns?.standardPrice),
+        stock: Boolean(saved?.columns?.stock),
+        expiry: Boolean(saved?.columns?.expiry)
+      },
+      options: {
+        branding: saved?.options?.branding !== false,
+        contacts: saved?.options?.contacts !== false,
+        groupByCategory: saved?.options?.groupByCategory !== false
+      }
+    };
+  }
+  return priceListConfig;
+}
+
+function savePriceListConfig() {
+  const cfg = getPriceListConfig();
+  safeStorageSet(cfg._wsKey || priceListStorageKey(), JSON.stringify(cfg));
+}
+
+function computePriceListUnitPrice(product, cfg = getPriceListConfig()) {
+  if (!product) return 0;
+  const overrideVal = cfg.overrides?.[product.id];
+  if (overrideVal !== undefined && overrideVal !== '' && Number.isFinite(Number(overrideVal)) && Number(overrideVal) >= 0) {
+    return Math.round(Number(overrideVal));
+  }
+  const base = Number(product.price) || 0;
+  const pct = Number(cfg.adjustPct) || 0;
+  let adjusted = base * (1 + pct / 100);
+  if (adjusted < 0) adjusted = 0;
+  const roundTo = Number(cfg.rounding) || 0;
+  if (roundTo > 0) {
+    adjusted = Math.round(adjusted / roundTo) * roundTo;
+  } else {
+    adjusted = Math.round(adjusted);
+  }
+  return adjusted;
+}
+
+function sortPriceListProducts(list, sortKey, cfg) {
+  const arr = list.slice();
+  if (sortKey === 'name-desc') {
+    arr.sort((a, b) => compareProductNames(b.name, a.name));
+  } else if (sortKey === 'cat-asc') {
+    arr.sort((a, b) => String(a.category || 'General').localeCompare(String(b.category || 'General')) || compareProductNames(a.name, b.name));
+  } else if (sortKey === 'price-asc') {
+    arr.sort((a, b) => computePriceListUnitPrice(a, cfg) - computePriceListUnitPrice(b, cfg) || compareProductNames(a.name, b.name));
+  } else if (sortKey === 'price-desc') {
+    arr.sort((a, b) => computePriceListUnitPrice(b, cfg) - computePriceListUnitPrice(a, cfg) || compareProductNames(a.name, b.name));
+  } else {
+    arr.sort((a, b) => compareProductNames(a.name, b.name));
+  }
+  return arr;
+}
+
+function getPriceListExportProducts(cfg = getPriceListConfig()) {
+  const active = (state.products || []).filter(p => p && p.status !== 'Draft');
+  let list = active;
+  if (cfg.mode === 'in-stock') {
+    list = active.filter(p => Number(p.stock || 0) > 0);
+  } else if (cfg.mode === 'category') {
+    list = cfg.category ? active.filter(p => (p.category || 'General') === cfg.category) : active;
+  } else if (cfg.mode === 'samples') {
+    const idSet = new Set(cfg.sampleIds || []);
+    list = active.filter(p => idSet.has(p.id));
+  }
+  return sortPriceListProducts(list, cfg.sort, cfg);
+}
+
+function getPriceListPreviewRows(cfg = getPriceListConfig()) {
+  const term = String(priceListPickerQuery || '').trim().toLowerCase();
+  const baseList = cfg.mode === 'samples'
+    ? sortPriceListProducts((state.products || []).filter(p => p && p.status !== 'Draft'), cfg.sort, cfg)
+    : getPriceListExportProducts(cfg);
+  const filtered = term
+    ? baseList.filter(p => `${p.name} ${p.id} ${p.category || ''} ${p.unit || ''}`.toLowerCase().includes(term))
+    : baseList;
+  if (cfg.mode === 'samples') {
+    const idSet = new Set(cfg.sampleIds || []);
+    filtered.sort((a, b) => Number(idSet.has(b.id)) - Number(idSet.has(a.id)));
+  }
+  return filtered;
+}
+
+function renderPriceListPreviewRowsHTML(cfg = getPriceListConfig()) {
+  const rows = getPriceListPreviewRows(cfg);
+  const sampleSet = new Set(cfg.sampleIds || []);
+  const previewSlice = rows.slice(0, 60);
+  const totalCount = rows.length;
+  if (!previewSlice.length) {
+    return emptyRow(6, cfg.mode === 'samples'
+      ? 'No active products match your search. Add products or clear the search box.'
+      : 'No products match the current price list filter.');
+  }
+  const html = previewSlice.map(p => {
+    const isChecked = cfg.mode === 'samples' ? sampleSet.has(p.id) : true;
+    const basePrice = Number(p.price) || 0;
+    const finalPrice = computePriceListUnitPrice(p, cfg);
+    const hasOverride = cfg.overrides?.[p.id] !== undefined && cfg.overrides?.[p.id] !== '';
+    const changed = finalPrice !== basePrice;
+    return `
+      <tr class="${cfg.mode === 'samples' && !isChecked ? 'muted' : ''}">
+        <td style="width:36px">
+          <input type="checkbox" class="pl-sample-check" data-id="${esc(p.id)}" ${isChecked ? 'checked' : ''} title="${cfg.mode === 'samples' ? 'Include in sample price list' : 'Switch to custom sample selection'}" style="cursor:pointer">
+        </td>
+        <td>
+          <strong>${esc(p.name)}</strong>
+          <small class="muted" style="display:block;font-size:10.5px">${esc(p.id)} · ${esc(p.unit || 'Piece')}</small>
+        </td>
+        <td><small>${esc(p.category || 'General')}</small></td>
+        <td>${money(basePrice)}</td>
+        <td>
+          <input type="number" min="0" step="any" class="pl-custom-price-input pricelist-price-input ${hasOverride ? 'is-overridden' : ''}" data-id="${esc(p.id)}" value="${hasOverride ? esc(cfg.overrides[p.id]) : finalPrice}" aria-label="Custom price for ${esc(p.name)}">
+          ${changed && !hasOverride ? `<small class="muted" style="display:block;font-size:10px;text-align:right">${cfg.adjustPct > 0 ? `+${cfg.adjustPct}%` : `${cfg.adjustPct}%`}</small>` : ''}
+        </td>
+        <td>
+          <span class="status-pill ${Number(p.stock || 0) <= 0 ? 'low' : Number(p.stock || 0) <= Number(p.low || 0) ? 'pending' : 'paid'}">
+            ${Number(p.stock || 0) <= 0 ? 'Out of stock' : `${p.stock} ${esc(p.unit || '')}`}
+          </span>
+        </td>
+      </tr>
+    `;
+  }).join('');
+  if (totalCount > previewSlice.length) {
+    return html + `<tr><td colspan="6" class="muted" style="text-align:center;padding:10px;font-size:11.5px">Showing first ${previewSlice.length} of ${totalCount} matching items in preview — all selected items are included in the downloaded price list.</td></tr>`;
+  }
+  return html;
+}
+
+function pickRepresentativeSampleProducts(count = 10) {
+  const active = (state.products || []).filter(p => p && p.status !== 'Draft');
+  if (!active.length) return [];
+  // Spread samples evenly across categories (preferring in-stock items first)
+  const byCat = new Map();
+  for (const p of active) {
+    const cat = p.category || 'General';
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat).push(p);
+  }
+  for (const list of byCat.values()) {
+    list.sort((a, b) => (Number(b.stock || 0) > 0 ? 1 : 0) - (Number(a.stock || 0) > 0 ? 1 : 0) || compareProductNames(a.name, b.name));
+  }
+  const picked = [];
+  const cats = Array.from(byCat.keys()).sort();
+  let round = 0;
+  while (picked.length < count) {
+    let addedInRound = false;
+    for (const cat of cats) {
+      const list = byCat.get(cat);
+      if (round < list.length) {
+        picked.push(list[round].id);
+        addedInRound = true;
+        if (picked.length >= count) break;
+      }
+    }
+    if (!addedInRound) break;
+    round++;
+  }
+  return picked;
+}
+
+function renderPriceListBuilderSection() {
+  const cfg = getPriceListConfig();
+  const active = (state.products || []).filter(p => p && p.status !== 'Draft');
+  const categories = [...new Set(active.map(p => p.category || 'General'))].sort();
+  const exportItems = getPriceListExportProducts(cfg);
+  const overrideCount = Object.keys(cfg.overrides || {}).filter(k => cfg.overrides[k] !== '' && cfg.overrides[k] !== undefined).length;
+  const tableSelectedCount = selectedProductIds.size;
+
+  return `
+    <section class="panel pricelist-panel" id="product-pricelist-section">
+      <div class="panel-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 class="panel-title">Custom Price List &amp; Catalog Builder</h2>
+          <p class="panel-subtitle">Customize titles, select sample products, apply wholesale discounts or per-item price overrides, choose columns, and download as PDF, CSV, or shareable HTML.</p>
+        </div>
+        <div class="heading-actions">
+          <span class="status-pill paid" id="pl-selected-badge">${exportItems.length} product${exportItems.length === 1 ? '' : 's'} ready</span>
+        </div>
+      </div>
+
+      <div class="pricelist-config-grid">
+        <div class="field">
+          <label for="pl-title">Price List Title</label>
+          <input id="pl-title" type="text" value="${esc(cfg.title)}" placeholder="e.g. Wholesale Price List">
+        </div>
+        <div class="field">
+          <label for="pl-subtitle">Subtitle / Validity / Terms</label>
+          <input id="pl-subtitle" type="text" value="${esc(cfg.subtitle)}" placeholder="e.g. Valid until 31 Dec 2026 · VAT Included">
+        </div>
+        <div class="field">
+          <label for="pl-mode">Products to Include</label>
+          <select id="pl-mode">
+            <option value="all" ${cfg.mode === 'all' ? 'selected' : ''}>All Active Products (${active.length})</option>
+            <option value="in-stock" ${cfg.mode === 'in-stock' ? 'selected' : ''}>In-Stock Products Only (${active.filter(p => Number(p.stock || 0) > 0).length})</option>
+            <option value="category" ${cfg.mode === 'category' ? 'selected' : ''}>Specific Category</option>
+            <option value="samples" ${cfg.mode === 'samples' ? 'selected' : ''}>Custom Sample Selection (${(cfg.sampleIds || []).filter(id => active.some(p => p.id === id)).length} picked)</option>
+          </select>
+        </div>
+        ${cfg.mode === 'category' ? `
+          <div class="field">
+            <label for="pl-category">Category Filter</label>
+            <select id="pl-category">
+              <option value="">All Categories</option>
+              ${categories.map(c => `<option value="${esc(c)}" ${cfg.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
+        <div class="field">
+          <label for="pl-sort">Sort Order</label>
+          <select id="pl-sort">
+            <option value="cat-asc" ${cfg.sort === 'cat-asc' ? 'selected' : ''}>Category → Name (A–Z)</option>
+            <option value="name-asc" ${cfg.sort === 'name-asc' ? 'selected' : ''}>Product Name (A–Z)</option>
+            <option value="name-desc" ${cfg.sort === 'name-desc' ? 'selected' : ''}>Product Name (Z–A)</option>
+            <option value="price-asc" ${cfg.sort === 'price-asc' ? 'selected' : ''}>Price (Low → High)</option>
+            <option value="price-desc" ${cfg.sort === 'price-desc' ? 'selected' : ''}>Price (High → Low)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="pl-adjust-pct">Global Price Adjustment (%)</label>
+          <input id="pl-adjust-pct" type="number" step="0.5" min="-95" max="500" value="${esc(cfg.adjustPct)}" placeholder="0 (e.g. -10 for 10% off)">
+        </div>
+        <div class="field">
+          <label for="pl-rounding">Round Adjusted Prices</label>
+          <select id="pl-rounding">
+            <option value="0" ${Number(cfg.rounding) === 0 ? 'selected' : ''}>Exact (No rounding)</option>
+            <option value="100" ${Number(cfg.rounding) === 100 ? 'selected' : ''}>Nearest 100</option>
+            <option value="500" ${Number(cfg.rounding) === 500 ? 'selected' : ''}>Nearest 500</option>
+            <option value="1000" ${Number(cfg.rounding) === 1000 ? 'selected' : ''}>Nearest 1,000</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="pricelist-options-strip">
+        <strong style="font-size:11.5px;color:var(--muted)">Columns:</strong>
+        <label><input type="checkbox" class="pl-col-check" data-col="sku" ${cfg.columns.sku ? 'checked' : ''}> SKU</label>
+        <label><input type="checkbox" class="pl-col-check" data-col="category" ${cfg.columns.category ? 'checked' : ''}> Category</label>
+        <label><input type="checkbox" class="pl-col-check" data-col="unit" ${cfg.columns.unit ? 'checked' : ''}> Unit</label>
+        <label><input type="checkbox" class="pl-col-check" data-col="standardPrice" ${cfg.columns.standardPrice ? 'checked' : ''}> Standard Price</label>
+        <label><input type="checkbox" class="pl-col-check" data-col="stock" ${cfg.columns.stock ? 'checked' : ''}> Availability</label>
+        <label><input type="checkbox" class="pl-col-check" data-col="expiry" ${cfg.columns.expiry ? 'checked' : ''}> Expiry / Batch</label>
+        <span style="opacity:.35">|</span>
+        <strong style="font-size:11.5px;color:var(--muted)">Layout:</strong>
+        <label><input type="checkbox" class="pl-opt-check" data-opt="branding" ${cfg.options.branding ? 'checked' : ''}> Logo &amp; Brand Colors</label>
+        <label><input type="checkbox" class="pl-opt-check" data-opt="contacts" ${cfg.options.contacts ? 'checked' : ''}> Contacts &amp; Payment Info</label>
+        <label><input type="checkbox" class="pl-opt-check" data-opt="groupByCategory" ${cfg.options.groupByCategory ? 'checked' : ''}> Group by Category</label>
+      </div>
+
+      <div class="pricelist-sample-bar">
+        <div style="font-size:12px">
+          <strong>Sample Products Picker</strong>
+          <span class="muted" style="margin-left:6px">Tick individual products below or pick quick samples across categories.</span>
+        </div>
+        <div class="pricelist-sample-actions">
+          <button type="button" class="button small" data-action="pricelist-pick-samples" data-count="10">★ Pick 10 Samples</button>
+          <button type="button" class="button small" data-action="pricelist-pick-samples" data-count="25">★ Pick 25 Samples</button>
+          ${tableSelectedCount > 0 ? `<button type="button" class="button small primary" data-action="pricelist-use-selected">☑ Use Table Selection (${tableSelectedCount})</button>` : ''}
+          ${cfg.mode === 'samples' ? `<button type="button" class="button small" data-action="pricelist-select-all-filtered">Select Shown</button><button type="button" class="button small" data-action="pricelist-clear-samples">Clear Samples</button>` : ''}
+          ${overrideCount > 0 ? `<button type="button" class="button small" data-action="pricelist-reset-overrides">↺ Reset ${overrideCount} Override${overrideCount === 1 ? '' : 's'}</button>` : ''}
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-top:12px;padding-left:0;padding-right:0">
+        <div class="toolbar-left">
+          <label class="search-box"><input id="pl-picker-search" placeholder="Search products to pick samples or override price…" value="${esc(priceListPickerQuery)}"></label>
+        </div>
+        <span class="muted" style="font-size:11.5px">Edits here only affect your downloaded price list — master catalog prices remain unchanged.</span>
+      </div>
+
+      <div class="table-scroll" style="max-height:360px">
+        <table class="data-table" data-no-power-bar="true">
+          <thead>
+            <tr>
+              <th style="width:36px">Pick</th>
+              <th>Product</th>
+              <th>Category</th>
+              <th>Catalog Price</th>
+              <th style="width:140px">Price List Price (${esc(state.currency || 'TZS')})</th>
+              <th>Stock</th>
+            </tr>
+          </thead>
+          <tbody id="pl-preview-body">${renderPriceListPreviewRowsHTML(cfg)}</tbody>
+        </table>
+      </div>
+
+      <div class="pricelist-download-bar">
+        <span class="muted" style="font-size:12px" id="pl-export-summary">
+          Ready to export <strong>${exportItems.length}</strong> product${exportItems.length === 1 ? '' : 's'}
+          ${cfg.adjustPct ? ` · <strong>${cfg.adjustPct > 0 ? '+' : ''}${cfg.adjustPct}%</strong> adjustment` : ''}
+          ${overrideCount ? ` · <strong>${overrideCount}</strong> custom price${overrideCount === 1 ? '' : 's'}` : ''}
+        </span>
+        <div class="pricelist-download-buttons">
+          <button type="button" class="button primary" data-action="pricelist-download-pdf" ${exportItems.length ? '' : 'disabled'}>🖨 Print / Save PDF</button>
+          <button type="button" class="button" data-action="pricelist-download-csv" ${exportItems.length ? '' : 'disabled'}>↓ Download CSV</button>
+          <button type="button" class="button" data-action="pricelist-download-html" ${exportItems.length ? '' : 'disabled'}>↓ Download HTML Catalog</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function buildPriceListDocumentHTML(cfg = getPriceListConfig(), items = getPriceListExportProducts(cfg), standalone = false) {
+  const primary = cfg.options.branding ? (state.themeColors?.primary || DEFAULT_BRAND_COLORS.primary) : '#1e293b';
+  const secondary = cfg.options.branding ? (state.themeColors?.secondary || DEFAULT_BRAND_COLORS.secondary) : '#334155';
+  const safeLogo = cfg.options.branding ? sanitizeAttachmentDataUrl(state.companyLogo || '', false) : '';
+  const contacts = [state.companyPhone, state.companyEmail, state.companyAddress].filter(Boolean).join(' · ');
+  const payDetails = String(state.companyPaymentDetails || '').trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const cols = cfg.columns || {};
+  const generatedOn = dateLabel(today());
+
+  const headers = ['#', 'Product'];
+  if (cols.sku) headers.push('SKU');
+  if (cols.category && !cfg.options.groupByCategory) headers.push('Category');
+  if (cols.unit) headers.push('Unit');
+  if (cols.standardPrice) headers.push('Standard Price');
+  headers.push(`Price (${state.currency || 'TZS'})`);
+  if (cols.stock) headers.push('Availability');
+  if (cols.expiry) headers.push('Batch / Expiry');
+
+  const renderRow = (p, idx) => {
+    const basePrice = Number(p.price) || 0;
+    const finalPrice = computePriceListUnitPrice(p, cfg);
+    const cells = [
+      `<td class="num">${idx}</td>`,
+      `<td><strong>${esc(p.name)}</strong></td>`
+    ];
+    if (cols.sku) cells.push(`<td class="mono">${esc(p.id)}</td>`);
+    if (cols.category && !cfg.options.groupByCategory) cells.push(`<td>${esc(p.category || 'General')}</td>`);
+    if (cols.unit) cells.push(`<td>${esc(p.unit || 'Piece')}</td>`);
+    if (cols.standardPrice) cells.push(`<td class="num ${finalPrice !== basePrice ? 'strike' : ''}">${esc(money(basePrice))}</td>`);
+    cells.push(`<td class="num price-col">${esc(money(finalPrice))}</td>`);
+    if (cols.stock) {
+      const qty = Number(p.stock || 0);
+      const badge = qty <= 0 ? 'Out of stock' : qty <= Number(p.low || 0) ? `Low (${qty})` : `In stock (${qty})`;
+      cells.push(`<td>${esc(badge)}</td>`);
+    }
+    if (cols.expiry) {
+      const expText = [p.batchNumber ? `Batch: ${p.batchNumber}` : '', p.expiryDate ? `Exp: ${p.expiryDate}` : ''].filter(Boolean).join(' · ') || '—';
+      cells.push(`<td><small>${esc(expText)}</small></td>`);
+    }
+    return `<tr>${cells.join('')}</tr>`;
+  };
+
+  let tbodyHtml = '';
+  let rowNum = 0;
+  if (cfg.options.groupByCategory) {
+    const groups = new Map();
+    for (const p of items) {
+      const cat = p.category || 'General';
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(p);
+    }
+    for (const [cat, list] of groups.entries()) {
+      tbodyHtml += `<tr class="cat-divider"><td colspan="${headers.length}">${esc(cat)} <span>(${list.length})</span></td></tr>`;
+      for (const p of list) {
+        rowNum++;
+        tbodyHtml += renderRow(p, rowNum);
+      }
+    }
+  } else {
+    tbodyHtml = items.map((p, i) => renderRow(p, i + 1)).join('');
+  }
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(cfg.title || 'Price List')} — ${esc(state.companyName || 'My Company')}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif;
+      color: #0f172a;
+      background: #ffffff;
+      margin: 0;
+      padding: ${standalone ? '24px' : '8px'};
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .sheet { max-width: 920px; margin: 0 auto; }
+    .banner {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      padding: 18px 22px;
+      border-radius: 12px;
+      background: ${primary};
+      color: #ffffff;
+      border-bottom: 4px solid ${secondary};
+    }
+    .brand-left { display: flex; align-items: center; gap: 14px; }
+    .brand-logo { max-width: 72px; max-height: 58px; object-fit: contain; background: #fff; padding: 4px; border-radius: 8px; }
+    .company-name { font-size: 20px; font-weight: 800; margin: 0 0 3px; letter-spacing: -0.01em; }
+    .branch-line { font-size: 11.5px; opacity: 0.88; }
+    .doc-meta { text-align: right; }
+    .doc-title { font-size: 18px; font-weight: 800; color: ${secondary}; background: #fff; display: inline-block; padding: 4px 12px; border-radius: 999px; margin-bottom: 6px; }
+    .doc-date { font-size: 11px; opacity: 0.9; }
+    .subtitle-bar {
+      margin: 12px 0 14px;
+      padding: 9px 14px;
+      border-left: 3.5px solid ${secondary};
+      background: #f8fafc;
+      color: #334155;
+      font-size: 11.5px;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    thead th {
+      background: #f1f5f9;
+      color: #0f172a;
+      text-align: left;
+      padding: 8px 10px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      border-bottom: 2px solid ${primary};
+    }
+    tbody td { padding: 7px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+    tbody tr:nth-child(even) { background: #fcfdff; }
+    tr.cat-divider td {
+      background: #eef4fa !important;
+      color: ${primary};
+      font-weight: 800;
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 7px 10px;
+      border-top: 1.5px solid #cbd5e1;
+      border-bottom: 1.5px solid #cbd5e1;
+    }
+    tr.cat-divider td span { font-weight: 600; opacity: 0.7; }
+    .num { text-align: right; white-space: nowrap; }
+    .mono { font-family: ui-monospace, 'Courier New', monospace; font-size: 11px; color: #475569; }
+    .price-col { font-weight: 800; color: ${primary}; font-size: 12.5px; }
+    .strike { text-decoration: line-through; color: #94a3b8; }
+    .footer-box {
+      margin-top: 18px;
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      font-size: 11px;
+      color: #334155;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .print-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .print-btn {
+      background: ${secondary};
+      color: #fff;
+      border: 0;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    @media print {
+      body { padding: 0; }
+      .print-toolbar { display: none !important; }
+      .banner { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      tr.cat-divider td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body data-pricelist-count="${items.length}" data-pricelist-mode="${esc(cfg.mode)}">
+  <div class="sheet">
+    ${standalone ? `<div class="print-toolbar"><button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button></div>` : ''}
+    <header class="banner">
+      <div class="brand-left">
+        ${safeLogo ? `<img class="brand-logo" src="${safeLogo}" alt="Logo">` : ''}
+        <div>
+          <h1 class="company-name">${esc(state.companyName || 'My Company')}</h1>
+          <div class="branch-line">${esc(state.branch || 'Main branch')}${cfg.options.contacts && contacts ? ` · ${esc(contacts)}` : ''}</div>
+        </div>
+      </div>
+      <div class="doc-meta">
+        <div class="doc-title">${esc(cfg.title || 'Price List')}</div>
+        <div class="doc-date">Issued: ${esc(generatedOn)} · ${items.length} item${items.length === 1 ? '' : 's'}</div>
+      </div>
+    </header>
+    <div class="subtitle-bar">
+      <span>${esc(cfg.subtitle || 'Official product price list.')}</span>
+      <span><strong>Currency:</strong> ${esc(state.currency || 'TZS')}${state.vatEnabled !== false ? ` · VAT ${state.vatRate || 18}% incl.` : ''}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>${headers.map(h => `<th class="${/Price|^#$/.test(h) ? 'num' : ''}">${esc(h)}</th>`).join('')}</tr>
+      </thead>
+      <tbody>${tbodyHtml}</tbody>
+    </table>
+    ${cfg.options.contacts && (payDetails.length || contacts) ? `
+      <footer class="footer-box">
+        <div>
+          ${payDetails.length ? `<strong>Payment Details</strong><div>${payDetails.map(l => esc(l)).join('<br>')}</div>` : `<strong>Contact Us</strong><div>${esc(contacts)}</div>`}
+        </div>
+        <div style="text-align:right">
+          <strong>${esc(state.companyName || 'My Company')}</strong>
+          <div>Generated with Tide ERP · ${esc(generatedOn)}</div>
+        </div>
+      </footer>
+    ` : ''}
+  </div>
+</body>
+</html>`;
+}
+
+function downloadPriceListPDF(options = {}) {
+  const cfg = getPriceListConfig();
+  const items = getPriceListExportProducts(cfg);
+  if (!items.length) {
+    toast('Select at least one product before printing or downloading the price list');
+    return false;
+  }
+  const html = buildPriceListDocumentHTML(cfg, items, false);
+  let iframe = document.getElementById('tide-pricelist-iframe');
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.id = 'tide-pricelist-iframe';
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.cssText = 'position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none;left:-9999px;top:-9999px;';
+    document.body.appendChild(iframe);
+  }
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    toast('Could not prepare price list print frame');
+    return false;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
+  if (!options.skipPrint) {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (err) {
+        console.warn('Price list print skipped:', err);
+      }
+    }, 150);
+  }
+  return true;
+}
+
+function downloadPriceListCSV() {
+  const cfg = getPriceListConfig();
+  const items = getPriceListExportProducts(cfg);
+  if (!items.length) {
+    toast('Select at least one product before downloading the price list');
+    return false;
+  }
+  const cols = cfg.columns || {};
+  const header = ['No', 'Product'];
+  if (cols.sku) header.push('SKU');
+  if (cols.category) header.push('Category');
+  if (cols.unit) header.push('Unit');
+  if (cols.standardPrice) header.push(`Standard Price (${state.currency || 'TZS'})`);
+  header.push(`Price (${state.currency || 'TZS'})`);
+  if (cols.stock) header.push('Availability');
+  if (cols.expiry) header.push('Batch / Expiry');
+
+  const rows = [
+    [cfg.title || 'Price List', state.companyName || 'My Company', state.branch || '', `Issued ${today()}`],
+    ...(cfg.subtitle ? [[cfg.subtitle]] : []),
+    [],
+    header,
+    ...items.map((p, idx) => {
+      const finalPrice = computePriceListUnitPrice(p, cfg);
+      const row = [idx + 1, p.name];
+      if (cols.sku) row.push(p.id);
+      if (cols.category) row.push(p.category || 'General');
+      if (cols.unit) row.push(p.unit || 'Piece');
+      if (cols.standardPrice) row.push(Number(p.price) || 0);
+      row.push(finalPrice);
+      if (cols.stock) row.push(Number(p.stock || 0) <= 0 ? 'Out of stock' : `${p.stock} ${p.unit || ''}`.trim());
+      if (cols.expiry) row.push([p.batchNumber ? `Batch ${p.batchNumber}` : '', p.expiryDate || ''].filter(Boolean).join(' · '));
+      return row;
+    })
+  ];
+  const slug = String(cfg.title || 'price-list').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'price-list';
+  downloadCSV(`${slug}-${today()}.csv`, rows);
+  return true;
+}
+
+function downloadPriceListHTML() {
+  const cfg = getPriceListConfig();
+  const items = getPriceListExportProducts(cfg);
+  if (!items.length) {
+    toast('Select at least one product before downloading the price list');
+    return false;
+  }
+  const html = buildPriceListDocumentHTML(cfg, items, true);
+  const slug = String(cfg.title || 'price-list').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'price-list';
+  const link = document.createElement('a');
+  const blobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8;' }));
+  link.href = blobUrl;
+  link.download = `${slug}-${today()}.html`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  toast(`Downloaded shareable HTML price list (${items.length} items)`);
+  return true;
 }
 
 function renderExpiryManagementSection() {
@@ -9957,6 +10610,74 @@ function handleAction(button) {
       if (el) el.scrollIntoView({ behavior: 'smooth' });
       break;
     }
+    case 'jump-to-pricelist': {
+      const el = document.getElementById('product-pricelist-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      break;
+    }
+    case 'pricelist-pick-samples': {
+      const count = Math.max(1, Number(button.dataset.count) || 10);
+      const cfg = getPriceListConfig();
+      const picked = pickRepresentativeSampleProducts(count);
+      if (!picked.length) { toast('Add active products first to pick samples'); break; }
+      cfg.mode = 'samples';
+      cfg.sampleIds = picked;
+      savePriceListConfig();
+      render();
+      document.getElementById('product-pricelist-section')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      toast(`★ Selected ${picked.length} representative sample product${picked.length === 1 ? '' : 's'} across categories`);
+      break;
+    }
+    case 'pricelist-use-selected': {
+      const ids = Array.from(selectedProductIds);
+      if (!ids.length) { toast('Tick products in the table above first'); break; }
+      const cfg = getPriceListConfig();
+      cfg.mode = 'samples';
+      cfg.sampleIds = Array.from(new Set([...(cfg.sampleIds || []), ...ids]));
+      savePriceListConfig();
+      render();
+      document.getElementById('product-pricelist-section')?.scrollIntoView({ behavior: 'smooth' });
+      toast(`✓ Added ${ids.length} product${ids.length === 1 ? '' : 's'} to your custom sample price list`);
+      break;
+    }
+    case 'pricelist-select-all-filtered': {
+      const cfg = getPriceListConfig();
+      const shownIds = getPriceListPreviewRows(cfg).map(p => p.id);
+      cfg.mode = 'samples';
+      cfg.sampleIds = Array.from(new Set([...(cfg.sampleIds || []), ...shownIds]));
+      savePriceListConfig();
+      render();
+      toast(`Selected ${shownIds.length} shown product${shownIds.length === 1 ? '' : 's'}`);
+      break;
+    }
+    case 'pricelist-clear-samples': {
+      const cfg = getPriceListConfig();
+      cfg.sampleIds = [];
+      savePriceListConfig();
+      render();
+      toast('Cleared sample product selection');
+      break;
+    }
+    case 'pricelist-reset-overrides': {
+      const cfg = getPriceListConfig();
+      cfg.overrides = {};
+      savePriceListConfig();
+      render();
+      toast('↺ Reset all custom price overrides');
+      break;
+    }
+    case 'pricelist-download-pdf': {
+      downloadPriceListPDF();
+      break;
+    }
+    case 'pricelist-download-csv': {
+      downloadPriceListCSV();
+      break;
+    }
+    case 'pricelist-download-html': {
+      downloadPriceListHTML();
+      break;
+    }
     case 'filter-expiry-tab': {
       inventoryExpiryTab = button.dataset.tab || 'attention';
       render();
@@ -10554,6 +11275,41 @@ document.addEventListener('input', event => {
   if (event.target.id === 'stocktake-reason') {
     autoSaveStocktakeDraft();
   }
+  if (event.target.id === 'pl-title') {
+    const cfg = getPriceListConfig();
+    cfg.title = event.target.value;
+    savePriceListConfig();
+  }
+  if (event.target.id === 'pl-subtitle') {
+    const cfg = getPriceListConfig();
+    cfg.subtitle = event.target.value;
+    savePriceListConfig();
+  }
+  if (event.target.id === 'pl-adjust-pct') {
+    const cfg = getPriceListConfig();
+    cfg.adjustPct = Number(event.target.value) || 0;
+    savePriceListConfig();
+    const tbody = document.getElementById('pl-preview-body');
+    if (tbody) tbody.innerHTML = renderPriceListPreviewRowsHTML(cfg);
+  }
+  if (event.target.id === 'pl-picker-search') {
+    priceListPickerQuery = event.target.value;
+    const tbody = document.getElementById('pl-preview-body');
+    if (tbody) tbody.innerHTML = renderPriceListPreviewRowsHTML(getPriceListConfig());
+  }
+  if (event.target.classList.contains('pl-custom-price-input')) {
+    const prodId = event.target.dataset.id;
+    const cfg = getPriceListConfig();
+    const raw = String(event.target.value || '').trim();
+    if (raw === '') {
+      delete cfg.overrides[prodId];
+      event.target.classList.remove('is-overridden');
+    } else if (Number.isFinite(Number(raw)) && Number(raw) >= 0) {
+      cfg.overrides[prodId] = Math.round(Number(raw));
+      event.target.classList.add('is-overridden');
+    }
+    savePriceListConfig();
+  }
 });
 
 document.addEventListener('change', event => {
@@ -10588,6 +11344,56 @@ document.addEventListener('change', event => {
   if (event.target.id === 'report-payment-method') { reportPaymentMethodFilter = event.target.value; render(); }
   if (event.target.id === 'inventory-filter') { inventoryFilter = event.target.value; productsPage = 1; render(); }
   if (event.target.id === 'products-page-size') { productsPageSize = Number(event.target.value) || 0; productsPage = 1; render(); }
+  if (event.target.id === 'pl-mode') {
+    const cfg = getPriceListConfig();
+    cfg.mode = event.target.value;
+    savePriceListConfig();
+    render();
+  }
+  if (event.target.id === 'pl-category') {
+    const cfg = getPriceListConfig();
+    cfg.category = event.target.value;
+    savePriceListConfig();
+    render();
+  }
+  if (event.target.id === 'pl-sort') {
+    const cfg = getPriceListConfig();
+    cfg.sort = event.target.value;
+    savePriceListConfig();
+    render();
+  }
+  if (event.target.id === 'pl-rounding') {
+    const cfg = getPriceListConfig();
+    cfg.rounding = Number(event.target.value) || 0;
+    savePriceListConfig();
+    render();
+  }
+  if (event.target.classList.contains('pl-col-check')) {
+    const cfg = getPriceListConfig();
+    cfg.columns[event.target.dataset.col] = event.target.checked;
+    savePriceListConfig();
+  }
+  if (event.target.classList.contains('pl-opt-check')) {
+    const cfg = getPriceListConfig();
+    cfg.options[event.target.dataset.opt] = event.target.checked;
+    savePriceListConfig();
+  }
+  if (event.target.classList.contains('pl-sample-check')) {
+    const cfg = getPriceListConfig();
+    const prodId = event.target.dataset.id;
+    if (cfg.mode !== 'samples') {
+      // Seamlessly switch to Custom Sample Selection starting from currently included products
+      const currentIds = getPriceListExportProducts(cfg).map(p => p.id);
+      cfg.mode = 'samples';
+      cfg.sampleIds = currentIds;
+    }
+    const set = new Set(cfg.sampleIds || []);
+    if (event.target.checked) set.add(prodId);
+    else set.delete(prodId);
+    cfg.sampleIds = Array.from(set);
+    savePriceListConfig();
+    render();
+  }
   if (event.target.id === 'inventory-movement-filter') { inventoryMovementTypeFilter = event.target.value; render(); }
   if (event.target.id === 'company-logo-file' && event.target.files?.[0]) {
     processCompanyLogoFile(event.target.files[0]);

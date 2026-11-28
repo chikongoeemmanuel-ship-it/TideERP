@@ -13403,3 +13403,114 @@ tr.row-revoked td strong {
 :root[data-theme="dark"] .transfer-route-badge {
   color: #ffb173;
 }
+
+/* Custom Price List Builder Section */
+.pricelist-panel {
+  margin-top: 20px;
+}
+
+.pricelist-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.pricelist-options-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line, #cbd8e6);
+  background: var(--surface, #f8fafc);
+  font-size: 12px;
+}
+
+:root[data-theme="dark"] .pricelist-options-strip {
+  background: #1b2227;
+  border-color: #2f3e46;
+}
+
+.pricelist-options-strip label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.pricelist-options-strip input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--brand-secondary, #ff6a00);
+}
+
+.pricelist-sample-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px dashed var(--brand-secondary, #ff6a00);
+  background: var(--brand-secondary-soft, rgba(255, 106, 0, 0.07));
+}
+
+.pricelist-sample-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pricelist-price-input {
+  width: 112px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line, #cbd8e6);
+  background: var(--white, #ffffff);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+:root[data-theme="dark"] .pricelist-price-input {
+  background: #232b30;
+  border-color: #3a4d58;
+  color: #f8fafc;
+}
+
+.pricelist-price-input.is-overridden {
+  border-color: var(--brand-secondary, #ff6a00);
+  box-shadow: 0 0 0 2px var(--brand-secondary-soft, rgba(255, 106, 0, 0.2));
+}
+
+.pricelist-download-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line, #cbd8e6);
+}
+
+.pricelist-download-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pricelist-strike {
+  text-decoration: line-through;
+  color: var(--muted, #64748b);
+  font-size: 10.5px;
+  margin-right: 5px;
+}

@@ -162,7 +162,11 @@
     'Make a Sale': 'Fanya Mauzo (POS)',
     'Sales & Orders': 'Mauzo na Oda',
     'Branch Management': 'Usimamizi wa Matawi',
-    "Today's Financial Summary": 'Muhtasari wa Fedha Leo'
+    "Today's Financial Summary": 'Muhtasari wa Fedha Leo',
+    '🏷 Price list': '🏷 Orodha ya Bei',
+    'Custom Price List & Catalog Builder': 'Kijenzi cha Orodha ya Bei',
+    '🖨 Print / Save PDF': '🖨 Chapisha / Hifadhi PDF',
+    '↓ Download HTML Catalog': '↓ Pakua Katalogi (HTML)'
   };
 
   const RECEIPT_STRINGS = {
