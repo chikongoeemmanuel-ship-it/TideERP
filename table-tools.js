@@ -715,8 +715,20 @@
 </body>
 </html>`;
 
-    // Print via hidden iframe (never blocked by pop-up blockers on desktop or mobile!)
+    // Print via iOS-safe tab on iPhone/iPad Safari, or hidden iframe on desktop/Android
     try {
+      const ua = navigator.userAgent || '';
+      const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isIOS) {
+        const popup = window.open('', '_blank');
+        if (popup) {
+          const iosHtml = docHtml.replace('<body>', '<body><div class="ios-print-bar" style="display:flex;justify-content:flex-end;margin-bottom:10px"><button onclick="window.print()" style="background:#0a1e36;color:#fff;border:0;padding:10px 16px;border-radius:8px;font-weight:700;font-size:14px">🖨 Print / Save PDF</button></div><style>@media print{.ios-print-bar{display:none!important}}</style>');
+          popup.document.write(iosHtml);
+          popup.document.close();
+          setTimeout(() => { try { popup.focus(); popup.print(); } catch {} }, 320);
+          return;
+        }
+      }
       const oldFrame = document.getElementById('tide-print-iframe');
       if (oldFrame) oldFrame.remove();
       const iframe = document.createElement('iframe');

@@ -386,7 +386,7 @@ function canPerformAction(action, element = null) {
   switch (action) {
     case 'lock-screen': case 'my-account': case 'new-notice': case 'test-notification-sound':
     case 'jump-to-expiry': case 'filter-expiry-tab': case 'set-report-tab':
-    case 'jump-to-pricelist':
+    case 'jump-to-pricelist': case 'toggle-mobile-menu': case 'jump-to-pos-cart':
     case 'apply-date-range': case 'clear-date-range': case 'clear-sales-filters':
     case 'force-cloud-sync': case 'force-reload-app':
     case 'products-page-prev': case 'products-page-next':
@@ -3328,6 +3328,7 @@ function renderPOS() {
         <div class="product-grid" id="pos-products">
           ${productCards(activeProducts().filter(p => !posCategory || p.category === posCategory))}
         </div>
+        ${posCart.length ? `<div class="mobile-pos-cart-bar"><div><small>${posCart.reduce((s, l) => s + l.qty, 0)} item${posCart.reduce((s, l) => s + l.qty, 0) === 1 ? '' : 's'} in cart</small><strong>${money(total)}</strong></div><button type="button" class="button small primary" data-action="jump-to-pos-cart">View Cart / Pay →</button></div>` : ''}
       </article>
       <aside class="cart-panel panel">
         <div class="panel-header">
@@ -3962,6 +3963,22 @@ function printOrderInvoice(order) {
 /**
  * Print a 58mm or 80mm thermal POS receipt via a hidden iframe (zero popup blockers).
  */
+function isIOSSafari() {
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function printHtmlOnIOS(html) {
+  const popup = window.open('', '_blank');
+  if (!popup) return false;
+  const injected = html.replace(/<body([^>]*)>/i, '<body$1><div class="ios-print-bar" style="display:flex;justify-content:center;padding:8px 0;margin-bottom:8px;border-bottom:1px solid #ddd"><button onclick="window.print()" style="background:#0a1e36;color:#fff;border:0;padding:10px 18px;border-radius:8px;font-weight:700;font-size:14px">🖨 Print / Save PDF</button></div><style>@media print{.ios-print-bar{display:none!important}}</style>');
+  popup.document.open();
+  popup.document.write(injected);
+  popup.document.close();
+  setTimeout(() => { try { popup.focus(); popup.print(); } catch {} }, 320);
+  return true;
+}
+
 function printThermalReceipt(orderOrId, options = {}) {
   const order = typeof orderOrId === 'string'
     ? (salesOrderRows().find(o => o.id === orderOrId) || state.orders.find(o => o.id === orderOrId) || state.sales.find(s => s.id === orderOrId))
@@ -4109,6 +4126,9 @@ function printThermalReceipt(orderOrId, options = {}) {
 </body>
 </html>`;
 
+  if (!options.skipPrint && isIOSSafari() && printHtmlOnIOS(html)) {
+    return true;
+  }
   let iframe = document.getElementById('tide-receipt-iframe');
   if (!iframe) {
     iframe = document.createElement('iframe');
@@ -4141,7 +4161,29 @@ function printThermalReceipt(orderOrId, options = {}) {
 /**
  * Camera & USB Hardware Barcode Scanner Subsystem
  */
+let activeZxingReader = null;
+let zxingLoadPromise = null;
+
+function loadZxingFallback() {
+  if (window.ZXing?.BrowserMultiFormatReader) return Promise.resolve(window.ZXing);
+  if (zxingLoadPromise) return zxingLoadPromise;
+  zxingLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+    s.async = true;
+    const timer = setTimeout(() => reject(new Error('timeout')), 6000);
+    s.onload = () => { clearTimeout(timer); resolve(window.ZXing); };
+    s.onerror = () => { clearTimeout(timer); reject(new Error('load failed')); };
+    document.head.appendChild(s);
+  }).catch(() => { zxingLoadPromise = null; return null; });
+  return zxingLoadPromise;
+}
+
 function stopBarcodeScanner() {
+  if (activeZxingReader) {
+    try { activeZxingReader.reset(); } catch {}
+    activeZxingReader = null;
+  }
   if (activeBarcodeRaf) {
     cancelAnimationFrame(activeBarcodeRaf);
     activeBarcodeRaf = 0;
@@ -4286,7 +4328,26 @@ function openBarcodeScanner(target = 'pos') {
           return;
         }
       }
-      if (statusEl) statusEl.textContent = 'Camera preview active (native BarcodeDetector unsupported on this browser) — use USB scanner or enter code below.';
+      if (statusEl) statusEl.textContent = 'Loading iOS camera barcode decoder…';
+      loadZxingFallback().then(ZXing => {
+        if (!activeBarcodeStream || !document.getElementById('app-modal')?.open) return;
+        if (ZXing?.BrowserMultiFormatReader && videoEl) {
+          try {
+            activeZxingReader = new ZXing.BrowserMultiFormatReader();
+            if (statusEl) statusEl.textContent = '● Live camera ready (Safari decoder) — center barcode in frame.';
+            activeZxingReader.decodeFromStream(activeBarcodeStream, videoEl, (result) => {
+              if (result && result.getText && result.getText()) {
+                const raw = String(result.getText()).trim();
+                stopBarcodeScanner();
+                document.getElementById('app-modal')?.close();
+                handleBarcodeScanned(raw, activeBarcodeTarget);
+              }
+            });
+            return;
+          } catch {}
+        }
+        if (statusEl) statusEl.textContent = 'Camera preview active — use USB scanner or enter barcode/SKU below.';
+      });
     })
     .catch(() => {
       if (statusEl) statusEl.textContent = 'Camera permission declined or no camera found — use a USB/Bluetooth barcode scanner or type SKU below.';
@@ -5792,6 +5853,9 @@ function downloadPriceListPDF(options = {}) {
     return false;
   }
   const html = buildPriceListDocumentHTML(cfg, items, false);
+  if (!options.skipPrint && isIOSSafari() && printHtmlOnIOS(html)) {
+    return true;
+  }
   let iframe = document.getElementById('tide-pricelist-iframe');
   if (!iframe) {
     iframe = document.createElement('iframe');
@@ -7770,6 +7834,11 @@ function render() {
   if (typeof window.TideTableTools?.enhanceAll === 'function') {
     window.TideTableTools.enhanceAll(content);
   }
+  document.querySelectorAll('#mobile-bottom-nav .mob-nav-btn[data-page]').forEach(btn => {
+    const targetPage = btn.dataset.page;
+    btn.hidden = !canViewPage(targetPage, user);
+    btn.classList.toggle('active', targetPage === page);
+  });
   if (typeof window.TideI18n?.applyDomTranslations === 'function') {
     window.TideI18n.applyDomTranslations(document, page);
   }
@@ -10619,6 +10688,14 @@ function handleAction(button) {
       if (el) el.scrollIntoView({ behavior: 'smooth' });
       break;
     }
+    case 'toggle-mobile-menu': {
+      toggleMobileSidebar();
+      break;
+    }
+    case 'jump-to-pos-cart': {
+      document.querySelector('.cart-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      break;
+    }
     case 'jump-to-pricelist': {
       const el = document.getElementById('product-pricelist-section');
       if (el) el.scrollIntoView({ behavior: 'smooth' });
@@ -11539,7 +11616,7 @@ document.getElementById('app-modal')?.addEventListener('close', () => {
 
 document.addEventListener('keydown', event => {
   if (isScreenLocked()) return;
-  if (event.target.id === 'pos-search' && event.key === 'Enter') {
+  if (event.target?.id === 'pos-search' && event.key === 'Enter') {
     const raw = String(event.target.value || '').trim();
     if (raw) {
       event.preventDefault();
@@ -11547,7 +11624,7 @@ document.addEventListener('keydown', event => {
     }
     return;
   }
-  if (event.target.id === 'stocktake-search-input' && event.key === 'Enter') {
+  if (event.target?.id === 'stocktake-search-input' && event.key === 'Enter') {
     event.preventDefault();
     const firstItem = document.querySelector('#stocktake-search-results .stocktake-search-item');
     if (firstItem) {
@@ -11555,7 +11632,7 @@ document.addEventListener('keydown', event => {
     }
     return;
   }
-  if (event.target.classList.contains('stocktake-qty-input') && event.key === 'Enter') {
+  if (event.target?.classList?.contains('stocktake-qty-input') && event.key === 'Enter') {
     event.preventDefault();
     const inputs = Array.from(document.querySelectorAll('.stocktake-qty-input'));
     const idx = inputs.indexOf(event.target);
@@ -11593,7 +11670,7 @@ const sidebarHoverZone = document.getElementById('sidebar-hover-zone');
 let sidebarHoverTimer = 0;
 
 function isDesktopSidebar() {
-  return window.innerWidth > 760;
+  return window.innerWidth > 760 && (!window.matchMedia || window.matchMedia('(hover: hover) and (pointer: fine)').matches);
 }
 
 function updateSidebarUI() {

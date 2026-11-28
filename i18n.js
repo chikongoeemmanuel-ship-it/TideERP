@@ -103,6 +103,10 @@
     'Saved in IndexedDB': 'Imehifadhiwa Ndani',
     'Main branch': 'Tawi Kuu',
     'Lock': 'Funga',
+    'Menu': 'Menyu',
+    'POS': 'POS',
+    'View Cart / Pay →': 'Kikapu / Lipa →',
+    'Loading iOS camera barcode decoder…': 'Inapakia kisoma msimbopau cha kamera…',
     'Home': 'Nyumbani',
     'Overview': 'Muhtasari',
     'Sales': 'Mauzo',
@@ -831,7 +835,7 @@
   function setLang(lang) {
     const next = lang === 'sw' ? 'sw' : 'en';
     currentLang = next;
-    try { localStorage.setItem(LANG_KEY, next); } catch {}
+    try { localStorage.setItem(LANG_KEY, next); } catch { }
     if (typeof document !== 'undefined') {
       document.documentElement.lang = next;
       document.documentElement.dataset.lang = next;

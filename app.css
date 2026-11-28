@@ -7370,6 +7370,7 @@ body {
   border-radius: 14px;
   padding: 10px 16px 6px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
 
@@ -7484,6 +7485,7 @@ body {
   border-radius: 14px;
   padding: 12px 18px 10px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
 
@@ -11914,6 +11916,7 @@ tr.row-revoked td strong {
   dialog#app-modal::backdrop,
   .modal::backdrop {
     background: rgba(10, 22, 34, 0.65) !important;
+    -webkit-backdrop-filter: blur(2px) !important;
     backdrop-filter: blur(2px) !important;
   }
 
@@ -13513,4 +13516,287 @@ tr.row-revoked td strong {
   color: var(--muted, #64748b);
   font-size: 10.5px;
   margin-right: 5px;
+}
+
+/* =========================================================================
+   APPLE (iOS / iPadOS / macOS) COMPATIBILITY & PHONE UI REDESIGN LAYER
+   ========================================================================= */
+
+/* Hidden on desktop; activated on phones (<= 760px) */
+.mobile-bottom-nav {
+  display: none;
+}
+
+.mobile-pos-cart-bar {
+  display: none;
+}
+
+/* iPad & Touch Tablet Sidebar Fix: allow slide-in drawer & backdrop at ANY width on touch devices */
+@media (hover: none), (pointer: coarse) {
+  .sidebar.open {
+    transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar-backdrop.active {
+    display: block !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+}
+
+/* iPhone & Touch Anti-Auto-Zoom: iOS Safari zooms when any input/select/textarea is < 16px */
+@media (max-width: 900px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]),
+  select,
+  textarea,
+  .select-control,
+  .search-box input,
+  .field input,
+  .field select,
+  .field textarea,
+  .auth-form-modern input,
+  .auth-form-modern select,
+  .pricelist-price-input,
+  .table-power-select,
+  .stocktake-search-input,
+  .stocktake-qty-input {
+    font-size: 16px !important;
+  }
+}
+
+/* Smooth momentum scrolling for all tables & carousels on iOS Safari */
+.table-scroll,
+.hub-table-wrapper,
+.cart-list,
+.modal-card {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Phone UI Redesign & iPhone Safe-Area Support (<= 760px) */
+@media (max-width: 760px) {
+  .app-shell,
+  .auth-gate {
+    min-height: 100dvh;
+  }
+
+  /* Safe-area notch support for iPhone Home Screen PWA */
+  .topbar {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+    gap: 6px;
+  }
+
+  /* Apple HIG >= 40-44px comfortable touch targets */
+  .topbar .icon-button,
+  .sidebar-toggle {
+    min-width: 38px;
+    min-height: 38px;
+  }
+
+  .button {
+    min-height: 40px;
+    padding: 9px 13px;
+  }
+
+  .button.small {
+    min-height: 34px;
+    padding: 6px 10px;
+  }
+
+  .qty-control button {
+    min-width: 36px;
+    min-height: 36px;
+    font-size: 16px;
+  }
+
+  /* Strictly clamp modals within iPhone 360-390px viewports (zero horizontal bleed) */
+  dialog#app-modal,
+  dialog.modal,
+  .modal {
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px) !important;
+    min-width: 0 !important;
+    max-height: calc(92dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
+    left: 0 !important;
+    right: 0 !important;
+    margin: auto !important;
+  }
+
+  .modal-card,
+  #modal-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 14px !important;
+    border-radius: 16px !important;
+  }
+
+  /* Page spacing & reserve room above fixed bottom nav + compact footer */
+  .page-wrap {
+    padding: 12px 12px calc(134px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Lift footer cleanly above mobile bottom quick-nav bar */
+  .app-footer-bar {
+    bottom: calc(58px + env(safe-area-inset-bottom, 0px)) !important;
+    padding: 6px 10px !important;
+    gap: 6px !important;
+    z-index: 41;
+  }
+
+  .app-footer-bar .footer-status-tag {
+    display: none;
+  }
+
+  .footer-actions-cluster {
+    width: 100%;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .footer-action-button {
+    flex: 1 1 0;
+    justify-content: center;
+    padding: 5px 6px !important;
+    font-size: 11px !important;
+    min-height: 32px;
+  }
+
+  /* Fixed One-Thumb Mobile Bottom Navigation Bar */
+  .mobile-bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    align-items: center;
+    background: var(--white, #ffffff);
+    border-top: 1px solid var(--line, #cbd8e6);
+    padding: 4px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -6px 20px rgba(10, 30, 54, 0.08);
+  }
+
+  :root[data-theme="dark"] .mobile-bottom-nav {
+    background: #141a1e;
+    border-top-color: #2b3942;
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.4);
+  }
+
+  .mob-nav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 48px;
+    border: 0;
+    background: transparent;
+    color: var(--muted, #526b77);
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    border-radius: 10px;
+    cursor: pointer;
+    padding: 4px 2px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .mob-nav-btn .mob-nav-ico {
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  .mob-nav-btn.active {
+    color: var(--brand-secondary, #ff6a00);
+    background: var(--brand-secondary-soft, rgba(255, 106, 0, 0.12));
+  }
+
+  /* Crisp 2-Column Mobile KPIs & Home Action Cards */
+  .summary-strip,
+  .hub-finance-cards-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .hub-actions-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .hub-action-box {
+    padding: 12px !important;
+    min-height: 92px;
+  }
+
+  /* Cleanly stacked mobile toolbars, filters & price list controls */
+  .page-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .heading-actions {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .toolbar,
+  .toolbar-left,
+  .toolbar-right,
+  .filter-bar-inner,
+  .pricelist-download-bar,
+  .pricelist-sample-bar {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 8px;
+  }
+
+  .search-box,
+  .search-box input,
+  .select-control {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .form-grid,
+  .pricelist-config-grid,
+  .brand-color-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Sticky Mobile POS Floating Cart Bar */
+  .mobile-pos-cart-bar {
+    position: sticky;
+    bottom: calc(108px + env(safe-area-inset-bottom, 0px));
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    background: var(--brand-primary, #0a1e36);
+    color: #ffffff;
+    box-shadow: 0 10px 26px rgba(10, 30, 54, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+  }
+
+  .mobile-pos-cart-bar strong {
+    display: block;
+    font-size: 14px;
+    color: #ffffff;
+  }
+
+  .mobile-pos-cart-bar small {
+    display: block;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.8);
+  }
 }
