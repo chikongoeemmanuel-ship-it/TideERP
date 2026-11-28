@@ -1,0 +1,706 @@
+rules_version = '2';
+
+// =============================================================================
+// Tide ERP — Cloud Firestore Security Rules (Prototype)
+// Firebase Project: tideerp
+// =============================================================================
+//
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following multi-tenant, multi-branch
+// Firestore data structures:
+//
+// 1. Primary Legacy Tenant (`ws_primary`, Main Branch `BR-MAIN`):
+//    - Collection: `products/{productId}`
+//      Document ID: sanitized SKU / product doc ID (1..300 chars)
+//      Fields:
+//        - id: string (required, 1..300 chars, immutable on update)
+//        - name: string (required, 1..200 chars)
+//        - category: string (required, 1..120 chars)
+//        - price: int|float (required, 0..1000000000000)
+//        - cost: int|float (required, 0..1000000000000)
+//        - stock: int|float (required, 0..1000000000)
+//        - low: int|float (required, 0..1000000000)
+//        - unit: string (required, 1..60 chars)
+//        - status: string (required, in ['Active', 'Inactive', 'Archived', 'Discontinued'])
+//        - expiryDate: string (required, '' or YYYY-MM-DD, max 32 chars)
+//        - batchNumber: string (required, 0..100 chars)
+//        - updatedAt: string (required, ISO-8601 date string, max 64 chars)
+//        - updatedAtMs: int (required, >= 0)
+//
+//    - Collection: `tide_erp_modules/{moduleName}`
+//      Document ID: allowlisted module name:
+//        - Shared admin-write modules: 'core', 'assets'
+//        - Shared member-write modules: 'notices', 'system_logs'
+//        - BR-MAIN branch-scoped operational modules:
+//          'parties', 'sales', 'purchases', 'expenses', 'accounting',
+//          'inventory_logs', 'branch_trash'
+//      Fields:
+//        - data: map (required, module-specific allowlisted keys & bounded sizes)
+//        - updatedAtMs: int (required, >= 0)
+//        - updatedAt: string (required, ISO-8601 date string, max 64 chars)
+//        - updatedBy: string (required, 1..128 chars)
+//        - branchId: string (required, 'SHARED' for shared modules, 'BR-MAIN' for main branch modules)
+//        - device: string (required, in ['PC', 'Phone', 'Tablet', 'Web'])
+//
+//    - Subcollections: `tide_erp_branches/{branchId}/products/{productId}`
+//      and `tide_erp_branches/{branchId}/modules/{moduleName}`
+//      Document IDs: `branchId` != 'BR-MAIN', matching ^[a-zA-Z0-9_-]{2,64}$;
+//      `moduleName` restricted to branch-scoped operational modules only;
+//      module `branchId` field must equal `{branchId}`.
+//
+// 2. Isolated Multi-Tenant Companies (`wsId != 'ws_primary'`):
+//    - `tide_erp_tenants/{wsId}/products/{productId}` (Main branch `BR-MAIN`)
+//    - `tide_erp_tenants/{wsId}/modules/{moduleName}` (Shared + `BR-MAIN`)
+//    - `tide_erp_tenants/{wsId}/branches/{branchId}/products/{productId}` (`branchId != 'BR-MAIN'`)
+//    - `tide_erp_tenants/{wsId}/branches/{branchId}/modules/{moduleName}` (`branchId != 'BR-MAIN'`)
+//    - `tide_erp_tenants/{wsId}/members/{uid}` (Applies to ALL tenants including `ws_primary`)
+//      Document ID: Firebase Auth UID
+//      Fields:
+//        - role: string (required, in ['admin', 'manager', 'staff'])
+//        - branchId: string (required, valid branchId or '*' or 'ALL')
+//        - active: bool (required)
+//
+// 3. Global Login Directory:
+//    - Collection: `tide_erp_accounts/{accountKey}`
+//      Document ID: `user_<encodedUsername>` or `email_<encodedEmail>`
+//                   matching ^(user|email)_[a-z0-9._-]{1,210}$
+//      Fields:
+//        - workspaceId: string (required, valid workspaceId, immutable on update)
+//        - companyName: string (required, 1..160 chars)
+//        - userId: string (required, 1..128 chars, immutable on update)
+//        - name: string (required, 1..120 chars)
+//        - username: string (required, 0..80 chars; username or email must be non-empty)
+//        - email: string (required, '' or valid email max 254 chars)
+//        - status: string (required, in ['Active', 'Inactive', 'Suspended']; non-admins cannot change)
+//        - updatedAtMs: int (required, >= 0)
+//        - ownerUid: string (required, 1..128 chars, == request.auth.uid on create, immutable on update)
+//
+// ===============================================================
+// Access & Query Notes
+// ===============================================================
+// - All tenant/branch collections require Firebase Auth (`request.auth != null`)
+//   plus verified tenant membership via either:
+//     (a) Firebase Auth custom claim `request.auth.token.workspaceId == wsId`
+//     (b) Active membership doc `tide_erp_tenants/{wsId}/members/{request.auth.uid}`
+// - On root `modules` collections (which co-locate shared modules and BR-MAIN
+//   branch modules), admins and BR-MAIN/all-branch members can run unfiltered
+//   collection `.get()`/`.onSnapshot()` queries; staff restricted to a secondary
+//   branch can `get` or query shared modules (`core`, `assets`, `notices`,
+//   `system_logs`) without gaining read access to BR-MAIN operational modules.
+// - `tide_erp_accounts` strictly forbids `list` (no account enumeration) and
+//   restricts `get` of existing docs to the owning `ownerUid` or an admin of
+//   the owning `workspaceId` (zero cross-tenant PII exposure).
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Core Authentication & Utility Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() &&
+             resource != null &&
+             'ownerUid' in resource.data &&
+             request.auth.uid == resource.data.ownerUid;
+    }
+
+    function uidUnchanged() {
+      return 'ownerUid' in request.resource.data &&
+             request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return 'ownerUid' in request.resource.data &&
+             'ownerUid' in resource.data &&
+             request.resource.data.ownerUid == resource.data.ownerUid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string &&
+             val.size() >= minLen &&
+             val.size() <= maxLen;
+    }
+
+    function validStringLength(field, minLen, maxLen) {
+      return field in request.resource.data &&
+             isValidString(request.resource.data[field], minLen, maxLen);
+    }
+
+    function isValidOptionalString(mapData, field, minLen, maxLen) {
+      return !(field in mapData) ||
+             isValidString(mapData[field], minLen, maxLen);
+    }
+
+    function isValidOptionalList(mapData, field, maxSize) {
+      return !(field in mapData) ||
+             (mapData[field] is list && mapData[field].size() <= maxSize);
+    }
+
+    function isValidOptionalMap(mapData, field, maxKeys) {
+      return !(field in mapData) ||
+             mapData[field] == null ||
+             (mapData[field] is map && mapData[field].keys().size() <= maxKeys);
+    }
+
+    function isNonNegativeNumber(val, maxVal) {
+      return (val is int || val is float) &&
+             val >= 0 &&
+             val <= maxVal;
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+             email.size() <= 254 &&
+             email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');
+    }
+
+    // Validates ISO-8601 timestamp string format (e.g., 2026-11-28T09:53:16.000Z)
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+             dateStr.size() <= 64 &&
+             dateStr.matches('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|[+-]\\d{2}:\\d{2})?$');
+    }
+
+    // Validates YYYY-MM-DD calendar date format for optional product expiryDate
+    function isValidIsoDate(dateStr) {
+      return dateStr is string &&
+             dateStr.size() == 10 &&
+             dateStr.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidWorkspaceId(wsId) {
+      return wsId is string &&
+             wsId.matches('^[a-zA-Z0-9_-]{3,80}$');
+    }
+
+    function isValidBranchId(branchId) {
+      return branchId is string &&
+             branchId.matches('^[a-zA-Z0-9_-]{2,64}$');
+    }
+
+    function isValidAccountKey(accountKey) {
+      return accountKey is string &&
+             accountKey.matches('^(user|email)_[a-z0-9._-]{1,210}$');
+    }
+
+    // ===============================================================
+    // Multi-Tenant & Branch RBAC Helper Functions
+    // Authority is derived ONLY from trusted Firebase Auth custom claims
+    // or server/admin-managed `tide_erp_tenants/{wsId}/members/{uid}` docs.
+    // ===============================================================
+
+    function hasClaimWorkspace(wsId) {
+      return isAuthenticated() &&
+             isValidWorkspaceId(wsId) &&
+             ('workspaceId' in request.auth.token) &&
+             request.auth.token.workspaceId == wsId &&
+             (!('active' in request.auth.token) || request.auth.token.active == true);
+    }
+
+    function hasActiveMemberDoc(wsId) {
+      return isAuthenticated() &&
+             isValidWorkspaceId(wsId) &&
+             exists(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.active == true &&
+             get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.role in ['admin', 'manager', 'staff'];
+    }
+
+    function isTenantMember(wsId) {
+      return hasClaimWorkspace(wsId) || hasActiveMemberDoc(wsId);
+    }
+
+    function isTenantAdmin(wsId) {
+      return (hasClaimWorkspace(wsId) &&
+              ('role' in request.auth.token) &&
+              request.auth.token.role == 'admin') ||
+             (isAuthenticated() &&
+              isValidWorkspaceId(wsId) &&
+              exists(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)) &&
+              get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.active == true &&
+              get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    function isBranchAllowed(wsId, branchId) {
+      return isTenantMember(wsId) &&
+             isValidBranchId(branchId) &&
+             (isTenantAdmin(wsId) ||
+              (hasClaimWorkspace(wsId) &&
+               ('branchId' in request.auth.token) &&
+               request.auth.token.branchId is string &&
+               (request.auth.token.branchId == branchId ||
+                request.auth.token.branchId == '*' ||
+                request.auth.token.branchId == 'ALL')) ||
+              (exists(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.active == true &&
+               (get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.branchId == branchId ||
+                get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.branchId == '*' ||
+                get(/databases/$(database)/documents/tide_erp_tenants/$(wsId)/members/$(request.auth.uid)).data.branchId == 'ALL')));
+    }
+
+    // ===============================================================
+    // Module Classification & Authorization Helpers
+    // ===============================================================
+
+    function isAdminOnlyModule(moduleName) {
+      return moduleName in ['core', 'assets'];
+    }
+
+    function isMemberSharedModule(moduleName) {
+      return moduleName in ['notices', 'system_logs'];
+    }
+
+    function isSharedModule(moduleName) {
+      return isAdminOnlyModule(moduleName) || isMemberSharedModule(moduleName);
+    }
+
+    function isBranchModule(moduleName) {
+      return moduleName in [
+        'parties',
+        'sales',
+        'purchases',
+        'expenses',
+        'accounting',
+        'inventory_logs',
+        'branch_trash'
+      ];
+    }
+
+    function isValidRootModule(moduleName) {
+      return isSharedModule(moduleName) || isBranchModule(moduleName);
+    }
+
+    function expectedRootModuleBranchId(moduleName) {
+      return isSharedModule(moduleName) ? 'SHARED' : 'BR-MAIN';
+    }
+
+    function canGetRootModule(wsId, moduleName) {
+      return isTenantMember(wsId) &&
+             isValidRootModule(moduleName) &&
+             (isSharedModule(moduleName) || isBranchAllowed(wsId, 'BR-MAIN'));
+    }
+
+    function canListRootModules(wsId, moduleName) {
+      return isBranchAllowed(wsId, 'BR-MAIN') ||
+             (isTenantMember(wsId) && isSharedModule(moduleName));
+    }
+
+    function canWriteRootModule(wsId, moduleName) {
+      return (isAdminOnlyModule(moduleName) && isTenantAdmin(wsId)) ||
+             (isMemberSharedModule(moduleName) && isTenantMember(wsId)) ||
+             (isBranchModule(moduleName) && isBranchAllowed(wsId, 'BR-MAIN'));
+    }
+
+    // ===============================================================
+    // Domain Validators (MUST be called on BOTH create and update)
+    // ===============================================================
+
+    function isValidProduct(data, productId) {
+      return productId.size() >= 1 &&
+             productId.size() <= 300 &&
+             hasOnlyAllowedFields([
+               'id', 'name', 'category', 'price', 'cost', 'stock', 'low',
+               'unit', 'status', 'expiryDate', 'batchNumber', 'updatedAt', 'updatedAtMs'
+             ]) &&
+             hasRequiredFields([
+               'id', 'name', 'category', 'price', 'cost', 'stock', 'low',
+               'unit', 'status', 'expiryDate', 'batchNumber', 'updatedAt', 'updatedAtMs'
+             ]) &&
+             isValidString(data.id, 1, 300) &&
+             isValidString(data.name, 1, 200) &&
+             isValidString(data.category, 1, 120) &&
+             isNonNegativeNumber(data.price, 1000000000000) &&
+             isNonNegativeNumber(data.cost, 1000000000000) &&
+             isNonNegativeNumber(data.stock, 1000000000) &&
+             isNonNegativeNumber(data.low, 1000000000) &&
+             isValidString(data.unit, 1, 60) &&
+             data.status is string &&
+             data.status in ['Active', 'Inactive', 'Archived', 'Discontinued'] &&
+             data.expiryDate is string &&
+             (data.expiryDate == '' || isValidIsoDate(data.expiryDate)) &&
+             isValidString(data.batchNumber, 0, 100) &&
+             isValidDateString(data.updatedAt) &&
+             data.updatedAtMs is int &&
+             data.updatedAtMs >= 0;
+    }
+
+    function isValidCoreModulePayload(payload) {
+      return payload.keys().hasOnly([
+               'version', 'companyName', 'companyAddress', 'companyPhone',
+               'companyEmail', 'companyPaymentDetails', 'companyAdminId',
+               'currency', 'vatEnabled', 'vatRate', 'branches', 'users',
+               'productCategories', 'measurementUnits', 'productPackages',
+               'notificationSettings', 'autoLockMinutes', 'themeColors',
+               'notificationSound'
+             ]) &&
+             (!('version' in payload) || (payload.version is int && payload.version >= 1 && payload.version <= 1000)) &&
+             isValidOptionalString(payload, 'companyName', 1, 160) &&
+             isValidOptionalString(payload, 'companyAddress', 0, 300) &&
+             isValidOptionalString(payload, 'companyPhone', 0, 64) &&
+             (!('companyEmail' in payload) || payload.companyEmail == '' || isValidEmail(payload.companyEmail)) &&
+             isValidOptionalString(payload, 'companyPaymentDetails', 0, 1000) &&
+             isValidOptionalString(payload, 'companyAdminId', 0, 128) &&
+             isValidOptionalString(payload, 'currency', 1, 16) &&
+             (!('vatEnabled' in payload) || payload.vatEnabled is bool) &&
+             (!('vatRate' in payload) || isNonNegativeNumber(payload.vatRate, 100)) &&
+             (!('autoLockMinutes' in payload) || isNonNegativeNumber(payload.autoLockMinutes, 1440)) &&
+             isValidOptionalList(payload, 'branches', 200) &&
+             isValidOptionalList(payload, 'users', 500) &&
+             isValidOptionalList(payload, 'productCategories', 500) &&
+             isValidOptionalList(payload, 'measurementUnits', 200) &&
+             isValidOptionalList(payload, 'productPackages', 500) &&
+             isValidOptionalMap(payload, 'notificationSettings', 20) &&
+             isValidOptionalMap(payload, 'themeColors', 10) &&
+             isValidOptionalMap(payload, 'notificationSound', 15);
+    }
+
+    function isValidModulePayload(moduleName, payload) {
+      return payload is map &&
+             payload.keys().size() <= 30 &&
+             (moduleName == 'core'
+               ? isValidCoreModulePayload(payload)
+               : moduleName == 'assets'
+                 ? (payload.keys().hasOnly(['companyLogo']) &&
+                    (!('companyLogo' in payload) || payload.companyLogo == null || isValidString(payload.companyLogo, 0, 500000)))
+               : moduleName == 'notices'
+                 ? (payload.keys().hasOnly(['notices']) &&
+                    isValidOptionalList(payload, 'notices', 500))
+               : moduleName == 'system_logs'
+                 ? (payload.keys().hasOnly(['activityLog']) &&
+                    isValidOptionalList(payload, 'activityLog', 5000))
+               : moduleName == 'parties'
+                 ? (payload.keys().hasOnly(['customers', 'suppliers']) &&
+                    isValidOptionalList(payload, 'customers', 5000) &&
+                    isValidOptionalList(payload, 'suppliers', 5000))
+               : moduleName == 'sales'
+                 ? (payload.keys().hasOnly(['orders', 'sales', 'returns']) &&
+                    isValidOptionalList(payload, 'orders', 10000) &&
+                    isValidOptionalList(payload, 'sales', 10000) &&
+                    isValidOptionalList(payload, 'returns', 10000))
+               : moduleName == 'purchases'
+                 ? (payload.keys().hasOnly(['purchases', 'purchaseReturns']) &&
+                    isValidOptionalList(payload, 'purchases', 10000) &&
+                    isValidOptionalList(payload, 'purchaseReturns', 10000))
+               : moduleName == 'expenses'
+                 ? (payload.keys().hasOnly(['expenses']) &&
+                    isValidOptionalList(payload, 'expenses', 10000))
+               : moduleName == 'accounting'
+                 ? (payload.keys().hasOnly(['entries']) &&
+                    isValidOptionalList(payload, 'entries', 10000))
+               : moduleName == 'inventory_logs'
+                 ? (payload.keys().hasOnly(['stockMovements', 'stocktakes', 'stocktakeDraft']) &&
+                    isValidOptionalList(payload, 'stockMovements', 10000) &&
+                    isValidOptionalList(payload, 'stocktakes', 2000) &&
+                    isValidOptionalMap(payload, 'stocktakeDraft', 50))
+               : moduleName == 'branch_trash'
+                 ? (payload.keys().hasOnly(['trashBin', 'queue']) &&
+                    isValidOptionalList(payload, 'trashBin', 2000) &&
+                    isValidOptionalList(payload, 'queue', 2000))
+               : false);
+    }
+
+    function isValidModuleDoc(data, moduleName, expectedBranchId) {
+      return hasOnlyAllowedFields(['data', 'updatedAtMs', 'updatedAt', 'updatedBy', 'branchId', 'device']) &&
+             hasRequiredFields(['data', 'updatedAtMs', 'updatedAt', 'updatedBy', 'branchId', 'device']) &&
+             data.updatedAtMs is int &&
+             data.updatedAtMs >= 0 &&
+             isValidDateString(data.updatedAt) &&
+             isValidString(data.updatedBy, 1, 128) &&
+             isValidString(data.branchId, 1, 64) &&
+             data.branchId == expectedBranchId &&
+             data.device is string &&
+             data.device in ['PC', 'Phone', 'Tablet', 'Web'] &&
+             isValidModulePayload(moduleName, data.data);
+    }
+
+    function isValidMemberDoc(data) {
+      return hasOnlyAllowedFields(['role', 'branchId', 'active']) &&
+             hasRequiredFields(['role', 'branchId', 'active']) &&
+             data.role is string &&
+             data.role in ['admin', 'manager', 'staff'] &&
+             data.branchId is string &&
+             (data.branchId == '*' || data.branchId == 'ALL' || isValidBranchId(data.branchId)) &&
+             data.active is bool;
+    }
+
+    function isValidAccountDirectoryDoc(data, accountKey) {
+      return hasOnlyAllowedFields([
+               'workspaceId', 'companyName', 'userId', 'name',
+               'username', 'email', 'status', 'updatedAtMs', 'ownerUid'
+             ]) &&
+             hasRequiredFields([
+               'workspaceId', 'companyName', 'userId', 'name',
+               'username', 'email', 'status', 'updatedAtMs', 'ownerUid'
+             ]) &&
+             isValidWorkspaceId(data.workspaceId) &&
+             isValidString(data.companyName, 1, 160) &&
+             isValidString(data.userId, 1, 128) &&
+             isValidString(data.name, 1, 120) &&
+             isValidString(data.username, 0, 80) &&
+             data.email is string &&
+             (data.email == '' || isValidEmail(data.email)) &&
+             (data.username.size() > 0 || data.email.size() > 0) &&
+             (accountKey.matches('^user_.*') ? data.username.size() > 0 : data.email.size() > 0) &&
+             data.status is string &&
+             data.status in ['Active', 'Inactive', 'Suspended'] &&
+             data.updatedAtMs is int &&
+             data.updatedAtMs >= 0 &&
+             isValidString(data.ownerUid, 1, 128);
+    }
+
+    // ===============================================================
+    // 1. Primary Legacy Tenant (`ws_primary`, Main Branch `BR-MAIN`)
+    // ===============================================================
+
+    match /products/{productId} {
+      allow read: if isBranchAllowed('ws_primary', 'BR-MAIN');
+      allow create: if isBranchAllowed('ws_primary', 'BR-MAIN') &&
+                       isValidProduct(request.resource.data, productId);
+      allow update: if isBranchAllowed('ws_primary', 'BR-MAIN') &&
+                       isValidProduct(request.resource.data, productId) &&
+                       areImmutableFieldsUnchanged(['id']);
+      allow delete: if isBranchAllowed('ws_primary', 'BR-MAIN');
+    }
+
+    match /tide_erp_modules/{moduleName} {
+      allow get: if canGetRootModule('ws_primary', moduleName);
+      allow list: if canListRootModules('ws_primary', moduleName);
+      allow create: if isValidRootModule(moduleName) &&
+                       canWriteRootModule('ws_primary', moduleName) &&
+                       isValidModuleDoc(request.resource.data, moduleName, expectedRootModuleBranchId(moduleName));
+      allow update: if isValidRootModule(moduleName) &&
+                       canWriteRootModule('ws_primary', moduleName) &&
+                       isValidModuleDoc(request.resource.data, moduleName, expectedRootModuleBranchId(moduleName));
+      // Prevent accidental deletion of core settings; allow admin cleanup on other modules only
+      allow delete: if isTenantAdmin('ws_primary') &&
+                       isValidRootModule(moduleName) &&
+                       moduleName != 'core';
+    }
+
+    match /tide_erp_branches/{branchId} {
+      allow read, write: if false;
+
+      match /products/{productId} {
+        allow read: if branchId != 'BR-MAIN' &&
+                       isBranchAllowed('ws_primary', branchId);
+        allow create: if branchId != 'BR-MAIN' &&
+                         isBranchAllowed('ws_primary', branchId) &&
+                         isValidProduct(request.resource.data, productId);
+        allow update: if branchId != 'BR-MAIN' &&
+                         isBranchAllowed('ws_primary', branchId) &&
+                         isValidProduct(request.resource.data, productId) &&
+                         areImmutableFieldsUnchanged(['id']);
+        allow delete: if branchId != 'BR-MAIN' &&
+                         isBranchAllowed('ws_primary', branchId);
+      }
+
+      match /modules/{moduleName} {
+        allow get: if branchId != 'BR-MAIN' &&
+                      isBranchModule(moduleName) &&
+                      isBranchAllowed('ws_primary', branchId);
+        allow list: if branchId != 'BR-MAIN' &&
+                       isBranchAllowed('ws_primary', branchId);
+        allow create: if branchId != 'BR-MAIN' &&
+                         isBranchModule(moduleName) &&
+                         isBranchAllowed('ws_primary', branchId) &&
+                         isValidModuleDoc(request.resource.data, moduleName, branchId);
+        allow update: if branchId != 'BR-MAIN' &&
+                         isBranchModule(moduleName) &&
+                         isBranchAllowed('ws_primary', branchId) &&
+                         isValidModuleDoc(request.resource.data, moduleName, branchId);
+        allow delete: if branchId != 'BR-MAIN' &&
+                         isBranchModule(moduleName) &&
+                         isTenantAdmin('ws_primary');
+      }
+    }
+
+    // ===============================================================
+    // 2. Isolated Multi-Tenant Companies (`tide_erp_tenants/{wsId}`)
+    // ===============================================================
+
+    match /tide_erp_tenants/{wsId} {
+      allow read, write: if false;
+
+      // Membership documents apply to ALL tenants (including `ws_primary`).
+      // Users can read only their own membership doc; only tenant admins can
+      // list, create, update, or delete membership docs (preventing self-escalation).
+      match /members/{uid} {
+        allow get: if isValidWorkspaceId(wsId) &&
+                      (isOwner(uid) || isTenantAdmin(wsId));
+        allow list: if isValidWorkspaceId(wsId) &&
+                       isTenantAdmin(wsId);
+        allow create: if isValidWorkspaceId(wsId) &&
+                         isTenantAdmin(wsId) &&
+                         isValidMemberDoc(request.resource.data);
+        allow update: if isValidWorkspaceId(wsId) &&
+                         isTenantAdmin(wsId) &&
+                         isValidMemberDoc(request.resource.data);
+        allow delete: if isValidWorkspaceId(wsId) &&
+                         isTenantAdmin(wsId) &&
+                         request.auth.uid != uid;
+      }
+
+      // Main branch (`BR-MAIN`) products for isolated tenants (`wsId != 'ws_primary'`)
+      match /products/{productId} {
+        allow read: if wsId != 'ws_primary' &&
+                       isBranchAllowed(wsId, 'BR-MAIN');
+        allow create: if wsId != 'ws_primary' &&
+                         isBranchAllowed(wsId, 'BR-MAIN') &&
+                         isValidProduct(request.resource.data, productId);
+        allow update: if wsId != 'ws_primary' &&
+                         isBranchAllowed(wsId, 'BR-MAIN') &&
+                         isValidProduct(request.resource.data, productId) &&
+                         areImmutableFieldsUnchanged(['id']);
+        allow delete: if wsId != 'ws_primary' &&
+                         isBranchAllowed(wsId, 'BR-MAIN');
+      }
+
+      // Shared + main branch (`BR-MAIN`) modules for isolated tenants (`wsId != 'ws_primary'`)
+      match /modules/{moduleName} {
+        allow get: if wsId != 'ws_primary' &&
+                      canGetRootModule(wsId, moduleName);
+        allow list: if wsId != 'ws_primary' &&
+                       canListRootModules(wsId, moduleName);
+        allow create: if wsId != 'ws_primary' &&
+                         isValidRootModule(moduleName) &&
+                         canWriteRootModule(wsId, moduleName) &&
+                         isValidModuleDoc(request.resource.data, moduleName, expectedRootModuleBranchId(moduleName));
+        allow update: if wsId != 'ws_primary' &&
+                         isValidRootModule(moduleName) &&
+                         canWriteRootModule(wsId, moduleName) &&
+                         isValidModuleDoc(request.resource.data, moduleName, expectedRootModuleBranchId(moduleName));
+        allow delete: if wsId != 'ws_primary' &&
+                         isTenantAdmin(wsId) &&
+                         isValidRootModule(moduleName) &&
+                         moduleName != 'core';
+      }
+
+      // Secondary branches (`branchId != 'BR-MAIN'`) for isolated tenants
+      match /branches/{branchId} {
+        allow read, write: if false;
+
+        match /products/{productId} {
+          allow read: if wsId != 'ws_primary' &&
+                         branchId != 'BR-MAIN' &&
+                         isBranchAllowed(wsId, branchId);
+          allow create: if wsId != 'ws_primary' &&
+                           branchId != 'BR-MAIN' &&
+                           isBranchAllowed(wsId, branchId) &&
+                           isValidProduct(request.resource.data, productId);
+          allow update: if wsId != 'ws_primary' &&
+                           branchId != 'BR-MAIN' &&
+                           isBranchAllowed(wsId, branchId) &&
+                           isValidProduct(request.resource.data, productId) &&
+                           areImmutableFieldsUnchanged(['id']);
+          allow delete: if wsId != 'ws_primary' &&
+                           branchId != 'BR-MAIN' &&
+                           isBranchAllowed(wsId, branchId);
+        }
+
+        match /modules/{moduleName} {
+          allow get: if wsId != 'ws_primary' &&
+                        branchId != 'BR-MAIN' &&
+                        isBranchModule(moduleName) &&
+                        isBranchAllowed(wsId, branchId);
+          allow list: if wsId != 'ws_primary' &&
+                         branchId != 'BR-MAIN' &&
+                         isBranchAllowed(wsId, branchId);
+          allow create: if wsId != 'ws_primary' &&
+                           branchId != 'BR-MAIN' &&
+                           isBranchModule(moduleName) &&
+                           isBranchAllowed(wsId, branchId) &&
+                           isValidModuleDoc(request.resource.data, moduleName, branchId);
+          allow update: if wsId != 'ws_primary' &&
+                           branchId != 'BR-MAIN' &&
+                           isBranchModule(moduleName) &&
+                           isBranchAllowed(wsId, branchId) &&
+                           isValidModuleDoc(request.resource.data, moduleName, branchId);
+          allow delete: if wsId != 'ws_primary' &&
+                           branchId != 'BR-MAIN' &&
+                           isBranchModule(moduleName) &&
+                           isTenantAdmin(wsId);
+        }
+      }
+    }
+
+    // ===============================================================
+    // 3. Global Login Directory (`tide_erp_accounts/{accountKey}`)
+    // ===============================================================
+    // Anti-enumeration & Anti-hijacking protections:
+    // - `list` is unconditionally denied (prevents scraping all users/emails).
+    // - `get` requires auth and permits reading only non-existent keys (availability
+    //   check), the caller's own record (`ownerUid`), or records belonging to a
+    //   workspace where the caller is a tenant admin (prevents cross-tenant PII leaks).
+    // - `create` requires auth, non-existing doc, `ownerUid == request.auth.uid`,
+    //   valid schema, and membership in the target `workspaceId` (prevents
+    //   cross-tenant hijacking or spoofing).
+    // - `update` / `delete` restricted strictly to `ownerUid` or an admin of the
+    //   owning `workspaceId`; `ownerUid`, `workspaceId`, and `userId` are immutable;
+    //   non-admin owners cannot alter their own `status`.
+
+    match /tide_erp_accounts/{accountKey} {
+      allow list: if false;
+
+      allow get: if isAuthenticated() &&
+                    isValidAccountKey(accountKey) &&
+                    (resource == null ||
+                     isDocOwner() ||
+                     ('workspaceId' in resource.data && isTenantAdmin(resource.data.workspaceId)));
+
+      allow create: if isAuthenticated() &&
+                       isValidAccountKey(accountKey) &&
+                       !exists(/databases/$(database)/documents/tide_erp_accounts/$(accountKey)) &&
+                       isValidAccountDirectoryDoc(request.resource.data, accountKey) &&
+                       uidUnchanged() &&
+                       isTenantMember(request.resource.data.workspaceId);
+
+      allow update: if isAuthenticated() &&
+                       isValidAccountKey(accountKey) &&
+                       (isDocOwner() ||
+                        ('workspaceId' in resource.data && isTenantAdmin(resource.data.workspaceId))) &&
+                       isValidAccountDirectoryDoc(request.resource.data, accountKey) &&
+                       uidNotModified() &&
+                       areImmutableFieldsUnchanged(['ownerUid', 'workspaceId', 'userId']) &&
+                       (('workspaceId' in resource.data && isTenantAdmin(resource.data.workspaceId)) ||
+                        areImmutableFieldsUnchanged(['status']));
+
+      allow delete: if isAuthenticated() &&
+                       isValidAccountKey(accountKey) &&
+                       (isDocOwner() ||
+                        ('workspaceId' in resource.data && isTenantAdmin(resource.data.workspaceId)));
+    }
+
+    // ===============================================================
+    // 4. Fail-Closed Default Deny
+    // ===============================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

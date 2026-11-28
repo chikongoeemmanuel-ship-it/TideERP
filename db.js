@@ -449,25 +449,44 @@ async function registerAccountInDirectory(user, workspaceId = activeTenantWorksp
   if (!db) return false;
 
   try {
+    const targetWs = String(workspaceId || DEFAULT_WORKSPACE_ID);
+    const targetUid = String(user.id || '');
+    // Defense-in-depth: refuse to overwrite any directory entry owned by a DIFFERENT tenant/user!
+    const available = await checkCredentialsAvailableGlobally(user.username, user.email, targetUid, targetWs);
+    if (!available) {
+      console.warn(`Blocked cross-tenant directory overwrite for ${user.username || user.email} (ws=${targetWs})`);
+      return false;
+    }
+
     const batch = db.batch();
     const col = db.collection(ACCOUNTS_DIRECTORY_COLLECTION);
 
-    // Clean up old keys if username or email changed
+    // Clean up old keys ONLY if they actually belong to this same (workspaceId, userId)
     if (previousUser) {
+      const safeDeleteOldKey = async (docId) => {
+        if (!docId) return;
+        try {
+          const snap = await col.doc(docId).get({ source: 'server' }).catch(() => col.doc(docId).get());
+          if (snap && snap.exists) {
+            const rec = snap.data();
+            if (rec && rec.workspaceId === targetWs && rec.userId === targetUid) {
+              batch.delete(col.doc(docId));
+            }
+          }
+        } catch {}
+      };
       if (previousUser.username && String(previousUser.username).toLowerCase() !== String(user.username || '').toLowerCase()) {
-        const oldU = encodeAccountKey('user', previousUser.username);
-        if (oldU) batch.delete(col.doc(oldU));
+        await safeDeleteOldKey(encodeAccountKey('user', previousUser.username));
       }
       if (previousUser.email && String(previousUser.email).toLowerCase() !== String(user.email || '').toLowerCase()) {
-        const oldE = encodeAccountKey('email', previousUser.email);
-        if (oldE) batch.delete(col.doc(oldE));
+        await safeDeleteOldKey(encodeAccountKey('email', previousUser.email));
       }
     }
 
     const payload = {
-      workspaceId: String(workspaceId || DEFAULT_WORKSPACE_ID),
+      workspaceId: targetWs,
       companyName: String(companyName || ''),
-      userId: String(user.id || ''),
+      userId: targetUid,
       name: String(user.name || ''),
       username: String(user.username || '').trim().toLowerCase(),
       email: String(user.email || '').trim().toLowerCase(),

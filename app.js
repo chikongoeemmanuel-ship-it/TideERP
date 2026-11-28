@@ -6,7 +6,6 @@ const LAST_ACTIVITY_KEY = 'tide-erp-last-activity';
 const DEFAULT_AUTO_LOCK_MINUTES = 20;
 const ADMIN_LOGIN_EMAIL = 'chikongoeemmanuel@gmail.com';
 const ADMIN_LOGIN_USERNAME = 'Admin';
-const ADMIN_INITIAL_PASSWORD = 'Admin123';
 function safeStorageGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function safeStorageSet(key, value) { try { localStorage.setItem(key, value); } catch { } }
 function safeStorageRemove(key) { try { localStorage.removeItem(key); } catch { } }
@@ -367,13 +366,22 @@ function canViewPage(module, user = currentWorkspaceUser()) {
 }
 
 function canPerformAction(action, element = null) {
-  if (['close-modal', 'view-attachment', 'delete-attachment', 'download-attachment', 'add-attachment', 'view-entry-attachments', 'lock-screen', 'unlock-switch-account', 'new-notice', 'test-notification-sound'].includes(action)) return true;
+  // Strictly minimal pre-auth UI actions only
+  if (['close-modal', 'unlock-switch-account', 'logout'].includes(action)) return true;
   const user = currentWorkspaceUser();
   if (!state.currentUserId || !user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
   if (user.isBootstrap) return true;
   const type = element?.dataset?.partyType;
   const require = (module, permission) => userHasPermission(module, permission, user);
   switch (action) {
+    case 'lock-screen': case 'my-account': case 'new-notice': case 'test-notification-sound':
+    case 'jump-to-expiry': case 'filter-expiry-tab': case 'set-report-tab':
+    case 'apply-date-range': case 'clear-date-range': case 'clear-sales-filters':
+    case 'force-cloud-sync': case 'force-reload-app': case 'open-cloud-sync-dialog':
+    case 'view-attachment': case 'download-attachment': case 'view-entry-attachments': case 'add-attachment':
+      return true;
+    case 'delete-attachment':
+      return isAdministratorUser(user) || require('sales', 'edit') || require('purchases', 'edit') || require('expenses', 'edit') || require('accounting', 'manage-entries');
     case 'new-order': return require('sales', 'create');
     case 'edit-order': { const order = state.orders.find(item => item.id === element?.dataset?.id); return order?.source === 'POS' ? (require('pos', 'draft') || require('pos', 'finalize') || require('sales', 'edit')) : require('sales', 'edit'); }
     case 'finalize-order': { const order = state.orders.find(item => item.id === element?.dataset?.id); return order?.source === 'POS' ? require('pos', 'finalize') : require('sales', 'edit'); }
@@ -397,7 +405,9 @@ function canPerformAction(action, element = null) {
     case 'delete-product': return require('inventory', 'delete-products');
     case 'bulk-delete-products': return require('inventory', 'delete-products');
     case 'adjust-stock': case 'bulk-stock-adjust': return require('inventory', 'adjust-stock');
-    case 'bulk-stocktake': case 'open-stocktake': case 'finalize-stocktake': case 'resume-stocktake': case 'pause-stocktake': case 'discard-stocktake-draft': return require('inventory', 'stocktake');
+    case 'bulk-stocktake': case 'open-stocktake': case 'finalize-stocktake': case 'resume-stocktake': case 'pause-stocktake': case 'discard-stocktake-draft':
+    case 'stocktake-add-all': case 'stocktake-clear-all': case 'stocktake-fill-current': case 'stocktake-pick-product': case 'stocktake-remove-item':
+      return require('inventory', 'stocktake');
     case 'view-stocktake-session': return require('inventory', 'view');
     case 'revoke-stocktake-session': case 'edit-stocktake-session': case 'delete-stocktake-session':
       return user.isBootstrap || (isAdministratorUser(user) && require('inventory', 'stocktake'));
@@ -412,7 +422,6 @@ function canPerformAction(action, element = null) {
     case 'export-expiry-report': return require('inventory', 'export');
     case 'write-off-expired': return require('inventory', 'adjust-stock');
     case 'clearance-discount': case 'edit-expiry': return require('inventory', 'edit-products');
-    case 'jump-to-expiry': case 'filter-expiry-tab': case 'set-report-tab': return true;
     case 'view-purchase': return require('purchases', 'view');
     case 'new-purchase': return require('purchases', 'create');
     case 'edit-purchase': return require('purchases', 'edit');
@@ -447,10 +456,13 @@ function canPerformAction(action, element = null) {
     case 'edit-user-permissions': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'manage-permissions'));
     case 'toggle-user': return require('users', 'activate');
     case 'delete-user': return user.isBootstrap || (isAdministratorUser(user) && require('users', 'delete'));
+    case 'view-user-activity': return user.isBootstrap || isAdministratorUser(user) || require('users', 'view');
     case 'new-branch': return user.isBootstrap || (isAdministratorUser(user) && require('branches', 'manage'));
     case 'open-branch': return userCanManageAllBranches(user) && require('branches', 'open');
     case 'select-transaction-product': case 'remove-transaction-product': return element?.dataset?.kind === 'purchase' ? require('purchases', 'create') : require('sales', 'create');
-    default: return true;
+    case 'export-full-backup': case 'trigger-restore-backup': case 'disconnect-cloud-sync':
+      return user.isBootstrap || isAdministratorUser(user);
+    default: return false;
   }
 }
 
@@ -1176,11 +1188,8 @@ async function ensureAdministratorLogin() {
   if (!admin) return false;
   if (!admin.username) admin.username = ADMIN_LOGIN_USERNAME;
   if (!admin.email) admin.email = ADMIN_LOGIN_EMAIL;
-  if (!admin.initialAdminLoginSeeded || !admin.passwordHash || !admin.passwordSalt) {
-    await setUserPassword(admin, ADMIN_INITIAL_PASSWORD);
-    admin.initialAdminLoginSeeded = true;
-  }
-  return true;
+  // Never seed a hardcoded default password in client code; require valid hashed credentials or registration
+  return Boolean(admin.passwordHash && admin.passwordSalt);
 }
 
 async function handleLogin(form) {
@@ -2483,13 +2492,25 @@ function findAttachmentById(attId) {
   return null;
 }
 
+function sanitizeAttachmentDataUrl(rawUrl, allowPdf = true) {
+  if (typeof rawUrl !== 'string') return '';
+  const trimmed = rawUrl.trim();
+  const pattern = allowPdf
+    ? /^data:(?:image\/(?:png|jpeg|jpg|webp|gif)|application\/pdf);base64,[A-Za-z0-9+/=]+$/i
+    : /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
+  return pattern.test(trimmed) ? trimmed : '';
+}
+
 function renderAttachmentCards(attachments = [], options = {}) {
   if (!attachments || !attachments.length) return '';
   return attachments.map(att => {
     const isPdf = att.type === 'application/pdf' || (att.name || '').toLowerCase().endsWith('.pdf');
+    const safeUrl = sanitizeAttachmentDataUrl(att.data, isPdf);
     const previewContent = isPdf
       ? `<div class="att-thumb-pdf"><span class="pdf-tag">PDF</span></div>`
-      : `<img class="att-thumb-img" src="${att.data}" alt="${esc(att.name)}" loading="lazy">`;
+      : safeUrl
+        ? `<img class="att-thumb-img" src="${safeUrl}" alt="${esc(att.name)}" loading="lazy">`
+        : `<div class="att-thumb-pdf"><span class="pdf-tag">FILE</span></div>`;
     return `
       <div class="attachment-item-card" data-att-id="${esc(att.id)}">
         <div class="att-item-left" data-action="view-attachment" data-att-id="${esc(att.id)}" title="Click to view ${esc(att.name)}" role="button" tabindex="0">
@@ -2523,14 +2544,14 @@ function renderAttachmentUploader(existingAttachments = [], scope = 'general') {
         </div>
         <label class="button small secondary file-browse-btn" for="attachment-file-input">
           <span>＋ Browse files</span>
-          <input type="file" id="attachment-file-input" multiple accept="image/*,.pdf,application/pdf" style="display:none">
+          <input type="file" id="attachment-file-input" multiple accept="image/png,image/jpeg,image/webp,image/gif,.pdf,application/pdf" style="display:none">
         </label>
       </div>
       <div class="attachments-dropzone" id="attachments-dropzone" tabindex="0" role="button" aria-label="Drop files here or click to browse">
         <span class="drop-icon">📁</span>
         <div class="drop-prompt">
           <strong>Drag &amp; drop photos or PDFs here</strong>
-          <small>Or click to browse from device (Max 8MB per file)</small>
+          <small>Images are auto-compressed for fast cloud sync · PDF max 450 KB</small>
         </div>
       </div>
       <div class="attachments-list ${!currentDraftAttachments.length ? 'is-empty' : ''}" id="attachments-list">
@@ -2556,7 +2577,7 @@ function renderAttachmentsGallery(attachments = [], { scope, recordId, canAdd = 
         ${canAdd ? `
           <label class="button small primary file-browse-btn" for="gallery-file-input-${esc(recordId)}">
             <span>＋ Add attachment</span>
-            <input type="file" id="gallery-file-input-${esc(recordId)}" data-gallery-record-id="${esc(recordId)}" data-gallery-scope="${esc(scope)}" multiple accept="image/*,.pdf,application/pdf" style="display:none">
+            <input type="file" id="gallery-file-input-${esc(recordId)}" data-gallery-record-id="${esc(recordId)}" data-gallery-scope="${esc(scope)}" multiple accept="image/png,image/jpeg,image/webp,image/gif,.pdf,application/pdf" style="display:none">
           </label>
         ` : ''}
       </div>
@@ -2570,21 +2591,23 @@ function renderAttachmentsGallery(attachments = [], { scope, recordId, canAdd = 
 function openAttachmentViewer(att) {
   if (!att) { toast('Attachment not found'); return; }
   const isPdf = att.type === 'application/pdf' || (att.name || '').toLowerCase().endsWith('.pdf');
+  const safeUrl = sanitizeAttachmentDataUrl(att.data, isPdf);
+  if (!safeUrl) { toast('Blocked unsafe or unsupported attachment format'); return; }
   let content = '';
   if (isPdf) {
     content = `
       <div class="attachment-preview-container pdf-container" style="display:flex;flex-direction:column;gap:12px">
         <div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface,#f1f5f9);padding:10px 14px;border-radius:8px">
           <span>📄 <strong>${esc(att.name)}</strong> (${formatBytes(att.size)})</span>
-          <a class="button small primary" href="${att.data}" target="_blank" download="${esc(att.name)}">Open / Download PDF ↗</a>
+          <a class="button small primary" href="${safeUrl}" target="_blank" rel="noopener noreferrer" download="${esc(att.name)}">Open / Download PDF ↗</a>
         </div>
-        <iframe src="${att.data}" style="width:100%;height:60vh;border-radius:8px;border:1px solid var(--line);background:#525659" title="PDF Document Viewer"></iframe>
+        <iframe src="${safeUrl}" sandbox="" style="width:100%;height:60vh;border-radius:8px;border:1px solid var(--line);background:#525659" title="PDF Document Viewer"></iframe>
       </div>
     `;
   } else {
     content = `
       <div class="attachment-preview-container image-container" style="text-align:center;padding:12px;background:rgba(0,0,0,0.03);border-radius:8px">
-        <img src="${att.data}" alt="${esc(att.name)}" style="max-width:100%;max-height:65vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,0.12)">
+        <img src="${safeUrl}" alt="${esc(att.name)}" style="max-width:100%;max-height:65vh;object-fit:contain;border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,0.12)">
       </div>
     `;
   }
@@ -2594,8 +2617,10 @@ function openAttachmentViewer(att) {
 
 function downloadAttachment(att) {
   if (!att || !att.data) return;
+  const safeUrl = sanitizeAttachmentDataUrl(att.data, true);
+  if (!safeUrl) { toast('Blocked unsafe attachment download'); return; }
   const a = document.createElement('a');
-  a.href = att.data;
+  a.href = safeUrl;
   a.download = att.name || 'attachment';
   document.body.appendChild(a);
   a.click();
@@ -2604,30 +2629,77 @@ function downloadAttachment(att) {
 
 function handleFilesSelected(files, onFileLoaded) {
   if (!files || !files.length) return;
-  const maxBytes = 8 * 1024 * 1024;
+  const allowedImageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+  const maxRawImageBytes = 8 * 1024 * 1024;
+  const maxPdfBytes = 450 * 1024; // Keeps Firestore modular docs safely under 1 MB limit
+  const maxEncodedChars = 580000;
+
   Array.from(files).forEach(file => {
-    if (file.size > maxBytes) {
-      toast(`"${file.name}" exceeds 8MB maximum size`);
-      return;
-    }
-    const isImage = file.type.startsWith('image/');
+    const isImage = allowedImageTypes.has(file.type);
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     if (!isImage && !isPdf) {
-      toast(`"${file.name}" is not a supported image or PDF file`);
+      toast(`"${file.name}" is not a supported PNG, JPEG, WebP, GIF, or PDF file`);
+      return;
+    }
+    if (isPdf && file.size > maxPdfBytes) {
+      toast(`PDF "${file.name}" exceeds 450 KB cloud sync limit`);
+      return;
+    }
+    if (isImage && file.size > maxRawImageBytes) {
+      toast(`"${file.name}" exceeds 8 MB maximum source size`);
       return;
     }
     const reader = new FileReader();
     reader.onload = e => {
-      const att = {
-        id: 'att_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-        name: file.name,
-        type: file.type || (isPdf ? 'application/pdf' : 'image/jpeg'),
-        size: file.size,
-        date: new Date().toISOString(),
-        uploadedBy: currentWorkspaceUser()?.name || 'Administrator',
-        data: e.target.result
+      const rawData = String(e.target.result || '');
+      const emitAttachment = (finalData, finalType, finalSize) => {
+        const safeUrl = sanitizeAttachmentDataUrl(finalData, isPdf);
+        if (!safeUrl) { toast(`"${file.name}" could not be validated safely`); return; }
+        if (safeUrl.length > maxEncodedChars) {
+          toast(`"${file.name}" is still too large for cloud sync after compression`);
+          return;
+        }
+        onFileLoaded({
+          id: 'att_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+          name: file.name,
+          type: finalType,
+          size: finalSize,
+          date: new Date().toISOString(),
+          uploadedBy: currentWorkspaceUser()?.name || 'Administrator',
+          data: safeUrl
+        });
       };
-      onFileLoaded(att);
+
+      if (isPdf || file.type === 'image/gif') {
+        emitAttachment(rawData, isPdf ? 'application/pdf' : 'image/gif', file.size);
+        return;
+      }
+
+      // Compress raster images via <canvas> so receipts stay crisp & cloud-sync safe
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1200;
+          let w = img.naturalWidth || img.width || maxDim;
+          let h = img.naturalHeight || img.height || maxDim;
+          if (w > maxDim || h > maxDim) {
+            const ratio = Math.min(maxDim / w, maxDim / h);
+            w = Math.max(1, Math.round(w * ratio));
+            h = Math.max(1, Math.round(h * ratio));
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          let out = canvas.toDataURL('image/jpeg', 0.78);
+          if (out.length > maxEncodedChars) out = canvas.toDataURL('image/jpeg', 0.55);
+          emitAttachment(out, 'image/jpeg', Math.round((out.length * 3) / 4));
+        } catch {
+          emitAttachment(rawData, file.type, file.size);
+        }
+      };
+      img.onerror = () => toast(`Could not read image "${file.name}"`);
+      img.src = rawData;
     };
     reader.readAsDataURL(file);
   });
@@ -3772,7 +3844,7 @@ function printOrderInvoice(order) {
     <body>
       <header>
         <div class="company">
-          ${state.companyLogo ? `<img class="company-logo" src="${esc(state.companyLogo)}" alt="${esc(state.companyName || 'Company')} logo">` : ''}
+          ${sanitizeAttachmentDataUrl(state.companyLogo, false) ? `<img class="company-logo" src="${sanitizeAttachmentDataUrl(state.companyLogo, false)}" alt="${esc(state.companyName || 'Company')} logo">` : ''}
           <h1>${esc(state.companyName || 'Your company')}</h1>
           ${state.companyAddress ? `<small>${esc(state.companyAddress)}</small>` : ''}
           ${contacts ? `<small>${contacts}</small>` : ''}
@@ -6695,7 +6767,7 @@ function openAccountReconcile(partyType, partyName) {
   if (!account) return;
   const current = partyType === 'Customer' ? Math.max(0, Number(account.balance) || 0) : Math.max(0, -(Number(account.balance) || 0));
   const label = partyType === 'Customer' ? 'Expected receivable balance' : 'Expected supplier payable';
-  openDialog('account-reconcile', `Reconcile ${partyName}`, `Enter the balance confirmed for this ${partyType.toLowerCase()} account. The difference will be recorded only on this account.`, `${inputField('reconcile-balance', `${label} (TZS)`, '', 'number', true, current)}${inputField('reconcile-date', 'Reconciliation date', '', 'date', true, today())}${inputField('reconcile-note', 'Reference / note', 'e.g. Statement closing balance')}`, 'Reconcile account');
+  openDialog('account-reconcile', `Reconcile ${esc(partyName)}`, `Enter the balance confirmed for this ${partyType.toLowerCase()} account. The difference will be recorded only on this account.`, `${inputField('reconcile-balance', `${label} (TZS)`, '', 'number', true, current)}${inputField('reconcile-date', 'Reconciliation date', '', 'date', true, today())}${inputField('reconcile-note', 'Reference / note', 'e.g. Statement closing balance')}`, 'Reconcile account');
   const form = document.getElementById('modal-content'); form.dataset.partyType = partyType; form.dataset.partyName = partyName;
 }
 
@@ -6858,7 +6930,7 @@ function openMarkExpensePaidDialog(expense) {
     </div>
     ${renderAttachmentUploader(expense.attachments || [], 'expense')}
   `;
-  openDialog('mark-expense-paid', `Mark Expense Paid · ${expense.id}`, 'Confirm the date of payment and optionally attach a payment receipt.', content, 'Confirm Paid');
+  openDialog('mark-expense-paid', `Mark Expense Paid · ${esc(expense.id)}`, 'Confirm the date of payment and optionally attach a payment receipt.', content, 'Confirm Paid');
   const form = document.getElementById('modal-content');
   if (form) form.dataset.recordId = expense.id;
 }
@@ -7252,10 +7324,17 @@ async function handleDialogSubmit(form) {
     try {
       parsed = JSON.parse(rawConfig);
     } catch {
-      try {
-        parsed = (new Function(`return ${rawConfig}`))();
-      } catch (err) {
-        toast('Invalid format. Please paste a valid Firebase configuration object.');
+      // Safe non-eval parser for pasted Firebase JS config snippets (allowlisted keys only)
+      const allowedKeys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'measurementId', 'databaseURL'];
+      const extracted = {};
+      for (const key of allowedKeys) {
+        const match = rawConfig.match(new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"'\\r\\n]+)["']`));
+        if (match && match[1]) extracted[key] = match[1].trim();
+      }
+      if (extracted.projectId && extracted.apiKey) {
+        parsed = extracted;
+      } else {
+        toast('Invalid format. Please paste a valid Firebase JSON configuration object.');
         return;
       }
     }
@@ -7937,6 +8016,10 @@ async function handleDialogSubmit(form) {
     const name = val('user-name'); if (!name) { toast('Enter the user name'); return; }
     const username = val('user-username'), email = val('user-email'), password = String(data.get('user-password') || ''), passwordConfirm = String(data.get('user-password-confirm') || '');
     if (!username || !email || !credentialsAvailable(username, email)) { toast('Choose a username and email that are unique to this user'); return; }
+    if (typeof checkCredentialsAvailableGlobally === 'function' && !(await checkCredentialsAvailableGlobally(username, email, '', getActiveWorkspaceId()))) {
+      toast('That username or email is already registered to another account');
+      return;
+    }
     if (password.length < 8 || password !== passwordConfirm) { toast(password.length < 8 ? 'Passwords must be at least 8 characters' : 'Passwords do not match'); return; }
     const role = val('user-role') || 'Salesman';
     if (role === 'Owner / Administrator' && !isWorkspaceAdministrator()) { toast('Only an Owner / Administrator can assign the administrator role'); return; }
@@ -7961,6 +8044,10 @@ async function handleDialogSubmit(form) {
     const password = String(data.get('edit-user-password') || ''), passwordConfirm = String(data.get('edit-user-password-confirm') || '');
     if (!name) { toast('Enter the user name'); return; }
     if (!username || !email || !credentialsAvailable(username, email, user.id)) { toast('Choose a username and email that are unique to this user'); return; }
+    if (typeof checkCredentialsAvailableGlobally === 'function' && !(await checkCredentialsAvailableGlobally(username, email, user.id, getActiveWorkspaceId()))) {
+      toast('That username or email is already registered to another account');
+      return;
+    }
     if (!accessibleBranches().some(branch => branch.id === branchId)) { toast('Choose an active branch'); return; }
     if (password && (password.length < 8 || password !== passwordConfirm)) { toast(password.length < 8 ? 'Passwords must be at least 8 characters' : 'Passwords do not match'); return; }
     if (user.isBootstrap && role !== 'Owner / Administrator') { toast('The primary workspace owner must keep the Owner / Administrator role'); return; }
@@ -7997,6 +8084,10 @@ async function handleDialogSubmit(form) {
     const previousUser = { username: user.username, email: user.email };
     if (!name) { toast('Enter the user full name'); return; }
     if (!credentialsAvailable(username, email, user.id)) { toast('That username or email is already assigned to another user'); return; }
+    if (typeof checkCredentialsAvailableGlobally === 'function' && !(await checkCredentialsAvailableGlobally(username, email, user.id, getActiveWorkspaceId()))) {
+      toast('That username or email is already registered to another account');
+      return;
+    }
     if (password || !user.passwordHash) {
       if (password.length < 8 || password !== passwordConfirm) { toast(password.length < 8 ? 'Passwords must be at least 8 characters' : 'Passwords do not match'); return; }
       await setUserPassword(user, password);
@@ -8015,6 +8106,10 @@ async function handleDialogSubmit(form) {
     const previousUser = { username: user.username, email: user.email };
     if (!name) { toast('Enter your full name'); return; }
     if (!credentialsAvailable(username, email, user.id)) { toast('That username or email is already assigned to another user'); return; }
+    if (typeof checkCredentialsAvailableGlobally === 'function' && !(await checkCredentialsAvailableGlobally(username, email, user.id, getActiveWorkspaceId()))) {
+      toast('That username or email is already registered to another account');
+      return;
+    }
     if (newPassword) {
       if (user.passwordHash && !await verifyUserPassword(user, currentPassword)) { toast('Current password is incorrect'); return; }
       if (newPassword.length < 8 || newPassword !== newPasswordConfirm) { toast(newPassword.length < 8 ? 'New passwords must be at least 8 characters' : 'New passwords do not match'); return; }
@@ -8715,7 +8810,7 @@ function handleAction(button) {
     case 'product-stock-history': {
       const product = state.products.find(p => p.id === id); if (!product) break;
       const rows = state.stockMovements.filter(m => m.productId === id).map(m => `<tr><td>${dateLabel(m.date)}</td><td>${esc(m.reason)}</td><td>${m.before}</td><td>${m.after}</td><td>${m.delta > 0 ? '+' : ''}${m.delta}</td></tr>`).join('') || emptyRow(5, 'No stock movements recorded');
-      openModal('Stock history', product.name, `<div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Reason</th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table></div>`, 'Close'); break;
+      openModal('Stock history', esc(product.name), `<div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Reason</th><th>Before</th><th>After</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table></div>`, 'Close'); break;
     }
     case 'adjust-stock': {
       const product = state.products.find(p => p.id === id); if (!product) break;
@@ -9342,7 +9437,7 @@ function handleAction(button) {
         toast(`${product.name} currently has 0 on-hand stock`);
         break;
       }
-      openDialog('confirm-write-off', `Write off expired stock: ${product.name}`,
+      openDialog('confirm-write-off', `Write off expired stock: ${esc(product.name)}`,
         'Record an inventory loss and write off remaining stock for this expired product.',
         `<div class="form-grid">
           <div class="field"><label>Product</label><strong>${esc(product.name)} (${esc(product.id)})</strong></div>
@@ -9363,8 +9458,8 @@ function handleAction(button) {
       const p20 = Math.round(product.price * 0.8);
       const p30 = Math.round(product.price * 0.7);
       const p50 = Math.round(product.price * 0.5);
-      openDialog('confirm-clearance-discount', `Clearance discount: ${product.name}`,
-        `Reduce selling price to clear expiring inventory before ${product.expiryDate || 'expiry'}.`,
+      openDialog('confirm-clearance-discount', `Clearance discount: ${esc(product.name)}`,
+        `Reduce selling price to clear expiring inventory before ${esc(product.expiryDate || 'expiry')}.`,
         `<div class="form-grid">
           <div class="field"><label>Current Selling Price</label><strong>${money(product.price)}</strong></div>
           <div class="field"><label>Unit Cost (Floor)</label><span>${money(product.cost)}</span></div>
@@ -9387,7 +9482,7 @@ function handleAction(button) {
     case 'edit-expiry': {
       const product = state.products.find(p => p.id === id);
       if (!product) break;
-      openDialog('update-product-expiry', `Update Expiry & Batch: ${product.name}`,
+      openDialog('update-product-expiry', `Update Expiry & Batch: ${esc(product.name)}`,
         'Set or update expiration date and batch/lot identifier.',
         `<div class="form-grid">
           ${inputField('edit-expiry-date', 'Expiration date', '', 'date', false, product.expiryDate || '')}
@@ -10312,12 +10407,9 @@ async function initApp() {
   }
 
   try {
-    const hasAdmin = await ensureAdministratorLogin();
-    if (!hasAdmin) { hideBootSplash(); renderAuthGate('No administrator account is configured.'); return; }
+    await ensureAdministratorLogin();
   } catch (error) {
-    hideBootSplash();
-    renderAuthGate(error.message || 'Secure sign-in could not be initialized.');
-    return;
+    console.warn('Admin login pre-check skipped:', error);
   }
 
   const signedInUser = state.users.find(user => user.id === savedSession?.id && user.passwordHash === savedSession?.passwordHash && user.status !== 'Inactive');
