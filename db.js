@@ -164,7 +164,7 @@ function sanitizeState(restored, initialState) {
   const arrayKeys = [
     'products', 'customers', 'suppliers', 'orders', 'sales',
     'returns', 'purchaseReturns', 'purchases', 'expenses', 'entries', 'queue',
-    'stockMovements', 'stocktakes', 'notices', 'users', 'productCategories', 'measurementUnits',
+    'stockMovements', 'stocktakes', 'stockTransfers', 'notices', 'users', 'productCategories', 'measurementUnits',
     'productPackages', 'trashBin', 'activityLog', 'branches'
   ];
   for (const key of arrayKeys) {
@@ -186,6 +186,7 @@ function sanitizeState(restored, initialState) {
   if (!clean.currency) clean.currency = 'TZS';
   if (typeof clean.vatEnabled !== 'boolean') clean.vatEnabled = true;
   if (typeof clean.vatRate !== 'number') clean.vatRate = 18;
+  clean.receiptWidth = clean.receiptWidth === '58mm' ? '58mm' : '80mm';
   if (typeof clean.autoLockMinutes !== 'number' || !Number.isFinite(clean.autoLockMinutes) || clean.autoLockMinutes < 0) {
     clean.autoLockMinutes = 20;
   }
@@ -242,11 +243,12 @@ const SHARED_MODULE_DEFS = {
   core: [
     'version', 'companyName', 'companyAddress', 'companyPhone', 'companyEmail',
     'companyPaymentDetails', 'companyAdminId', 'currency', 'vatEnabled', 'vatRate',
-    'branches', 'users', 'productCategories', 'measurementUnits', 'productPackages',
+    'receiptWidth', 'branches', 'users', 'productCategories', 'measurementUnits', 'productPackages',
     'notificationSettings', 'autoLockMinutes', 'themeColors', 'notificationSound'
   ],
   assets: ['companyLogo'],
   notices: ['notices'],
+  transfers: ['stockTransfers'],
   system_logs: ['activityLog']
 };
 
@@ -1164,5 +1166,44 @@ async function pushStateToCloud(state, immediate = false, forceAll = false) {
     await doPush();
   } else {
     cloudSaveDebounce = setTimeout(doPush, 350);
+  }
+}
+
+/**
+ * Append an incoming stock movement directly into a destination branch's Firestore
+ * `inventory_logs` module so inter-branch transfers leave an audit trail on both ends.
+ */
+async function appendBranchStockMovement(destBranchId, movement, wsId = activeTenantWorkspaceId) {
+  if (!destBranchId || !movement) return false;
+  const db = await ensureFirestoreReady();
+  if (!db) return false;
+  try {
+    const ref = branchModulesCollectionRef(db, wsId, destBranchId).doc('inventory_logs');
+    let snap = null;
+    try {
+      snap = await ref.get({ source: 'server' });
+    } catch {
+      snap = await ref.get();
+    }
+    const existingData = (snap && snap.exists && snap.data()?.data) ? snap.data().data : {};
+    const prevMovements = Array.isArray(existingData.stockMovements) ? existingData.stockMovements : [];
+    const nextMovements = [movement, ...prevMovements.filter(m => m && m.id !== movement.id)];
+    const nowMs = Date.now();
+    await ref.set({
+      data: {
+        stockMovements: nextMovements,
+        stocktakes: Array.isArray(existingData.stocktakes) ? existingData.stocktakes : [],
+        stocktakeDraft: existingData.stocktakeDraft !== undefined ? existingData.stocktakeDraft : null
+      },
+      updatedAtMs: nowMs,
+      updatedAt: new Date(nowMs).toISOString(),
+      updatedBy: CLIENT_SESSION_ID,
+      branchId: destBranchId,
+      device: getDeviceLabel()
+    });
+    return true;
+  } catch (err) {
+    console.warn(`Failed to append stock movement to branch ${destBranchId}:`, err);
+    return false;
   }
 }

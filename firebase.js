@@ -566,6 +566,65 @@
     });
   }
 
+  /**
+   * Atomically transfer product stock into a destination branch's Firestore collection.
+   * Increments stock if the product already exists in the destination branch, or creates
+   * the catalog item there with stock = qty.
+   */
+  async function transferProductToBranch(destBranchId, sourceProduct, qty, wsId = activeWorkspaceId) {
+    const amount = Math.max(0, Number(qty) || 0);
+    const targetBranch = String(destBranchId || '').trim();
+    if (!targetBranch || !sourceProduct || !sourceProduct.id || amount <= 0) {
+      return { ok: false, error: 'Invalid transfer parameters' };
+    }
+    let db = getDb();
+    if (!db) db = await initFirebase();
+    if (!db) return { ok: false, offline: true };
+
+    try {
+      const colRef = productsCollectionRef(db, wsId, targetBranch);
+      const { docId, data: baseData } = normalizeProductForCloud(sourceProduct);
+      const docRef = colRef.doc(docId);
+      let snap = null;
+      try {
+        snap = await docRef.get({ source: 'server' });
+      } catch {
+        snap = await docRef.get();
+      }
+      const existing = snap && snap.exists ? (snap.data() || {}) : null;
+      const beforeStock = existing ? Math.max(0, Number(existing.stock) || 0) : 0;
+      const afterStock = beforeStock + amount;
+      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+      const payload = existing
+        ? {
+            ...existing,
+            id: existing.id || baseData.id,
+            name: existing.name || baseData.name,
+            category: existing.category || baseData.category,
+            price: Number.isFinite(Number(existing.price)) ? Number(existing.price) : baseData.price,
+            cost: Number.isFinite(Number(existing.cost)) ? Number(existing.cost) : baseData.cost,
+            low: Number.isFinite(Number(existing.low)) ? Number(existing.low) : baseData.low,
+            unit: existing.unit || baseData.unit,
+            status: existing.status || 'Active',
+            stock: afterStock,
+            updatedAt: nowIso,
+            updatedAtMs: nowMs
+          }
+        : {
+            ...baseData,
+            stock: afterStock,
+            updatedAt: nowIso,
+            updatedAtMs: nowMs
+          };
+      await docRef.set(payload, { merge: true });
+      return { ok: true, docId, beforeStock, afterStock, created: !existing };
+    } catch (err) {
+      console.error(`Failed to transfer product ${sourceProduct?.id} to branch ${targetBranch}:`, err);
+      return { ok: false, error: err?.message || 'Cloud transfer failed' };
+    }
+  }
+
   return {
     initFirebase,
     loadConfig,
@@ -580,6 +639,7 @@
     createProduct: saveProduct,
     updateProduct,
     deleteProduct,
+    transferProductToBranch,
     getProducts,
     streamProducts,
     batchSyncProducts,

@@ -57,6 +57,7 @@ const initialState = {
   currency: 'TZS',
   vatEnabled: true,
   vatRate: 18,
+  receiptWidth: '80mm',
   autoLockMinutes: 20,
   themeColors: { primary: '#0a1e36', secondary: '#ff6a00' },
   notificationSound: { enabled: true, tone: 'chime', volume: 0.65, onOutOfStock: true, onExpired: true },
@@ -73,6 +74,7 @@ const initialState = {
   },
   trashBin: [],
   activityLog: [],
+  stockTransfers: [],
   stocktakeDraft: null,
   stocktakes: [
     {
@@ -117,6 +119,10 @@ let posDraftOrderId = '';
 let posCustomer = 'Walk-in customer';
 let posMethod = 'Cash';
 let posCategory = '';
+let lastCompletedPosSaleId = '';
+let activeBarcodeStream = null;
+let activeBarcodeRaf = 0;
+let activeBarcodeTarget = 'pos';
 let deferredInstall = null;
 let dashboardRange = 'This month';
 let reportPeriod = 'monthly';
@@ -369,7 +375,7 @@ function canViewPage(module, user = currentWorkspaceUser()) {
 
 function canPerformAction(action, element = null) {
   // Strictly minimal pre-auth UI actions only
-  if (['close-modal', 'unlock-switch-account', 'logout'].includes(action)) return true;
+  if (['close-modal', 'unlock-switch-account', 'logout', 'toggle-language'].includes(action)) return true;
   const user = currentWorkspaceUser();
   if (!state.currentUserId || !user || user.role === 'Guest' || !user.id || user.status === 'Inactive') return false;
   if (user.isBootstrap) return true;
@@ -381,6 +387,7 @@ function canPerformAction(action, element = null) {
     case 'apply-date-range': case 'clear-date-range': case 'clear-sales-filters':
     case 'force-cloud-sync': case 'force-reload-app':
     case 'products-page-prev': case 'products-page-next':
+    case 'open-barcode-scanner':
     case 'view-attachment': case 'download-attachment': case 'view-entry-attachments': case 'add-attachment':
       return true;
     case 'delete-attachment':
@@ -390,6 +397,7 @@ function canPerformAction(action, element = null) {
     case 'finalize-order': { const order = state.orders.find(item => item.id === element?.dataset?.id); return order?.source === 'POS' ? require('pos', 'finalize') : require('sales', 'edit'); }
     case 'view-order': return require('sales', 'view');
     case 'print-order-invoice': return require('sales', 'print');
+    case 'print-thermal-receipt': return require('sales', 'print') || require('pos', 'finalize');
     case 'add-order-payment': return require('sales', 'payments');
     case 'manage-order-returns': return require('sales', 'returns');
     case 'manage-delivery-issues': return require('sales', 'view') || require('sales', 'edit');
@@ -408,6 +416,7 @@ function canPerformAction(action, element = null) {
     case 'delete-product': return require('inventory', 'delete-products');
     case 'bulk-delete-products': return require('inventory', 'delete-products');
     case 'adjust-stock': case 'bulk-stock-adjust': return require('inventory', 'adjust-stock');
+    case 'new-stock-transfer': return require('inventory', 'adjust-stock') || require('branches', 'manage');
     case 'bulk-stocktake': case 'open-stocktake': case 'finalize-stocktake': case 'resume-stocktake': case 'pause-stocktake': case 'discard-stocktake-draft':
     case 'stocktake-add-all': case 'stocktake-clear-all': case 'stocktake-fill-current': case 'stocktake-pick-product': case 'stocktake-remove-item':
       return require('inventory', 'stocktake');
@@ -921,6 +930,7 @@ function createBlankWorkspaceState({ companyName, branchName = 'Main branch', cu
     currency: currency || 'TZS',
     vatEnabled: true,
     vatRate: 18,
+    receiptWidth: '80mm',
     autoLockMinutes: 20,
     themeColors: { primary: '#0a1e36', secondary: '#ff6a00' },
     notificationSound: { enabled: true, tone: 'chime', volume: 0.65, onOutOfStock: true, onExpired: true },
@@ -937,6 +947,7 @@ function createBlankWorkspaceState({ companyName, branchName = 'Main branch', cu
     },
     trashBin: [],
     activityLog: [],
+    stockTransfers: [],
     stocktakeDraft: null,
     stocktakes: [],
     isRegistered: true
@@ -3286,7 +3297,8 @@ function renderPOS() {
       <article class="table-panel">
         <div class="toolbar">
           <div class="toolbar-left">
-            <label class="search-box"><input id="pos-search" placeholder="Find a product… (/ to search)" aria-label="Search POS products"></label>
+            <label class="search-box"><input id="pos-search" placeholder="Find product or scan barcode… (/ to search)" aria-label="Search POS products"></label>
+            <button type="button" class="button small" data-action="open-barcode-scanner" data-scan-target="pos" title="Scan product barcode with camera or USB scanner">📷 Scan</button>
             <select class="select-control" id="pos-category">
               <option value="">All categories</option>
               ${[...new Set(activeProducts().map(p => p.category))].map(c => `<option ${posCategory === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
@@ -3321,6 +3333,12 @@ function renderPOS() {
           </select>
         </div>
         <button class="button primary" data-action="complete-pos" ${posCart.length ? '' : 'disabled'}>Complete sale · ${money(total)}</button>
+        ${lastCompletedPosSaleId && (state.orders.some(o => o.id === lastCompletedPosSaleId) || state.sales.some(s => s.id === lastCompletedPosSaleId)) ? `
+          <div class="pos-last-receipt-bar">
+            <span>Last sale: <strong>${esc(lastCompletedPosSaleId)}</strong></span>
+            <button type="button" class="button small" data-action="print-thermal-receipt" data-id="${esc(lastCompletedPosSaleId)}">🧾 Print last receipt</button>
+          </div>
+        ` : ''}
         <p class="panel-subtitle" style="text-align:center;line-height:1.5;margin-top:10px">Changes saved automatically in IndexedDB storage.</p>
       </aside>
     </section>
@@ -3446,6 +3464,7 @@ function completePOS() {
 
   if (!navigator.onLine) state.queue.push(sale.id);
   recordActivity('POS sale completed', `${customer} · ${money(total)} · ${method}`, sale.id);
+  lastCompletedPosSaleId = sale.id;
   posCart = [];
   posDraftOrderId = '';
   posCustomer = 'Walk-in customer';
@@ -3679,6 +3698,7 @@ function salesRows(rows) {
               <button data-action="view-order" data-id="${esc(order.id)}">View ${pos ? 'sale' : 'order'}</button>
               <button data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Delivery mistakes ${hasDiscrepancies ? `(${discrepancies.length})` : ''}</button>
               <button data-action="print-order-invoice" data-id="${esc(order.id)}" ${draft && pos ? 'disabled title="Complete the POS sale first"' : ''}>Print invoice</button>
+              <button data-action="print-thermal-receipt" data-id="${esc(order.id)}" ${draft && pos ? 'disabled title="Complete the POS sale first"' : ''}>🧾 Receipt (${esc(state.receiptWidth || '80mm')})</button>
               <button data-action="add-order-payment" data-id="${esc(order.id)}" ${draft ? 'disabled title="Save the order first"' : ''}>Add payment</button>
               <button data-action="manage-order-returns" data-id="${esc(order.id)}" ${draft ? 'disabled title="Save the order first"' : ''}>Manage returns</button>
               <span class="menu-divider"></span>
@@ -3920,6 +3940,387 @@ function printOrderInvoice(order) {
   popup.document.close();
   popup.focus();
   setTimeout(() => popup.print(), 250);
+}
+
+/**
+ * Print a 58mm or 80mm thermal POS receipt via a hidden iframe (zero popup blockers).
+ */
+function printThermalReceipt(orderOrId, options = {}) {
+  const order = typeof orderOrId === 'string'
+    ? (salesOrderRows().find(o => o.id === orderOrId) || state.orders.find(o => o.id === orderOrId) || state.sales.find(s => s.id === orderOrId))
+    : orderOrId;
+  if (!order) {
+    toast('Receipt record not found');
+    return false;
+  }
+  if (order.status === 'Draft' && order.source === 'POS') {
+    toast('Complete the POS sale before printing a receipt');
+    return false;
+  }
+  if ((order.status === 'Draft' || order.status === 'Edited') && order.source !== 'POS') {
+    if (!finalizeSalesOrder(order)) return false;
+  }
+
+  const width = (options.width || state.receiptWidth) === '58mm' ? '58mm' : '80mm';
+  const bodyFontPx = width === '58mm' ? 10 : 11.5;
+  const rs = window.TideI18n?.getReceiptStrings?.() || {
+    receiptTitle: 'SALES RECEIPT', receiptNo: 'Receipt #', date: 'Date', branch: 'Branch',
+    cashier: 'Cashier', customer: 'Customer', item: 'Item', qty: 'Qty', total: 'Total',
+    subtotal: 'Subtotal', discount: 'Discount', extra: 'Extra charges', netTaxable: 'Taxable (Net)',
+    vat: 'VAT', grandTotal: 'TOTAL', paid: 'Paid', balance: 'Balance due', method: 'Payment',
+    status: 'Status', payDetails: 'Payment details', thanks: 'Thank you for your business! / Asante kwa kununua nasi!'
+  };
+
+  const items = (order.items || []).map(line => {
+    const product = state.products.find(p => p.id === line.productId);
+    const name = product?.name || line.product || line.productName || line.productId || 'Item';
+    const qty = Number(line.qty || 0);
+    const unitPrice = Number(line.unitPrice ?? product?.price ?? 0);
+    const lineTotal = qty * unitPrice;
+    return { name, qty, unitPrice, lineTotal };
+  });
+
+  const subtotal = Number(order.subtotal ?? (Number(order.total || 0) + Number(order.discount || 0)));
+  const discount = Number(order.discount || 0);
+  const extra = Number(order.additionalCharges || 0);
+  const total = Number(order.total || 0);
+  const paid = Math.max(0, Number(order.paid || 0));
+  const balance = Math.max(0, total - paid);
+  const tax = calculateTaxBreakdown(total, state.vatEnabled !== false, state.vatRate || 18);
+  const cashier = currentWorkspaceUser()?.name || 'Cashier';
+  const method = orderPaymentMethodLabel(order);
+  const payStatus = orderPaymentStatus(order);
+  const contacts = [state.companyPhone, state.companyEmail].filter(Boolean).join(' · ');
+  const eatTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Dar_es_Salaam',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).format(new Date());
+  const payDetailsLines = String(state.companyPaymentDetails || '').trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${esc(rs.receiptTitle)} ${esc(order.id)}</title>
+  <style>
+    @page { size: ${width} auto; margin: 2mm; }
+    * { box-sizing: border-box; }
+    body {
+      width: ${width};
+      max-width: ${width};
+      margin: 0 auto;
+      padding: 6px 4px 12px;
+      font-family: 'Courier New', Courier, ui-monospace, monospace;
+      font-size: ${bodyFontPx}px;
+      line-height: 1.35;
+      color: #000;
+      background: #fff;
+    }
+    .center { text-align: center; }
+    .bold { font-weight: 700; }
+    .company-name { font-size: ${bodyFontPx + 3}px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }
+    .small { font-size: ${Math.max(8.5, bodyFontPx - 1.5)}px; }
+    .divider { border-top: 1px dashed #000; margin: 6px 0; }
+    .divider-solid { border-top: 1.5px solid #000; margin: 6px 0; }
+    .meta-row, .sum-row { display: flex; justify-content: space-between; gap: 6px; }
+    .sum-row.grand { font-size: ${bodyFontPx + 2}px; font-weight: 800; padding: 3px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; border-bottom: 1px dashed #000; padding: 2px 0 4px; font-size: ${Math.max(8.5, bodyFontPx - 1)}px; }
+    th.r, td.r { text-align: right; white-space: nowrap; }
+    td { padding: 3px 0; vertical-align: top; }
+    .item-sub { display: block; font-size: ${Math.max(8.5, bodyFontPx - 1.5)}px; }
+    .thanks { margin-top: 8px; text-align: center; font-weight: 700; }
+  </style>
+</head>
+<body data-receipt-width="${width}" data-receipt-id="${esc(order.id)}">
+  <div class="center">
+    <div class="company-name">${esc(state.companyName || 'My Company')}</div>
+    ${state.branch ? `<div class="small bold">${esc(state.branch)}</div>` : ''}
+    ${state.companyAddress ? `<div class="small">${esc(state.companyAddress)}</div>` : ''}
+    ${contacts ? `<div class="small">${esc(contacts)}</div>` : ''}
+  </div>
+  <div class="divider-solid"></div>
+  <div class="center bold">${esc(rs.receiptTitle)}</div>
+  <div class="divider"></div>
+  <div class="meta-row"><span>${esc(rs.receiptNo)}:</span><span class="bold">${esc(order.id)}</span></div>
+  <div class="meta-row"><span>${esc(rs.date)}:</span><span>${esc(order.date || today())} (${esc(eatTime.split(', ')[1] || '')} EAT)</span></div>
+  <div class="meta-row"><span>${esc(rs.customer)}:</span><span>${esc(order.customer || 'Walk-in customer')}</span></div>
+  <div class="meta-row"><span>${esc(rs.cashier)}:</span><span>${esc(cashier)}</span></div>
+  <div class="divider"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>${esc(rs.item)}</th>
+        <th class="r">${esc(rs.total)}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${items.map(it => `
+        <tr>
+          <td>
+            <span class="bold">${esc(it.name)}</span>
+            <span class="item-sub">${it.qty} × ${esc(money(it.unitPrice))}</span>
+          </td>
+          <td class="r bold">${esc(money(it.lineTotal))}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  <div class="divider"></div>
+  <div class="sum-row"><span>${esc(rs.subtotal)}</span><span>${esc(money(subtotal))}</span></div>
+  ${discount > 0 ? `<div class="sum-row"><span>${esc(rs.discount)}</span><span>- ${esc(money(discount))}</span></div>` : ''}
+  ${extra > 0 ? `<div class="sum-row"><span>${esc(rs.extra)}</span><span>${esc(money(extra))}</span></div>` : ''}
+  ${tax.isEnabled && tax.vat > 0 ? `
+    <div class="sum-row small"><span>${esc(rs.netTaxable)}</span><span>${esc(money(tax.net))}</span></div>
+    <div class="sum-row small"><span>${esc(rs.vat)} (${tax.vatRate}%)</span><span>${esc(money(tax.vat))}</span></div>
+  ` : ''}
+  <div class="divider-solid"></div>
+  <div class="sum-row grand"><span>${esc(rs.grandTotal)}</span><span>${esc(money(total))}</span></div>
+  <div class="sum-row"><span>${esc(rs.paid)}</span><span>${esc(money(paid))}</span></div>
+  ${balance > 0 ? `<div class="sum-row bold"><span>${esc(rs.balance)}</span><span>${esc(money(balance))}</span></div>` : ''}
+  <div class="divider"></div>
+  <div class="meta-row small"><span>${esc(rs.method)}:</span><span class="bold">${esc(method)}</span></div>
+  <div class="meta-row small"><span>${esc(rs.status)}:</span><span>${esc(payStatus)}</span></div>
+  ${payDetailsLines.length ? `
+    <div class="divider"></div>
+    <div class="small bold">${esc(rs.payDetails)}:</div>
+    ${payDetailsLines.map(l => `<div class="small">${esc(l)}</div>`).join('')}
+  ` : ''}
+  <div class="divider"></div>
+  <div class="thanks small">${esc(rs.thanks)}</div>
+  <div class="center small" style="margin-top:4px">Tide ERP · ${width}</div>
+</body>
+</html>`;
+
+  let iframe = document.getElementById('tide-receipt-iframe');
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.id = 'tide-receipt-iframe';
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.cssText = 'position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none;left:-9999px;top:-9999px;';
+    document.body.appendChild(iframe);
+  }
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    toast('Could not prepare thermal receipt printer');
+    return false;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
+  if (!options.skipPrint) {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (err) {
+        console.warn('Thermal receipt print call skipped:', err);
+      }
+    }, 120);
+  }
+  return true;
+}
+
+/**
+ * Camera & USB Hardware Barcode Scanner Subsystem
+ */
+function stopBarcodeScanner() {
+  if (activeBarcodeRaf) {
+    cancelAnimationFrame(activeBarcodeRaf);
+    activeBarcodeRaf = 0;
+  }
+  if (activeBarcodeStream) {
+    try {
+      activeBarcodeStream.getTracks().forEach(track => track.stop());
+    } catch {}
+    activeBarcodeStream = null;
+  }
+}
+
+function handleBarcodeScanned(rawCode, target = activeBarcodeTarget) {
+  const code = String(rawCode || '').trim();
+  if (!code) return false;
+  const norm = code.toLowerCase();
+
+  // Exact match by ID, SKU, or batchNumber first; fallback to unique substring match
+  const exact = state.products.find(p =>
+    String(p.id || '').trim().toLowerCase() === norm
+    || String(p.sku || '').trim().toLowerCase() === norm
+    || (p.batchNumber && String(p.batchNumber).trim().toLowerCase() === norm)
+  );
+  const partialMatches = exact ? [exact] : state.products.filter(p =>
+    `${p.id} ${p.sku || ''} ${p.name} ${p.batchNumber || ''}`.toLowerCase().includes(norm)
+  );
+  const match = exact || (partialMatches.length === 1 ? partialMatches[0] : null);
+
+  if (target === 'pos') {
+    if (match) {
+      if (match.status === 'Draft') {
+        toast(`"${match.name}" is a Draft product and cannot be sold in POS`);
+        return false;
+      }
+      if ((Number(match.stock) || 0) <= 0) {
+        toast(`"${match.name}" is out of stock (0 available)`);
+        return false;
+      }
+      addToCart(match.id);
+      const posSearch = document.getElementById('pos-search');
+      if (posSearch) posSearch.value = '';
+      try {
+        if (getNotificationSoundConfig().enabled) playNotificationSound('pulse', 0.25);
+      } catch {}
+      toast(`✓ Scanned & added ${match.name} (${match.id})`);
+      return true;
+    }
+    const posSearch = document.getElementById('pos-search');
+    if (posSearch) {
+      posSearch.value = code;
+      posSearch.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    toast(`No exact barcode match for "${code}"`);
+    return false;
+  }
+
+  // Products / Inventory search target
+  tableQuery = code;
+  productsPage = 1;
+  render();
+  if (match) {
+    toast(`✓ Found ${match.name} (${match.id})`);
+  } else {
+    toast(`Filtered by barcode "${code}" (${partialMatches.length} match${partialMatches.length === 1 ? '' : 'es'})`);
+  }
+  return Boolean(match);
+}
+
+function openBarcodeScanner(target = 'pos') {
+  stopBarcodeScanner();
+  activeBarcodeTarget = target === 'products' ? 'products' : 'pos';
+  const subtitle = activeBarcodeTarget === 'pos'
+    ? 'Point your phone/webcam at a product barcode or scan with a USB/Bluetooth barcode scanner to add straight to the POS cart.'
+    : 'Point your phone/webcam at a barcode or scan with a USB scanner to find the product immediately.';
+
+  const content = `
+    <div class="scanner-viewport">
+      <video id="barcode-scanner-video" class="scanner-video" autoplay playsinline muted></video>
+      <div class="scanner-reticle" aria-hidden="true"></div>
+    </div>
+    <p class="scanner-status" id="barcode-scanner-status">Initializing camera… You can also scan directly with any USB/Bluetooth barcode scanner below.</p>
+    <div class="field">
+      <label for="barcode-manual-input">USB Scanner / Manual Barcode or SKU</label>
+      <input id="barcode-manual-input" name="barcode-code" type="text" placeholder="Scan barcode or type SKU and press Enter" autocomplete="off" required>
+    </div>
+  `;
+  openDialog('manual-barcode-scan', '📷 Barcode Scanner', subtitle, content, 'Lookup / Add');
+  const manualInput = document.getElementById('barcode-manual-input');
+  setTimeout(() => manualInput?.focus(), 60);
+
+  const statusEl = document.getElementById('barcode-scanner-status');
+  const videoEl = document.getElementById('barcode-scanner-video');
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    if (statusEl) statusEl.textContent = 'Camera unavailable in this browser — use a USB/Bluetooth scanner or type the barcode/SKU below.';
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+    .then(stream => {
+      const modal = document.getElementById('app-modal');
+      if (!modal?.open) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+      activeBarcodeStream = stream;
+      if (videoEl) {
+        videoEl.srcObject = stream;
+        videoEl.play?.().catch(() => {});
+      }
+      if ('BarcodeDetector' in window) {
+        let detector = null;
+        try {
+          detector = new window.BarcodeDetector({
+            formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code']
+          });
+        } catch {
+          try { detector = new window.BarcodeDetector(); } catch {}
+        }
+        if (detector) {
+          if (statusEl) statusEl.textContent = '● Live camera ready — center a barcode inside the frame (or use USB scanner below).';
+          const tick = async () => {
+            if (!activeBarcodeStream || !document.getElementById('app-modal')?.open) {
+              stopBarcodeScanner();
+              return;
+            }
+            if (videoEl && videoEl.readyState >= 2) {
+              try {
+                const codes = await detector.detect(videoEl);
+                if (codes && codes.length && codes[0].rawValue) {
+                  const raw = String(codes[0].rawValue).trim();
+                  stopBarcodeScanner();
+                  document.getElementById('app-modal')?.close();
+                  handleBarcodeScanned(raw, activeBarcodeTarget);
+                  return;
+                }
+              } catch {}
+            }
+            activeBarcodeRaf = requestAnimationFrame(tick);
+          };
+          activeBarcodeRaf = requestAnimationFrame(tick);
+          return;
+        }
+      }
+      if (statusEl) statusEl.textContent = 'Camera preview active (native BarcodeDetector unsupported on this browser) — use USB scanner or enter code below.';
+    })
+    .catch(() => {
+      if (statusEl) statusEl.textContent = 'Camera permission declined or no camera found — use a USB/Bluetooth barcode scanner or type SKU below.';
+    });
+}
+
+/**
+ * Inter-Branch Stock Transfer Dialog
+ */
+function openStockTransferDialog() {
+  const otherBranches = (state.branches || []).filter(b => b.status !== 'Inactive' && b.id !== activeBranch?.id);
+  if (!otherBranches.length) {
+    toast('Create at least one other active branch in Branches before transferring stock');
+    return;
+  }
+  const availableProducts = (state.products || []).filter(p => Number(p.stock || 0) > 0 && p.status !== 'Draft');
+  if (!availableProducts.length) {
+    toast('No in-stock products available in this branch to transfer');
+    return;
+  }
+  const productOptions = sortProducts(availableProducts)
+    .map(p => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)}) — ${p.stock} ${esc(p.unit || 'units')} available</option>`)
+    .join('');
+  const branchOptions = otherBranches
+    .map(b => `<option value="${esc(b.id)}">${esc(b.name)} (${esc(b.id)})</option>`)
+    .join('');
+
+  const content = `
+    <div class="inline-note" style="margin-bottom:12px">
+      Transferring from: <strong>${esc(activeBranch?.name || state.branch)}</strong> (${esc(activeBranch?.id || 'BR-MAIN')})
+    </div>
+    <div class="form-grid">
+      <div class="field full">
+        <label for="transfer-dest-branch">Destination branch</label>
+        <select id="transfer-dest-branch" name="transfer-dest-branch" required>${branchOptions}</select>
+      </div>
+      <div class="field full">
+        <label for="transfer-product-id">Product to transfer</label>
+        <select id="transfer-product-id" name="transfer-product-id" required>${productOptions}</select>
+      </div>
+      ${inputField('transfer-qty', 'Quantity to transfer', 'e.g. 10', 'number', true, '1')}
+      ${inputField('transfer-note', 'Transfer note / reference', 'e.g. Weekly branch restock', 'text', false, '')}
+    </div>
+  `;
+  openDialog(
+    'stock-transfer',
+    '⇄ Transfer Stock Between Branches',
+    'Deducts stock from the current branch and immediately adds it to the destination branch in cloud storage.',
+    content,
+    'Confirm stock transfer'
+  );
 }
 
 // Stock Taking System (Multi-Product, Fast Operations, Expiry Date & Pause/Resume)
@@ -4453,6 +4854,7 @@ function renderProductManagement() {
       <div class="toolbar">
         <div class="toolbar-left">
           <label class="search-box"><input id="table-search" placeholder="Search product name, SKU, category, batch…" value="${esc(tableQuery)}"></label>
+          <button type="button" class="button small" data-action="open-barcode-scanner" data-scan-target="products" title="Scan barcode to find product">📷 Scan</button>
           <select class="select-control" id="inventory-filter">
             <option value="" ${inventoryFilter === '' ? 'selected' : ''}>All products</option>
             <option value="low" ${inventoryFilter === 'low' ? 'selected' : ''}>Low stock</option>
@@ -4525,8 +4927,9 @@ function renderInventoryManagement() {
   });
 
   return `
-    ${heading('Inventory Management', 'Dedicated physical stock taking, stock count history, variance adjustments, and stock movement ledger.', `
+    ${heading('Inventory Management', 'Dedicated physical stock taking, stock count history, inter-branch stock transfers, and stock movement ledger.', `
       <button class="button ${state.stocktakeDraft?.items?.length ? 'primary' : ''}" data-action="open-stocktake">${state.stocktakeDraft?.items?.length ? '▶ Resume stock take' : '▤ New stock take'}</button>
+      <button class="button" data-action="new-stock-transfer">⇄ Transfer stock</button>
       <button class="button" data-action="bulk-stock-adjust">± Adjust stock</button>
       <button class="button" data-action="export-stocktakes">↓ Export stock takes</button>
       <button class="button" data-action="export-stock-movements">↓ Export stock ledger</button>
@@ -4609,6 +5012,45 @@ function renderInventoryManagement() {
                 </tr>
               `;
   }).join('') : emptyRow(9, 'No physical stock takes recorded yet. Click "New stock take" to conduct an audit.')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Inter-Branch Stock Transfers History -->
+    <section class="table-panel">
+      <div class="table-heading" style="padding:16px 20px 8px">
+        <div>
+          <h2 style="font-size:15px;margin:0 0 4px">Inter-Branch Stock Transfers</h2>
+          <p class="panel-subtitle" style="margin:0">Company-wide log of stock moved between branches with real-time Firestore sync.</p>
+        </div>
+        <button type="button" class="button small" data-action="new-stock-transfer">⇄ Transfer stock</button>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Transfer Ref</th>
+              <th>Product</th>
+              <th>Route</th>
+              <th>Quantity</th>
+              <th>Note</th>
+              <th>Conducted By</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(state.stockTransfers || []).length ? (state.stockTransfers || []).map(tr => `
+              <tr>
+                <td><strong>${dateLabel(tr.date)}</strong></td>
+                <td><small>${esc(tr.id)}</small></td>
+                <td><strong>${esc(tr.productName || tr.productId)}</strong><br><small class="muted">${esc(tr.productId)}</small></td>
+                <td><span class="transfer-route-badge">${esc(tr.fromBranchName || tr.fromBranchId)} → ${esc(tr.toBranchName || tr.toBranchId)}</span></td>
+                <td><strong>${Number(tr.qty || 0)} ${esc(tr.unit || '')}</strong></td>
+                <td>${esc(tr.note || '—')}</td>
+                <td>${esc(tr.user || '—')}</td>
+              </tr>
+            `).join('') : emptyRow(7, 'No inter-branch stock transfers recorded yet. Click "Transfer stock" to move inventory between branches.')}
           </tbody>
         </table>
       </div>
@@ -5349,7 +5791,10 @@ function renderBranches() {
   }).join('');
 
   return `
-    ${heading('Branches', 'Independent workspaces and isolated records for each location.', admin ? '<button class="button primary" data-action="new-branch">＋ Add branch</button>' : '')}
+    ${heading('Branches', 'Independent workspaces and isolated records for each location.', `
+      <button class="button" data-action="new-stock-transfer">⇄ Transfer stock</button>
+      ${admin ? '<button class="button primary" data-action="new-branch">＋ Add branch</button>' : ''}
+    `)}
     <div class="inline-note branch-access-note">${userCanManageAllBranches() ? 'You can access all business branch workspaces.' : 'You are restricted to your assigned home branch.'}</div>
     <section class="branch-grid">${cards}</section>
   `;
@@ -6365,6 +6810,14 @@ function renderSettings() {
               <label for="setting-vat-rate">VAT Rate (%)</label>
               <input id="setting-vat-rate" name="setting-vat-rate" type="number" min="0" max="100" value="${state.vatRate || 18}">
             </div>
+            <div class="field">
+              <label for="setting-receipt-width">Thermal POS Receipt Paper Size</label>
+              <select id="setting-receipt-width" name="setting-receipt-width">
+                <option value="80mm" ${(state.receiptWidth || '80mm') === '80mm' ? 'selected' : ''}>80mm Standard Thermal (Recommended)</option>
+                <option value="58mm" ${state.receiptWidth === '58mm' ? 'selected' : ''}>58mm Compact Mobile / Bluetooth Printer</option>
+              </select>
+              <small class="field-hint">Controls receipt layout width when printing POS &amp; sales thermal receipts.</small>
+            </div>
           </div>
         </div>
 
@@ -6562,6 +7015,10 @@ function saveCompanySettings(form) {
   if (isWorkspaceAdministrator() && paymentDetailsField) state.companyPaymentDetails = paymentDetailsField.value.trim();
   state.vatEnabled = form.querySelector('[name="setting-vat-enabled"]')?.checked ?? true;
   state.vatRate = Number(form.querySelector('[name="setting-vat-rate"]')?.value) || 18;
+  const receiptWidthField = form.querySelector('[name="setting-receipt-width"]');
+  if (receiptWidthField) {
+    state.receiptWidth = receiptWidthField.value === '58mm' ? '58mm' : '80mm';
+  }
   const autoLockField = form.querySelector('[name="setting-autolock-minutes"]');
   if (autoLockField) {
     const parsedLock = Number(autoLockField.value);
@@ -6650,6 +7107,9 @@ function render() {
   syncBackButton();
   if (typeof window.TideTableTools?.enhanceAll === 'function') {
     window.TideTableTools.enhanceAll(content);
+  }
+  if (typeof window.TideI18n?.applyDomTranslations === 'function') {
+    window.TideI18n.applyDomTranslations(document, page);
   }
 }
 
@@ -7697,6 +8157,114 @@ async function handleDialogSubmit(form) {
     syncProductToCloud(product);
     document.getElementById('app-modal').close(); render(); toast('Stock count saved'); return;
   }
+  if (kind === 'stock-transfer') {
+    const destBranchId = val('transfer-dest-branch');
+    const productId = val('transfer-product-id');
+    const qty = Math.floor(Number(val('transfer-qty')) || 0);
+    const note = val('transfer-note');
+    const destBranch = (state.branches || []).find(b => b.id === destBranchId && b.status !== 'Inactive');
+    if (!destBranch || destBranch.id === activeBranch?.id) { toast('Choose a valid destination branch'); return; }
+    const product = (state.products || []).find(p => p.id === productId);
+    if (!product) { toast('Choose an available product'); return; }
+    if (qty <= 0) { toast('Enter a transfer quantity of at least 1'); return; }
+    if (qty > Number(product.stock || 0)) { toast(`Only ${product.stock} ${product.unit || 'units'} available in ${activeBranch?.name || state.branch}`); return; }
+
+    const transferId = idFor('TRF', state.stockTransfers || []);
+    const beforeSource = Number(product.stock || 0);
+    const afterSource = Math.max(0, beforeSource - qty);
+    const actor = currentWorkspaceUser().name || 'Administrator';
+    const transferDate = today();
+
+    product.stock = afterSource;
+    state.stockMovements.unshift({
+      id: idFor('STK', state.stockMovements),
+      productId: product.id,
+      product: product.name,
+      date: transferDate,
+      before: beforeSource,
+      after: afterSource,
+      delta: -qty,
+      reason: `Transfer OUT → ${destBranch.name} (${transferId})${note ? ` · ${note}` : ''}`,
+      user: actor
+    });
+
+    // Cloud sync source branch product and destination branch product
+    syncProductToCloud(product);
+    let destBefore = 0;
+    let destAfter = qty;
+    let cloudRes = null;
+    if (typeof window.TideFirebase?.transferProductToBranch === 'function') {
+      cloudRes = await window.TideFirebase.transferProductToBranch(destBranch.id, product, qty);
+      if (cloudRes?.ok) {
+        destBefore = cloudRes.beforeStock;
+        destAfter = cloudRes.afterStock;
+      }
+    }
+
+    const incomingMove = {
+      id: `STK-IN-${transferId}`,
+      productId: product.id,
+      product: product.name,
+      date: transferDate,
+      before: destBefore,
+      after: destAfter,
+      delta: qty,
+      reason: `Transfer IN ← ${activeBranch?.name || state.branch} (${transferId})${note ? ` · ${note}` : ''}`,
+      user: actor
+    };
+
+    if (typeof appendBranchStockMovement === 'function') {
+      appendBranchStockMovement(destBranch.id, incomingMove).catch(() => {});
+    }
+
+    // Also update local cached branchData for destination branch if present
+    if (!state.branchData) state.branchData = {};
+    if (state.branchData[destBranch.id]) {
+      const cached = state.branchData[destBranch.id];
+      cached.products = Array.isArray(cached.products) ? cached.products : [];
+      const cachedProd = cached.products.find(p => p.id === product.id);
+      if (cachedProd) {
+        cachedProd.stock = cloudRes?.ok ? destAfter : (Number(cachedProd.stock || 0) + qty);
+      } else {
+        cached.products.unshift({ ...structuredClone(product), stock: cloudRes?.ok ? destAfter : qty });
+      }
+      cached.stockMovements = Array.isArray(cached.stockMovements) ? cached.stockMovements : [];
+      cached.stockMovements.unshift(incomingMove);
+    }
+
+    state.stockTransfers = Array.isArray(state.stockTransfers) ? state.stockTransfers : [];
+    state.stockTransfers.unshift({
+      id: transferId,
+      date: transferDate,
+      timestamp: new Date().toISOString(),
+      fromBranchId: activeBranch?.id || 'BR-MAIN',
+      fromBranchName: activeBranch?.name || state.branch || 'Main branch',
+      toBranchId: destBranch.id,
+      toBranchName: destBranch.name,
+      productId: product.id,
+      productName: product.name,
+      unit: product.unit || 'Piece',
+      qty,
+      unitCost: Number(product.cost) || 0,
+      note,
+      user: actor
+    });
+
+    recordActivity('Stock transferred between branches', `${qty} ${product.unit || 'units'} of ${product.name}: ${activeBranch?.name || state.branch} → ${destBranch.name}`, transferId);
+    saveState();
+    document.getElementById('app-modal')?.close();
+    render();
+    toast(`✓ Transferred ${qty} ${product.unit || 'units'} of ${product.name} to ${destBranch.name}`);
+    return;
+  }
+  if (kind === 'manual-barcode-scan') {
+    const code = val('barcode-code');
+    if (!code) { toast('Scan or enter a barcode / SKU'); return; }
+    stopBarcodeScanner();
+    document.getElementById('app-modal')?.close();
+    handleBarcodeScanned(code, activeBarcodeTarget);
+    return;
+  }
   if (kind === 'save-edit-stocktake') {
     if (!isWorkspaceAdministrator()) { toast('Administrator privileges required'); return; }
     const st = (state.stocktakes || []).find(s => s.id === form.dataset.recordId);
@@ -8563,7 +9131,8 @@ function handleAction(button) {
           <button class="button small" data-action="manage-delivery-issues" data-id="${esc(order.id)}">⚠️ Highlight / Manage Delivery Mistakes</button>
         </div>
         <div style="margin-top:16px">${attsHTML}</div>`,
-        'Close'
+        'Close',
+        `<button type="button" class="button" data-action="print-thermal-receipt" data-id="${esc(order.id)}">🧾 Receipt (${esc(state.receiptWidth || '80mm')})</button>`
       );
       break;
     }
@@ -9163,12 +9732,29 @@ function handleAction(button) {
       break;
     }
     case 'open-branch': switchBranch(id); break;
+    case 'new-stock-transfer': openStockTransferDialog(); break;
+    case 'open-barcode-scanner': openBarcodeScanner(button.dataset.scanTarget || (page === 'pos' ? 'pos' : 'products')); break;
+    case 'toggle-language': {
+      const nextLang = window.TideI18n?.toggleLang?.() || 'en';
+      if (state.currentUserId) {
+        render();
+      } else {
+        window.TideI18n?.applyDomTranslations?.(document);
+      }
+      toast(nextLang === 'sw' ? '🇹🇿 Lugha: Kiswahili' : '🇬🇧 Language: English');
+      break;
+    }
+    case 'print-thermal-receipt': {
+      const order = salesOrderRows().find(o => o.id === id) || state.orders.find(o => o.id === id) || state.sales.find(s => s.id === id);
+      if (order) printThermalReceipt(order);
+      break;
+    }
     case 'print-order-invoice': {
       const order = state.orders.find(o => o.id === id) || state.sales.find(s => s.id === id);
       if (order) printOrderInvoice(order);
       break;
     }
-    case 'close-modal': currentDraftAttachments = []; document.getElementById('app-modal')?.close(); break;
+    case 'close-modal': stopBarcodeScanner(); currentDraftAttachments = []; document.getElementById('app-modal')?.close(); break;
     case 'export-sales':
       downloadCSV('tide-sales.csv', [
         ['Date', 'Order', 'Customer', 'Total', 'Due amount', 'Payment method', 'Status', 'Payment'],
@@ -10128,9 +10714,21 @@ document.getElementById('back-button')?.addEventListener('click', navigateBack);
 window.addEventListener('online', updateConnection);
 window.addEventListener('offline', updateConnection);
 
-// Keyboard shortcuts: / for POS search, Ctrl+K for general search
+// Keyboard shortcuts: / for POS search, Ctrl+K for general search, Enter on POS search for USB barcode scanners
+document.getElementById('app-modal')?.addEventListener('close', () => {
+  stopBarcodeScanner();
+});
+
 document.addEventListener('keydown', event => {
   if (isScreenLocked()) return;
+  if (event.target.id === 'pos-search' && event.key === 'Enter') {
+    const raw = String(event.target.value || '').trim();
+    if (raw) {
+      event.preventDefault();
+      handleBarcodeScanned(raw, 'pos');
+    }
+    return;
+  }
   if (event.target.id === 'stocktake-search-input' && event.key === 'Enter') {
     event.preventDefault();
     const firstItem = document.querySelector('#stocktake-search-results .stocktake-search-item');
@@ -10379,6 +10977,7 @@ async function initApp() {
     safeSessionRemove(AUTH_SESSION_KEY);
     state.currentUserId = '';
     renderAuthGate();
+    window.TideI18n?.applyDomTranslations?.(document);
     hideBootSplash();
   }
 
