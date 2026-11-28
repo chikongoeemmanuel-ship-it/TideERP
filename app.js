@@ -863,6 +863,9 @@ function renderAuthGate(message = '', initialTab = 'login') {
       </section>
     </div>
   `;
+  if (typeof window.TideI18n?.applyDomTranslations === 'function') {
+    window.TideI18n.applyDomTranslations(gate);
+  }
   if (isRegister) {
     gate.querySelector('input[name="reg-company-name"]')?.focus();
   } else {
@@ -1440,6 +1443,9 @@ function renderScreenLockOverlay(errorMsg = '') {
     </div>
   `;
   overlay.hidden = false;
+  if (typeof window.TideI18n?.applyDomTranslations === 'function') {
+    window.TideI18n.applyDomTranslations(overlay);
+  }
   setTimeout(() => document.getElementById('unlock-password')?.focus(), 40);
 }
 
@@ -2467,6 +2473,9 @@ function openModal(title, subtitle, content, confirmLabel = 'Save', extraAction 
   form.querySelectorAll('[data-action]').forEach(button => { button.hidden = !canPerformAction(button.dataset.action, button); });
   if (typeof window.TideTableTools?.enhanceAll === 'function') {
     window.TideTableTools.enhanceAll(form);
+  }
+  if (typeof window.TideI18n?.applyDomTranslations === 'function') {
+    window.TideI18n.applyDomTranslations(form);
   }
   modal.showModal();
 }
@@ -11006,6 +11015,9 @@ function openOrderActionsPortal(details) {
   orderActionsPortal.setAttribute('role', 'menu');
   orderActionsPortal.innerHTML = menu.innerHTML;
   document.body.append(orderActionsPortal);
+  if (typeof window.TideI18n?.applyDomTranslations === 'function') {
+    window.TideI18n.applyDomTranslations(orderActionsPortal);
+  }
   positionOrderActionsPortal();
 }
 document.addEventListener('click', event => {
